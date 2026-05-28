@@ -1,0 +1,336 @@
+#!/bin/zsh
+set -euo pipefail
+
+WORKSPACE="${ZDEV_WORKSPACE:-$HOME/workspace}"
+PROJECTS_FILE="${ZDEV_PROJECTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zdev/projects}"
+REAP_AFTER_HOURS="${ZDEV_REAP_AFTER_HOURS:-24}"
+REAP_LOG="${ZDEV_REAP_LOG:-$HOME/Library/Logs/zdev/reaper.log}"
+
+if [[ ! -f "$PROJECTS_FILE" ]]; then
+    echo "zdev: projects file not found at $PROJECTS_FILE" >&2
+    echo "Create it with one project path per line (relative to $WORKSPACE)." >&2
+    exit 1
+fi
+
+PROJECTS=()
+FAVORITES=()
+while IFS= read -r line; do
+    line="${line%%#*}"
+    line="${line## }"
+    line="${line%% }"
+    [[ -z "$line" ]] && continue
+
+    is_fav=0
+    if [[ "$line" == *' *' ]]; then
+        is_fav=1
+        line="${line% \*}"
+        line="${line%% }"
+    fi
+
+    PROJECTS+=("$line")
+    [[ $is_fav -eq 1 ]] && FAVORITES+=("$line")
+done < "$PROJECTS_FILE"
+
+if (( ${#PROJECTS[@]} == 0 )); then
+    echo "zdev: $PROJECTS_FILE is empty" >&2
+    exit 1
+fi
+
+session_name() {
+    # "/" → "-" (project path separator) and "." → "_" (tmux rejects "." in
+    # session names — silently normalizes to "_" — so we apply the same
+    # transformation up-front to keep zdev and zdevd in sync).
+    local s="${1//\//-}"
+    echo "${s//./_}"
+}
+
+is_favorite_path() {
+    local target="$1"
+    local f
+    for f in "${FAVORITES[@]}"; do
+        [[ "$f" == "$target" ]] && return 0
+    done
+    return 1
+}
+
+is_favorite_session() {
+    local target="$1" f
+    for f in "${FAVORITES[@]}"; do
+        [[ "$(session_name "$f")" == "$target" ]] && return 0
+    done
+    return 1
+}
+
+is_known_project() {
+    local target="$1" p
+    for p in "${PROJECTS[@]}"; do
+        [[ "$p" == "$target" ]] && return 0
+    done
+    return 1
+}
+
+build_layout() {
+    local session="$1" dir="$2"
+    tmux new-session -d -s "$session" -c "$dir" -n dev
+
+    local shell_pane
+    shell_pane=$(tmux display-message -p -t "$session:dev" '#{pane_id}')
+    tmux select-pane -t "$shell_pane" -T "shell"
+
+    local claude_pane
+    claude_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}')
+    tmux select-pane -t "$claude_pane" -T "claude"
+    tmux send-keys -t "$claude_pane" "claude --dangerously-skip-permissions --continue" C-m
+
+    tmux select-layout -t "$session:dev" even-horizontal
+    tmux select-pane -t "$shell_pane"
+}
+
+usage() {
+    cat <<EOF
+Usage:
+  zdev <project> [project...]    Start session(s) and switch to first
+  zdev all                       Start all configured projects
+  zdev up                        Start projects marked * (favorites)
+  zdev list                      Show configured vs running sessions
+  zdev kill <project>...         Kill named sessions
+  zdev kill all                  Kill every session (except currently attached)
+  zdev kill --idle [hours]       Kill sessions idle >N hours (default: ${REAP_AFTER_HOURS})
+  zdev reap                      Reap idle sessions; skips favorites (launchd entry point)
+  zdev --list-projects           List configured projects
+  zdev --help
+
+Favorites:
+  Append ' *' to a line in $PROJECTS_FILE:
+      zitcha/backend *
+  Favorites are started by 'zdev up' and never reaped automatically.
+
+Configured projects:
+EOF
+    local p
+    for p in "${PROJECTS[@]}"; do
+        if is_favorite_path "$p"; then
+            echo "  $p *"
+        else
+            echo "  $p"
+        fi
+    done
+}
+
+# ===== Subcommands =====
+
+cmd_up() {
+    if (( ${#FAVORITES[@]} == 0 )); then
+        echo "zdev: no favorites marked in $PROJECTS_FILE (append ' *' to project lines)" >&2
+        exit 1
+    fi
+    local fav SESSION
+    for fav in "${FAVORITES[@]}"; do
+        SESSION=$(session_name "$fav")
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+            echo "Session '$SESSION' already running"
+        else
+            if [[ ! -d "$WORKSPACE/$fav" ]]; then
+                echo "Skipping '$fav' — directory missing at $WORKSPACE/$fav" >&2
+                continue
+            fi
+            echo "Starting session '$SESSION'..."
+            build_layout "$SESSION" "$WORKSPACE/$fav"
+        fi
+    done
+}
+
+cmd_list() {
+    local now p sn fav_mark info attached last_attached created ref state age_h
+    now=$(date +%s)
+
+    typeset -A running
+    if tmux list-sessions >/dev/null 2>&1; then
+        while IFS=' ' read -r _sn _att _last _cre; do
+            running[$_sn]="$_att $_last $_cre"
+        done < <(tmux list-sessions -F "#{session_name} #{session_attached} #{session_last_attached} #{session_created}")
+    fi
+
+    printf "%-2s %-42s %-10s %s\n" "" "SESSION" "STATUS" "AGE"
+    for p in "${PROJECTS[@]}"; do
+        sn=$(session_name "$p")
+        fav_mark=" "
+        is_favorite_path "$p" && fav_mark="*"
+
+        if [[ -n "${running[$sn]:-}" ]]; then
+            info="${running[$sn]}"
+            attached="${info%% *}"
+            local rest="${info#* }"
+            last_attached="${rest%% *}"
+            created="${rest##* }"
+
+            ref=$last_attached
+            [[ "$last_attached" == "0" ]] && ref=$created
+            age_h=$(( (now - ref) / 3600 ))
+
+            state="idle"
+            (( attached > 0 )) && state="attached"
+
+            printf " %s %-42s %-10s %dh\n" "$fav_mark" "$sn" "$state" "$age_h"
+        else
+            printf " %s %-42s %-10s -\n" "$fav_mark" "$sn" "stopped"
+        fi
+    done
+
+    # Show any running sessions that aren't in the projects file (manually-created).
+    local found
+    for sn in "${(@k)running}"; do
+        found=0
+        for p in "${PROJECTS[@]}"; do
+            [[ "$(session_name "$p")" == "$sn" ]] && { found=1; break; }
+        done
+        (( found == 0 )) && printf " ? %-42s %-10s (unmanaged)\n" "$sn" "running"
+    done
+}
+
+current_session_name() {
+    if [[ -n "${TMUX:-}" ]]; then
+        tmux display-message -p '#S' 2>/dev/null || true
+    fi
+}
+
+do_reap() {
+    local hours="$1" now cutoff current ref age_h
+    now=$(date +%s)
+    cutoff=$(( now - hours * 3600 ))
+    current=$(current_session_name)
+
+    tmux list-sessions >/dev/null 2>&1 || return 0
+
+    while IFS=' ' read -r sn attached last_attached created; do
+        # Never kill a session with an attached client.
+        (( attached > 0 )) && continue
+        # Belt-and-suspenders: never kill the session we're running inside.
+        [[ "$sn" == "$current" ]] && continue
+        # Skip favorites.
+        is_favorite_session "$sn" && continue
+
+        ref=$last_attached
+        [[ "$last_attached" == "0" ]] && ref=$created
+
+        if (( ref < cutoff )); then
+            age_h=$(( (now - ref) / 3600 ))
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] reap: killing $sn (idle ${age_h}h)" | tee -a "$REAP_LOG" >&2
+            tmux kill-session -t "$sn" || true
+        fi
+    done < <(tmux list-sessions -F "#{session_name} #{session_attached} #{session_last_attached} #{session_created}")
+}
+
+cmd_kill() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: zdev kill <project>... | all | --idle [hours]" >&2
+        exit 1
+    fi
+
+    if [[ "$1" == "all" ]]; then
+        local current sn
+        current=$(current_session_name)
+        if ! tmux list-sessions >/dev/null 2>&1; then
+            echo "No tmux sessions running."
+            return 0
+        fi
+        while IFS= read -r sn; do
+            if [[ "$sn" == "$current" ]]; then
+                echo "Skipping currently attached session: $sn"
+                continue
+            fi
+            echo "Killing $sn"
+            tmux kill-session -t "$sn" || true
+        done < <(tmux list-sessions -F '#{session_name}')
+        return 0
+    fi
+
+    if [[ "$1" == "--idle" ]]; then
+        local hours="${2:-$REAP_AFTER_HOURS}"
+        mkdir -p "$(dirname "$REAP_LOG")"
+        do_reap "$hours"
+        return 0
+    fi
+
+    local project sn
+    for project in "$@"; do
+        sn=$(session_name "$project")
+        if tmux has-session -t "$sn" 2>/dev/null; then
+            echo "Killing $sn"
+            tmux kill-session -t "$sn"
+        else
+            echo "Not running: $sn"
+        fi
+    done
+}
+
+cmd_reap() {
+    mkdir -p "$(dirname "$REAP_LOG")"
+    do_reap "$REAP_AFTER_HOURS"
+}
+
+# ===== Dispatch =====
+
+if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+case "$1" in
+    --list-projects)
+        for p in "${PROJECTS[@]}"; do echo "$p"; done
+        exit 0
+        ;;
+    up)
+        shift
+        cmd_up "$@"
+        exit 0
+        ;;
+    list|ls|status)
+        cmd_list
+        exit 0
+        ;;
+    kill)
+        shift
+        cmd_kill "$@"
+        exit 0
+        ;;
+    reap)
+        cmd_reap
+        exit 0
+        ;;
+esac
+
+# Existing behavior: start the named project(s) and switch to the first.
+if [[ "$1" == "all" ]]; then
+    set -- "${PROJECTS[@]}"
+fi
+
+for PROJECT in "$@"; do
+    if ! is_known_project "$PROJECT"; then
+        echo "Unknown project: $PROJECT"
+        echo "Run 'zdev --help' to see available projects."
+        exit 1
+    fi
+    if [[ ! -d "$WORKSPACE/$PROJECT" ]]; then
+        echo "Directory not found: $WORKSPACE/$PROJECT"
+        exit 1
+    fi
+done
+
+for PROJECT in "$@"; do
+    SESSION=$(session_name "$PROJECT")
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+        echo "Session '$SESSION' already running"
+    else
+        echo "Starting session '$SESSION'..."
+        build_layout "$SESSION" "$WORKSPACE/$PROJECT"
+    fi
+done
+
+TARGET=$(session_name "$1")
+if [[ -n "${TMUX:-}" ]]; then
+    exec tmux switch-client -t "$TARGET"
+else
+    exec tmux attach-session -t "$TARGET"
+fi

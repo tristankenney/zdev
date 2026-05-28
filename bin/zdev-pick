@@ -1,0 +1,23 @@
+#!/bin/zsh
+# Fast project switcher — fzf over zdev's project list.
+# Bind in tmux to open as a popup. Switches to (or starts) the session.
+set -euo pipefail
+
+if ! command -v fzf >/dev/null 2>&1; then
+    echo "fzf not installed. Run: brew install fzf"
+    exit 1
+fi
+
+# Rose Pine palette — keeps the popup visually consistent with the
+# tmux theme. Appends to any existing FZF_DEFAULT_OPTS so user overrides win.
+export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
+  --color=fg:#908caa,bg:#191724,hl:#ebbcba \
+  --color=fg+:#e0def4,bg+:#26233a,hl+:#ebbcba \
+  --color=border:#c4a7e7,header:#31748f,gutter:#191724 \
+  --color=spinner:#f6c177,info:#9ccfd8 \
+  --color=pointer:#c4a7e7,marker:#eb6f92,prompt:#908caa"
+
+PROJECT=$(zdev --list-projects | fzf --prompt='project › ' --height=100% --reverse) || exit 0
+[[ -z "$PROJECT" ]] && exit 0
+
+exec zdev "$PROJECT"

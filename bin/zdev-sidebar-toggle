@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Ensure every tmux window has exactly one zdev sidebar pane (when the
+# client is wide enough) or none (when it isn't). Bound to a handful of
+# tmux hooks so the state stays consistent as sessions/windows come and
+# go and as clients resize.
+#
+# When called without arguments it sweeps every window across every
+# session. With a single window-id argument it processes only that
+# window — useful for hot-paths where we know exactly what changed.
+set -euo pipefail
+
+THRESHOLD="${ZDEV_SIDEBAR_THRESHOLD:-200}"
+WIDTH="${ZDEV_SIDEBAR_WIDTH:-50}"
+HYSTERESIS="${ZDEV_SIDEBAR_HYSTERESIS:-30}"
+
+# Determine the effective client width. Try the focused client first;
+# fall back to the largest attached client (handles the case where the
+# hook fires for a session that no client is currently driving).
+get_client_width() {
+  local w
+  w=$(tmux display-message -p '#{client_width}' 2>/dev/null || echo 0)
+  if [ "$w" = "0" ] || [ -z "$w" ]; then
+    for _ in 1 2 3 4 5; do
+      sleep 0.05
+      w=$(tmux display-message -p '#{client_width}' 2>/dev/null || echo 0)
+      [ "$w" != "0" ] && [ -n "$w" ] && break
+    done
+  fi
+  if [ "$w" = "0" ] || [ -z "$w" ]; then
+    w=$(tmux list-clients -F '#{client_width}' 2>/dev/null | sort -rn | head -1)
+    [ -z "$w" ] && w=0
+  fi
+  printf '%s' "$w"
+}
+
+CLIENT_WIDTH="$(get_client_width)"
+CURRENT_WINDOW="$(tmux display-message -p '#{window_id}' 2>/dev/null || true)"
+
+process_window() {
+  local window_id="$1"
+  [ -z "$window_id" ] && return 0
+
+  # Use the WINDOW's own width rather than the client's — covers the
+  # case where the hook fires from a session with no current client
+  # but the window itself is sized for a recent wide client.
+  local effective_width
+  effective_width=$(tmux display-message -p -t "$window_id" '#{window_width}' 2>/dev/null || echo 0)
+  if [ -z "$effective_width" ] || [ "$effective_width" = "0" ]; then
+    effective_width="$CLIENT_WIDTH"
+  fi
+
+  # Per-window lock — concurrent hook fires for the same window are
+  # serialised; fires for different windows can run in parallel.
+  local lock_dir="${TMPDIR:-/tmp}/zdev-sidebar-${window_id//[^a-zA-Z0-9]/_}.lock"
+  mkdir "$lock_dir" 2>/dev/null || return 0
+  # Subshells don't inherit traps cleanly, so manually clean up at the
+  # end of the function via a local cleanup.
+  _cleanup() { rmdir "$lock_dir" 2>/dev/null || true; }
+
+  # Snapshot existing sidebar panes in this window (by option or title).
+  local sidebar_panes count
+  sidebar_panes=$(tmux list-panes -t "$window_id" \
+    -F '#{pane_id}|#{@is-sidebar}|#{pane_title}' 2>/dev/null \
+    | awk -F'|' '$2=="1" || $3=="zdev-sidebar"{print $1}')
+  count=$(printf '%s\n' "$sidebar_panes" | grep -c . || true)
+
+  rebalance() {
+    tmux select-layout -t "$window_id" even-horizontal 2>/dev/null || true
+    local sb
+    sb=$(tmux list-panes -t "$window_id" -F '#{pane_id} #{@is-sidebar}' 2>/dev/null \
+      | awk '$2=="1"{print $1; exit}')
+    [ -n "$sb" ] && tmux resize-pane -t "$sb" -x "$WIDTH" 2>/dev/null || true
+  }
+
+  if (( effective_width >= THRESHOLD )); then
+    if (( count == 0 )); then
+      # Capture the previously-active pane in THIS window so we can
+      # restore focus after splitting in the new sidebar.
+      local prev_active leftmost new_pane
+      prev_active=$(tmux list-panes -t "$window_id" \
+        -F '#{?pane_active,#{pane_id},}' 2>/dev/null \
+        | awk 'NF{print; exit}')
+      leftmost=$(tmux list-panes -t "$window_id" -F '#{pane_left} #{pane_id}' 2>/dev/null \
+        | sort -n | head -1 | awk '{print $2}')
+      new_pane=$(tmux split-window -hb -l "$WIDTH" -t "$leftmost" -P -F '#{pane_id}' \
+        "exec $HOME/.local/bin/zdev-sidebar-render" 2>/dev/null) || { _cleanup; return 0; }
+      tmux set-option -p -t "$new_pane" @is-sidebar 1 2>/dev/null || true
+      tmux select-pane -t "$new_pane" -T 'zdev-sidebar' 2>/dev/null || true
+      rebalance
+      [ -n "$prev_active" ] && tmux select-pane -t "$prev_active" 2>/dev/null || true
+    elif (( count > 1 )); then
+      printf '%s\n' "$sidebar_panes" | tail -n +2 | while read -r extra; do
+        [ -n "$extra" ] && tmux kill-pane -t "$extra" 2>/dev/null || true
+      done
+      rebalance
+    else
+      rebalance
+    fi
+  elif (( effective_width < THRESHOLD - HYSTERESIS )); then
+    printf '%s\n' "$sidebar_panes" | while read -r p; do
+      [ -n "$p" ] && tmux kill-pane -t "$p" 2>/dev/null || true
+    done
+    tmux select-layout -t "$window_id" even-horizontal 2>/dev/null || true
+  fi
+
+  _cleanup
+}
+
+if [ $# -ge 1 ]; then
+  process_window "$1"
+else
+  # Sweep every window across every session, current first so its
+  # sidebar appears with no perceptible delay.
+  if [ -n "$CURRENT_WINDOW" ]; then
+    process_window "$CURRENT_WINDOW"
+  fi
+  tmux list-windows -a -F '#{window_id}' 2>/dev/null | while read -r wid; do
+    [ -z "$wid" ] && continue
+    [ "$wid" = "$CURRENT_WINDOW" ] && continue
+    process_window "$wid"
+  done
+fi

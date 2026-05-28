@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Called by tmux on client-session-changed and client-attached.
+# Visiting a session counts as acknowledgement: any ● or ◆ attention
+# marker on its pane titles is stripped. The macOS notification + bell
+# remain as authoritative "you need to respond now" signals; the
+# sidebar marker is just an at-a-glance state for sessions you're not
+# currently looking at.
+set -euo pipefail
+
+session=$(tmux display-message -p '#{client_session}' 2>/dev/null || true)
+[ -z "$session" ] && exit 0
+
+tmux list-panes -t "$session" -F '#{pane_id}|#{pane_title}' 2>/dev/null \
+  | while IFS='|' read -r pane title; do
+      case "$title" in
+        "● "*) stripped="${title#● }" ;;
+        "◆ "*) stripped="${title#◆ }" ;;
+        *) continue ;;
+      esac
+      tmux select-pane -t "$pane" -T "$stripped" 2>/dev/null || true
+    done
