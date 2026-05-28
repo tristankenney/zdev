@@ -21,6 +21,7 @@ package hub
 
 import (
 	"context"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -92,7 +93,20 @@ type state struct {
 	// only. Tests leave asyncCapture nil so recomputeAgents falls back to
 	// the synchronous paneCapturer path the existing tests already cover.
 	asyncCapture func(sessName, paneID string)
+
+	// paneCaptureFailures counts consecutive PaneCaptureFailed events per
+	// paneID. Cleared on success (PaneCaptureReady) or eviction. When the
+	// count reaches maxConsecutiveCaptureFailures the pane is removed from
+	// panesByID and from any window's panesIDs map, which stops
+	// recomputeAgents from selecting it for further capture attempts.
+	paneCaptureFailures map[string]int
 }
+
+// maxConsecutiveCaptureFailures is the eviction threshold. Three attempts
+// across separate recomputeAgents ticks reliably distinguishes a transient
+// tmux subprocess hiccup (single failure) from a ghost pane reference left
+// behind after an externally-killed session (sustained failures).
+const maxConsecutiveCaptureFailures = 3
 
 // projectData holds Phase 3 probe-derived per-project fields.
 type projectData struct {
@@ -126,14 +140,15 @@ type prCount struct {
 
 func newState() *state {
 	s := &state{
-		sessions:          make(map[string]*session),
-		panesByID:         make(map[string]*pane),
-		clientSessions:    make(map[string]string),
-		lastVisitTS:       make(map[string]int64),
-		pendingActivityTS: make(map[string]int64),
-		projectData:       make(map[string]projectData),
-		prCounts:          make(map[string]prCount),
-		celebrateUntil:    make(map[string]int64),
+		sessions:            make(map[string]*session),
+		panesByID:           make(map[string]*pane),
+		clientSessions:      make(map[string]string),
+		lastVisitTS:         make(map[string]int64),
+		pendingActivityTS:   make(map[string]int64),
+		projectData:         make(map[string]projectData),
+		prCounts:            make(map[string]prCount),
+		celebrateUntil:      make(map[string]int64),
+		paneCaptureFailures: make(map[string]int),
 	}
 	s.paneCapturer = realPaneCapture
 	return s
@@ -454,6 +469,17 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// capture reflects content the user no longer cares about and
 		// would re-pollute WaitContext that the wait-exit branch already
 		// cleared.
+		//
+		// Any captured pane in the session is healthy, so clear all
+		// failure counters for that session's panes — the eviction
+		// threshold should only count *consecutive* failures.
+		if sess, ok := sessionByName(s, e.Session); ok {
+			for _, w := range sess.windows {
+				for pid := range w.panesIDs {
+					delete(s.paneCaptureFailures, pid)
+				}
+			}
+		}
 		pd, ok := s.projectData[e.Session]
 		if !ok {
 			break
@@ -463,6 +489,21 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		}
 		pd.WaitContext = e.Text
 		s.projectData[e.Session] = pd
+
+	case tmuxctl.PaneCaptureFailed:
+		// Bug 260528: a session killed externally (e.g. tmux kill-session
+		// from outside zdevd's control) leaves pane refs in panesByID that
+		// recomputeAgents keeps selecting for capture. Each failure floods
+		// the eventlog channel and the renderer sees inconsistent state.
+		// Count consecutive failures per pane and evict after the threshold.
+		s.paneCaptureFailures[e.PaneID]++
+		if s.paneCaptureFailures[e.PaneID] >= maxConsecutiveCaptureFailures {
+			slog.Info("hub: evicting ghost pane after consecutive capture failures",
+				"pane", e.PaneID,
+				"project", e.Session,
+				"failures", s.paneCaptureFailures[e.PaneID])
+			detachPane(s, e.PaneID)
+		}
 
 	case tmuxctl.ProjectListChanged:
 		// Names are workspace-relative. The "/" → "-" mapping for tmux session
@@ -708,9 +749,24 @@ func detachWindow(s *state, winID string) {
 			// they no longer belong to any window.
 			for pid := range w.panesIDs {
 				delete(s.panesByID, pid)
+				delete(s.paneCaptureFailures, pid)
 			}
 			delete(sess.windows, winID)
 			return
+		}
+	}
+}
+
+// detachPane removes a single pane from all tracking maps. Called when
+// consecutive capture failures pass the eviction threshold (ghost pane
+// from an externally-killed session); unlike detachWindow, the rest of
+// the window stays intact.
+func detachPane(s *state, paneID string) {
+	delete(s.panesByID, paneID)
+	delete(s.paneCaptureFailures, paneID)
+	for _, sess := range s.sessions {
+		for _, w := range sess.windows {
+			delete(w.panesIDs, paneID)
 		}
 	}
 }

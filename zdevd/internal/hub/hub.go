@@ -274,6 +274,12 @@ func (h *Hub) Run(ctx context.Context) error {
 			if err != nil {
 				slog.Warn("hub: async capture-pane failed",
 					"err", err, "pane", paneID, "project", sessName)
+				// Re-enter the hub so applyEvent can count consecutive
+				// failures and evict ghost panes after the threshold;
+				// without this, a stale pane reference (e.g. a session
+				// killed externally) gets re-probed every recomputeAgents
+				// tick and floods the eventlog channel.
+				_ = h.Submit(tmuxctl.PaneCaptureFailed{Session: sessName, PaneID: paneID})
 				return
 			}
 			_ = h.Submit(tmuxctl.PaneCaptureReady{Session: sessName, Text: text})
@@ -810,6 +816,8 @@ func typeName(ev tmuxctl.Event) string {
 		return "ParseError"
 	case tmuxctl.PaneCaptureReady:
 		return "PaneCaptureReady"
+	case tmuxctl.PaneCaptureFailed:
+		return "PaneCaptureFailed"
 	default:
 		return "UNKNOWN"
 	}

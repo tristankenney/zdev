@@ -194,3 +194,16 @@ type PaneCaptureReady struct {
 }
 
 func (PaneCaptureReady) isEvent() {}
+
+// PaneCaptureFailed reports that an asynchronous tmux capture-pane returned
+// an error. The hub uses consecutive-failure counting to evict ghost panes
+// (e.g. a pane whose session was killed externally without zdevd seeing a
+// clean window-close event): after maxConsecutiveCaptureFailures attempts
+// the pane is removed from state.panesByID, which stops recomputeAgents
+// from selecting it again and ends the retry spam.
+type PaneCaptureFailed struct {
+	Session string
+	PaneID  string
+}
+
+func (PaneCaptureFailed) isEvent() {}
