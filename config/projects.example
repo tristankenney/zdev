@@ -1,25 +1,11 @@
-# zdev projects — one path per line, relative to $WORKSPACE (~/workspace).
+# zdev projects — one path per line, relative to $ZDEV_WORKSPACE (default ~/workspace).
 # Lines starting with # and blank lines are ignored.
 #
-# Append ' *' to mark a project as a favorite, e.g.:
-#   example/backend *
-# Favorites are started by `zdev up` and skipped by `zdev reap`.
+# Append ' *' to mark a project as a favorite. Favorites are started by
+# `zdev up` and skipped by `zdev reap`:
+#   myorg/web *
+#
+# Replace the examples below with your own projects.
 dotfiles
-example
-example/.github
-example/backend
-example/frontend
-example/infra
-example/search-api
-example/local-env
-example/agora
-example/agora-a
-example/cloudflare-terraform
-example/gcp-terraform
-example/infra-aws-apache-apisix
-example/judy-fruit
-example/onsite-engine-dataform
-example/onsite-engine-functions
-example/impressionists-scratchpad
-example/api-docs
-example/collect-api
+myorg/api
+myorg/web *

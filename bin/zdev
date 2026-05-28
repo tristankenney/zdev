@@ -77,12 +77,26 @@ build_layout() {
     shell_pane=$(tmux display-message -p -t "$session:dev" '#{pane_id}')
     tmux select-pane -t "$shell_pane" -T "shell"
 
-    local claude_pane
-    claude_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}')
-    tmux select-pane -t "$claude_pane" -T "claude"
-    tmux send-keys -t "$claude_pane" "claude --dangerously-skip-permissions --continue" C-m
+    # Optional agent pane. Defaults to claude (the original layout) when it's
+    # on PATH; users can override with $ZDEV_AGENT_CMD or set it to empty to
+    # disable the second pane entirely.
+    local agent_cmd="${ZDEV_AGENT_CMD-__default__}"
+    if [[ "$agent_cmd" == "__default__" ]]; then
+        if command -v claude >/dev/null 2>&1; then
+            agent_cmd="claude --dangerously-skip-permissions --continue"
+        else
+            agent_cmd=""
+        fi
+    fi
 
-    tmux select-layout -t "$session:dev" even-horizontal
+    if [[ -n "$agent_cmd" ]]; then
+        local agent_pane
+        agent_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}')
+        tmux select-pane -t "$agent_pane" -T "agent"
+        tmux send-keys -t "$agent_pane" "$agent_cmd" C-m
+        tmux select-layout -t "$session:dev" even-horizontal
+    fi
+
     tmux select-pane -t "$shell_pane"
 }
 
