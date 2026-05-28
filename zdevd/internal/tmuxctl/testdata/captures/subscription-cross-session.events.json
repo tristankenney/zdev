@@ -1,0 +1,46 @@
+[
+  {
+    "type": "WindowAdd",
+    "fields": {
+      "id": "@0"
+    }
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "SessionChanged",
+    "fields": {
+      "id": "$0",
+      "name": "scenario"
+    }
+  },
+  {
+    "type": "UnlinkedWindowAdd",
+    "fields": {
+      "id": "@1"
+    }
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "PaneTitleChanged",
+    "fields": {
+      "paneID": "%0",
+      "title": "Tristans-MacBook.local"
+    }
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "Exit",
+    "fields": {
+      "reason": ""
+    }
+  }
+]

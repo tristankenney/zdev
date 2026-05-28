@@ -1,0 +1,13 @@
+^DP1000p%begin 1777883425 326 0
+%end 1777883425 326 0
+%window-add @0
+%sessions-changed
+%session-changed $0 scenario
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%unlinked-window-add @1
+%sessions-changed
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%sessions-changed
+%sessions-changed
+%exit
+\

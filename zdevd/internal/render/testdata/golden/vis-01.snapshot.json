@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase3-v1",
+  "seq": 1,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha", "beta", "gamma", "delta", "epsilon"],
+  "projects": [
+    {"name": "alpha",   "status": "waiting"},
+    {"name": "beta",    "status": "shell-running"},
+    {"name": "gamma",   "status": "finished"},
+    {"name": "delta",   "status": "alive"},
+    {"name": "epsilon", "status": "absent"}
+  ],
+  "current_session": ""
+}

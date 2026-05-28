@@ -1,0 +1,13 @@
+^DP1000p%begin 1777883735 366 0
+%end 1777883735 366 0
+%window-add @6
+%sessions-changed
+%session-changed $3 zdevd-watcher
+%layout-change @6 b263,80x24,0,0,6 b263,80x24,0,0,6 *
+%layout-change @6 b263,80x24,0,0,6 b263,80x24,0,0,6 *
+%sessions-changed
+%sessions-changed
+%sessions-changed
+%sessions-changed
+%exit
+\

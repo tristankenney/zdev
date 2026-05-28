@@ -1,0 +1,196 @@
+package tmuxctl
+
+// Event is the closed interface for parsed control-mode notifications.
+// Concrete types satisfy it via an unexported isEvent() method, which
+// prevents foreign packages from synthesizing arbitrary events.
+type Event interface{ isEvent() }
+
+// Conventional async notifications. Field names match the tmux protocol;
+// IDs are kept as strings (`$0`, `@1`, `%2`) verbatim — no parse-to-int
+// because tmux IDs include the type prefix.
+
+type SessionsChanged struct{}                                  // %sessions-changed (no args)
+type SessionChanged struct{ ID, Name string }                  // %session-changed $0 main
+type SessionRenamed struct{ ID, NewName string }               // %session-renamed
+type SessionWindowChanged struct{ SessionID, WindowID string } // %session-window-changed
+type WindowAdd struct{ ID string }                             // %window-add @1
+type WindowClose struct{ ID string }                           // %window-close @1
+type WindowRenamed struct{ ID, NewName string }                // %window-renamed @1 newname
+type UnlinkedWindowAdd struct{ ID string }                     // %unlinked-window-add
+type UnlinkedWindowClose struct{ ID string }                   // %unlinked-window-close
+type UnlinkedWindowRenamed struct{ ID, NewName string }        // %unlinked-window-renamed
+type WindowPaneChanged struct{ WindowID, PaneID string }       // %window-pane-changed @1 %2
+type WindowAttach struct{ SessionID, WindowID string }         // synthetic: directly associate window with session (no currentSessionID race)
+type PaneTitleChanged struct{ PaneID, Title string }           // synthesized from %subscription-changed (zdev-titles only)
+type ClientDetached struct{ Client string }                    // %client-detached
+type ClientSessionChanged struct{ Client, SessionName string } // %client-session-changed
+type ClientListRefresh struct {                                // polled list-clients response
+	ClientSessions map[string]string // client_name → session_name (dash-form); zdevd-watcher excluded
+}
+type Exit struct{ Reason string }                              // %exit; supervisor uses this as a reconnect signal
+type ParseError struct {
+	Line  []byte
+	Cause string
+}
+
+// isEvent satisfies the Event interface. The compiler verifies these are
+// the only types that may appear as Event values — foreign packages cannot
+// add new ones (the method is unexported).
+func (SessionsChanged) isEvent()       {}
+func (SessionChanged) isEvent()        {}
+func (SessionRenamed) isEvent()        {}
+func (SessionWindowChanged) isEvent()  {}
+func (WindowAdd) isEvent()             {}
+func (WindowClose) isEvent()           {}
+func (WindowRenamed) isEvent()         {}
+func (UnlinkedWindowAdd) isEvent()     {}
+func (UnlinkedWindowClose) isEvent()   {}
+func (UnlinkedWindowRenamed) isEvent() {}
+func (WindowPaneChanged) isEvent()     {}
+func (WindowAttach) isEvent()          {}
+func (PaneTitleChanged) isEvent()      {}
+func (ClientDetached) isEvent()        {}
+func (ClientSessionChanged) isEvent()  {}
+func (ClientListRefresh) isEvent()     {}
+func (Exit) isEvent()                  {}
+func (ParseError) isEvent()            {}
+
+// --- Phase 3 probe / fsnotify / project-list events ---
+//
+// These are produced by Phase 3's probe scheduler (internal/probes), the
+// notif-file fsnotify watcher (internal/notif), and the workspace fsnotify
+// watcher (internal/projects or internal/workspace). The hub's applyEvent
+// switch handles them as pure mutations on the state model — no I/O.
+
+// DataRefresh carries branch + dirty + shell-command results from the
+// sl/git probe (D3-04) and from a future pane-current-command subscription
+// (DATA-03 / OQ-1). Empty Branch means "no VCS detected" or "default branch
+// suppressed" (DEFAULT_BRANCHES_RE).
+type DataRefresh struct {
+	Project    string
+	Branch     string
+	Ahead      int
+	Behind     int
+	DirtyCount int
+	ShellCmd   string
+}
+
+// PRRefresh carries gh pr list aggregate counts (D3-02). Hub's applyEvent
+// must edge-detect Open count drops vs the previous PRRefresh for this
+// project and set CelebrateUntil — see hub/hub.go line 152 SAFETY NOTE.
+//
+// FailingChecks / PendingChecks (260512-abi) carry deduped, sorted check-run
+// names aggregated across all open PRs for the project so the renderer can
+// surface *which* checks are failing on the current project's git row. nil
+// slices when no checks of that class exist; failing wins per check-name
+// (mirrors per-PR precedence in parseGhJSON).
+type PRRefresh struct {
+	Project       string
+	Open          int
+	Fail          int
+	Pend          int
+	FailingChecks []string
+	PendingChecks []string
+}
+
+// PortsRefresh carries listening port attribution from the lsof probe
+// (D3-03). Ports is sorted ascending; bash baseline shows max 4 (filtered
+// at the producer).
+type PortsRefresh struct {
+	Project string
+	Ports   []int
+}
+
+// NotifSeen is emitted by the fsnotify watcher on $TMPDIR/zdev-notif-*.ts
+// (D3-05). Timestamp is the unix-second the user wrote into the file
+// (per zdev-notify line 36-38), not the file's mtime — assumption A6.
+type NotifSeen struct {
+	Session   string
+	Timestamp int64
+}
+
+// ProjectListChanged is emitted when the workspace fsnotify watcher (D3-06)
+// observes a directory CREATE/REMOVE OR when the daemon initially shells out
+// to `zdev --list-projects`. Names are the canonical project names; the
+// hub maps them to tmux session names by replacing "/" with "-".
+type ProjectListChanged struct {
+	Names []string
+}
+
+func (DataRefresh) isEvent()        {}
+func (PRRefresh) isEvent()          {}
+func (PortsRefresh) isEvent()       {}
+func (NotifSeen) isEvent()          {}
+func (ProjectListChanged) isEvent() {}
+
+// --- Phase 3 per-session command + activity subscription events ---
+
+// PaneCommandChanged is emitted by the supervisor's per-session
+// `zdev-cmds-$<sessid>:$<sessid>:#{pane_current_command}` subscription
+// (RESEARCH OQ-1; Phase 2 Plan 02-08 explicitly deferred this to Phase 3).
+//
+// Hub's applyEvent populates pd.ShellCmd ONLY when the pane's title is
+// "shell" AND Cmd is not in DefaultShells — matches bash baseline lines
+// 154-158, 539-543 (DATA-03).
+type PaneCommandChanged struct {
+	PaneID string
+	Cmd    string
+}
+
+// ActivityRefresh is emitted by the supervisor's per-session
+// `zdev-act-$<sessid>:$<sessid>:#{window_activity}` subscription
+// (RESEARCH OQ-2). ActivityTS is the unix-second of the last
+// input/output event in any pane of the named session.
+//
+// Hub's applyEvent writes pd.LastActivityTS = ActivityTS. Renderer uses
+// `now() - LastActivityTS` for DATA-07 (last-activity age chip) and the
+// `>= StaleThresholdSec` (3600s) check for VIS-12 (stale dim-out).
+//
+// Fallback: if a tmux build doesn't push the format, the supervisor's
+// OutputSink path observes %output bytes as activity proxies. Either
+// path emits this same event type so applyEvent doesn't need to know
+// which produced it.
+type ActivityRefresh struct {
+	Session    string
+	ActivityTS int64
+}
+
+func (PaneCommandChanged) isEvent() {}
+func (ActivityRefresh) isEvent()    {}
+
+// --- 260509-gfz CI status events ---
+
+// CIRefresh carries the latest CI run status for the project's most-recent
+// workflow run (gh run list --limit 1). Status is one of
+// {"queued","in_progress","completed",""}; Conclusion is the gh `conclusion`
+// value (success/failure/cancelled/skipped/timed_out/action_required/neutral)
+// or "" when status != completed or no runs exist.
+//
+// Hub's applyEvent writes both fields verbatim onto projectData; the renderer
+// maps the (status, conclusion) tuple to a chip glyph.
+//
+// Branch-specific filtering (gh run list --branch <branch>) is deferred to a
+// future enhancement (see CIProbe doc comment in probes/ci.go).
+type CIRefresh struct {
+	Project    string
+	Status     string
+	Conclusion string
+}
+
+func (CIRefresh) isEvent() {}
+
+// PaneCaptureReady carries the result of an asynchronous tmux capture-pane
+// performed off the hub goroutine. The hub dispatches a capture worker on
+// transition-into-waiting; the worker reads the pane content (up to 1.5s)
+// and submits this event back into the hub's events channel so applyEvent
+// can write the text into projectData[Session].WaitContext without blocking
+// the hub goroutine on the subprocess.
+//
+// applyEvent treats this as stale-tolerant: if the session is no longer
+// waiting by the time the event is processed, the text is discarded.
+type PaneCaptureReady struct {
+	Session string
+	Text    string
+}
+
+func (PaneCaptureReady) isEvent() {}

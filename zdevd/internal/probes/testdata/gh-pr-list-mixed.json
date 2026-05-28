@@ -1,0 +1,6 @@
+[
+  {"number": 101, "statusCheckRollup": [{"name": "lint", "conclusion": "SUCCESS", "state": "SUCCESS"}, {"name": "test", "conclusion": "SUCCESS", "state": "SUCCESS"}]},
+  {"number": 102, "statusCheckRollup": [{"name": "lint", "conclusion": "SUCCESS", "state": "SUCCESS"}, {"name": "build", "conclusion": null, "state": "PENDING"}]},
+  {"number": 103, "statusCheckRollup": [{"name": "lint", "conclusion": "FAILURE", "state": "FAILURE"}]},
+  {"number": 104, "statusCheckRollup": [{"name": "build", "conclusion": null, "state": "PENDING"}, {"name": "test", "conclusion": "FAILURE", "state": "FAILURE"}]}
+]

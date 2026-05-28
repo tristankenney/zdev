@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE FILE — do NOT install directly.
+  Placeholder substituted by zdevd/Makefile $(REAPER_PLIST_BUILT) rule:
+    @HOME@  → $HOME at install time
+  Output: zdevd/bin/com.zdev.reaper.plist, symlinked into ~/Library/LaunchAgents/.
+
+  Behaviour:
+    Runs `zdev reap` hourly. Kills tmux sessions that have not been
+    attached for ZDEV_REAP_AFTER_HOURS hours (default 24). Skips
+    favorites and the currently-attached session. See ~/.local/bin/zdev.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.zdev.reaper</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@HOME@/.local/bin/zdev</string>
+    <string>reap</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>3600</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>@HOME@/Library/Logs/zdev/reaper.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>@HOME@/Library/Logs/zdev/reaper.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+  </dict>
+</dict>
+</plist>

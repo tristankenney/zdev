@@ -1,0 +1,36 @@
+[
+  {
+    "type": "WindowAdd",
+    "fields": {
+      "id": "@6"
+    }
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "SessionChanged",
+    "fields": {
+      "id": "$3",
+      "name": "zdevd-watcher"
+    }
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "Exit",
+    "fields": {
+      "reason": ""
+    }
+  }
+]

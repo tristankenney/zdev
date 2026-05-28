@@ -1,0 +1,19 @@
+^DP1000p%begin 1777883475 326 0
+%end 1777883475 326 0
+%window-add @0
+%sessions-changed
+%session-changed $0 scenario
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%unlinked-window-add @1
+%sessions-changed
+%layout-change @0 b25d,80x24,0,0,0 b25d,80x24,0,0,0 *
+%output %0 \033[1m\033[7m%\033[27m\033[1m\033[0m                                                                               \015 \015
+%output %0 \033k..otfiles/zdevd\033\134
+%output %0 \033]7;file://Tristans-MacBook.local/Users/tristankenney/dotfiles/zdevd\033\134
+%output %0 \015\033[0m\033[27m\033[24m\033[J\033[01;32m➜  \033[36mzdevd\033[00m \033[K
+%output %0 \033[?1h\033=\033[?2004h
+%subscription-changed zdev-titles $0 @0 1 %0 : Tristans-MacBook.local
+%sessions-changed
+%sessions-changed
+%exit
+\

@@ -1,0 +1,5 @@
+[
+  {"number": 201, "statusCheckRollup": [{"conclusion": "SUCCESS", "state": "SUCCESS"}]},
+  {"number": 202, "statusCheckRollup": [{"conclusion": "SUCCESS", "state": "SUCCESS"}, {"conclusion": "SUCCESS", "state": "SUCCESS"}]},
+  {"number": 203, "statusCheckRollup": []}
+]

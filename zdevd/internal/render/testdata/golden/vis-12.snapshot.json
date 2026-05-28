@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase3-v1",
+  "seq": 12,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha"],
+  "projects": [
+    {"name": "alpha", "status": "alive", "last_activity_ts": 1777852800}
+  ],
+  "current_session": ""
+}
