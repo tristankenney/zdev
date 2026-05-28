@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Run only one CI per branch; cancel queued/in-progress runs on a new push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # macOS runner because zdevd is macOS-only: plutil, launchctl, and the
+    # tmux control-mode integration aren't portable. Apple Silicon matches
+    # the dev environment.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: zdevd/go.mod
+          cache-dependency-path: zdevd/go.sum
+
+      - name: Shell-syntax checks
+        run: |
+          set -e
+          # Pick the interpreter from each shebang so we don't false-fail
+          # bash scripts under zsh (or vice-versa).
+          check() {
+            local f="$1"
+            local shebang
+            shebang=$(head -1 "$f")
+            case "$shebang" in
+              *zsh*)  zsh  -n "$f" ;;
+              *bash*) bash -n "$f" ;;
+              *)      sh   -n "$f" ;;
+            esac
+            echo "  ok: $f"
+          }
+          check install.sh
+          for f in zdevd/scripts/*.sh; do check "$f"; done
+          for f in bin/*; do check "$f"; done
+
+      - name: make test (plutil lint + anti-fork gates + go test -race)
+        run: make -C zdevd test

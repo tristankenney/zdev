@@ -1,5 +1,7 @@
 # zdev
 
+[![CI](https://github.com/tristankenney/zdev/actions/workflows/ci.yml/badge.svg)](https://github.com/tristankenney/zdev/actions/workflows/ci.yml)
+
 Tmux + sidebar tooling for managing many concurrent dev sessions on macOS.
 One tmux session per project, an event-driven Go daemon that surfaces agent
 state and git/PR/port signals into a per-pane sidebar, and a CLI for
