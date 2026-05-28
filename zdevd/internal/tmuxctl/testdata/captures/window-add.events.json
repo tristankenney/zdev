@@ -1,0 +1,40 @@
+[
+  {
+    "type": "WindowAdd",
+    "fields": {
+      "id": "@0"
+    }
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "SessionChanged",
+    "fields": {
+      "id": "$0",
+      "name": "scenario"
+    }
+  },
+  {
+    "type": "SessionWindowChanged",
+    "fields": {
+      "sessionID": "$0",
+      "windowID": "@1"
+    }
+  },
+  {
+    "type": "WindowAdd",
+    "fields": {
+      "id": "@1"
+    }
+  },
+  {
+    "type": "SessionsChanged"
+  },
+  {
+    "type": "Exit",
+    "fields": {
+      "reason": ""
+    }
+  }
+]

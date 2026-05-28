@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase3-v1",
+  "seq": 18,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha", "beta", "gamma"],
+  "projects": [
+    {"name": "alpha", "status": "alive", "pr_open": 2, "pr_fail": 1},
+    {"name": "beta",  "status": "alive", "pr_open": 2, "pr_pend": 1},
+    {"name": "gamma", "status": "alive", "pr_open": 3}
+  ],
+  "current_session": ""
+}

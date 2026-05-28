@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE FILE — do NOT install directly.
+  Placeholders substituted by zdevd/Makefile $(PLIST_BUILT) rule:
+    @REPO_ROOT@  → output of `sl root` (or `git rev-parse --show-toplevel`)
+    @HOME@       → $HOME at install time
+  Substituted output lands at zdevd/bin/com.zdev.zdevd.plist and is what
+  gets symlinked into ~/Library/LaunchAgents/.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.zdev.zdevd</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@REPO_ROOT@/zdevd/bin/zdevd</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>Crashed</key><true/>
+    <key>SuccessfulExit</key><false/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>@HOME@/Library/Logs/zdev/zdevd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>@HOME@/Library/Logs/zdev/zdevd.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+  </dict>
+</dict>
+</plist>

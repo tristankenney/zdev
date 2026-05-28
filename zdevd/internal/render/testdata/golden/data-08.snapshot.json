@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase3-v1",
+  "seq": 22,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha", "beta"],
+  "projects": [
+    {"name": "alpha", "status": "alive", "agent_claude": "waiting"},
+    {"name": "beta",  "status": "alive", "agent_codex": "finished"}
+  ],
+  "current_session": ""
+}

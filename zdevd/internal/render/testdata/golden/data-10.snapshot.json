@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase3-v1",
+  "seq": 24,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha", "beta", "gamma"],
+  "projects": [
+    {"name": "alpha", "status": "alive",        "branch": "feature-auth", "dirty_count": 2, "pr_open": 1, "ports": [3000]},
+    {"name": "beta",  "status": "waiting",      "wait_started_ts": 1777859935},
+    {"name": "gamma", "status": "shell-running", "shell_cmd": "make test"}
+  ],
+  "current_session": ""
+}

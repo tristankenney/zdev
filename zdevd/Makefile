@@ -1,0 +1,279 @@
+# zdevd Makefile — Phase 1.
+# CONTEXT decisions:
+#   D-03: build → /dotfiles/zdevd/bin/{zdevd,zdev-sidebar}; install symlinks
+#         into ~/.local/bin and the plist into ~/Library/LaunchAgents.
+#   D-05: rename existing ~/.local/bin/zdev-sidebar-render → *-bash on install.
+#   D-06: make use-go is the only renderer path (use-bash removed per D4-20).
+#   D-14: make test = sub-10s; race detector + plutil lint + anti-fork gate.
+#   D-15: make bench-idle = sudo powermetrics, asserts < 1000 wakeups/sec.
+
+# REPO_ROOT resolves at parse time. `sl root` first (this repo uses Sapling
+# per CLAUDE.md), `git rev-parse` fallback for non-sl checkouts. Override
+# via `make REPO_ROOT=/path/to/repo install` if needed.
+REPO_ROOT     := $(shell sl root 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null)
+ZDEVD_DIR     := $(REPO_ROOT)/zdevd
+BIN_DIR       := $(ZDEVD_DIR)/bin
+LOCAL_BIN     := $(HOME)/.local/bin
+LAUNCH_AGENTS := $(HOME)/Library/LaunchAgents
+LOG_DIR       := $(HOME)/Library/Logs/zdev
+SOCKET_DIR    := $(HOME)/Library/Application Support/zdev
+PLIST_SRC     := $(ZDEVD_DIR)/launchd/com.zdev.zdevd.plist.in
+PLIST_BUILT   := $(BIN_DIR)/com.zdev.zdevd.plist
+PLIST_DST     := $(LAUNCH_AGENTS)/com.zdev.zdevd.plist
+REAPER_PLIST_SRC   := $(ZDEVD_DIR)/launchd/com.zdev.reaper.plist.in
+REAPER_PLIST_BUILT := $(BIN_DIR)/com.zdev.reaper.plist
+REAPER_PLIST_DST   := $(LAUNCH_AGENTS)/com.zdev.reaper.plist
+REAPER_LABEL  := com.zdev.reaper
+RENDER_LINK   := $(LOCAL_BIN)/zdev-sidebar-render
+GO_RENDERER   := $(BIN_DIR)/zdev-sidebar
+GO_DAEMON     := $(BIN_DIR)/zdevd
+GO_SHOW       := $(BIN_DIR)/zdev-show
+GOFLAGS       := -trimpath -ldflags="-s -w"
+
+# CONTEXT D4-16: bench-idle threshold finalized from Phase 4 bench-idle measurement.
+# bench-idle on 2026-05-06 showed 0 wakeups/sec at true idle (event-driven daemon).
+#
+# Tightened 2026-05-11 (quick task 260511-kqz, staff-review PR #1): was 50, now 10.
+# With the hub snapshot-equality short-circuit, idle wakeups are bounded by the
+# supervisor's 1Hz polls (~2/sec on a single goroutine, batched by Go's runtime
+# poller into fewer OS-level wakeups) plus negligible hub event processing. The
+# previous 50 setting was 25× looser than the measurement justified — a real
+# regression to e.g. 49 wakeups/sec would silently pass. 10 still allows
+# powermetrics sampling noise but catches any genuine ticker / busy-loop
+# regression. See CUTOVER-LOG.md for the original verdict; this comment for the
+# tightening rationale.
+BENCH_IDLE_THRESHOLD ?= 10
+
+LABEL  := com.zdev.zdevd
+DOMAIN := gui/$(shell id -u)
+
+.PHONY: all build test golden bench-idle bench-workday bench-workday-verdict drift-check live-test install uninstall use-go kill-renderers clean help start stop restart status logs
+
+all: build
+
+help:
+	@echo "Targets:"
+	@echo "  build           — go build both binaries (-trimpath -ldflags=-s -w)"
+	@echo "  install         — build, symlink renderer + daemon + zdev-show, install plist, bootstrap launchd"
+	@echo "  uninstall       — bootout, remove symlinks and plist"
+	@echo ""
+	@echo "  start           — bootstrap launchd (start daemon)"
+	@echo "  stop            — bootout launchd (stop daemon)"
+	@echo "  restart         — rebuild + kill stale renderers + stop + start (full restart with fresh binary)"
+	@echo "  kill-renderers  — SIGTERM all running zdev-sidebar processes (panes close; re-toggle to reopen)"
+	@echo "  status          — show daemon pid, uptime, and exit status"
+	@echo "  logs            — tail -f daemon logs (stdout + stderr interleaved)"
+	@echo ""
+	@echo "  test            — plutil-lint + anti-fork gate + go test -race ./..."
+	@echo "  golden          — golden-frame parity test (UPDATE=1 to regenerate)"
+	@echo "  bench-idle      — sudo powermetrics; asserts < $(BENCH_IDLE_THRESHOLD) wakeups/sec (D4-16 calibrated)"
+	@echo "  bench-workday   — sudo powermetrics 8h capture (operator-driven; D4-15)"
+	@echo "  bench-workday-verdict — compare two most-recent bench-workday-*.out files; D4-16 gate"
+	@echo "  drift-check     — run scripts/drift-check.sh; D4-17 byte-parity vs bash baseline"
+	@echo "  live-test       — go test -tags live (kill-9 + 10-renderer drills; D4-06 SC1/SC2)"
+	@echo "  use-go          — symlink ~/.local/bin/zdev-sidebar-render → Go binary"
+	@echo "  clean           — rm -rf bin/"
+
+start:
+	@if launchctl print "$(DOMAIN)/$(LABEL)" >/dev/null 2>&1; then \
+		echo "start: already running — use 'make restart' to reload"; \
+	else \
+		launchctl bootstrap "$(DOMAIN)" "$(PLIST_DST)"; \
+		echo "start: daemon started"; \
+	fi
+
+stop:
+	@if launchctl print "$(DOMAIN)/$(LABEL)" >/dev/null 2>&1; then \
+		launchctl bootout "$(DOMAIN)/$(LABEL)"; \
+		echo "stop: daemon stopped"; \
+	else \
+		echo "stop: daemon not running"; \
+	fi
+
+# kill-renderers sends SIGTERM to all running zdev-sidebar processes.
+# Each renderer's Layer 2 signal handler restores the cursor and exits cleanly,
+# closing its tmux pane. Re-toggle via zdev-sidebar-toggle to reopen with the
+# new binary. Called automatically by `make restart` after a fresh build so
+# stale binary images do not persist across renderer-affecting code changes.
+kill-renderers:
+	@N=$$(pgrep -x zdev-sidebar-render 2>/dev/null | wc -l | tr -d ' '); \
+		if [ "$$N" != "0" ]; then \
+			pkill -TERM -x zdev-sidebar-render 2>/dev/null || true; \
+			echo "kill-renderers: sent SIGTERM to $$N renderer(s); re-toggle each pane to reopen"; \
+		else \
+			echo "kill-renderers: no running zdev-sidebar-render processes found"; \
+		fi
+
+restart: build kill-renderers
+	@launchctl bootout "$(DOMAIN)/$(LABEL)" 2>/dev/null || true
+	@sleep 0.5
+	@launchctl bootstrap "$(DOMAIN)" "$(PLIST_DST)"
+	@sleep 1
+	@launchctl list | grep "$(LABEL)" | awk '{printf "restart: pid=%s exit=%s\n", $$1, $$2}'
+
+status:
+	@launchctl list | grep "$(LABEL)" | awk '{printf "pid=%s  last-exit=%s\n", $$1, $$2}' \
+		|| echo "status: not running"
+	@echo "log:    $(LOG_DIR)/zdevd.out.log"
+	@echo "errlog: $(LOG_DIR)/zdevd.err.log"
+	@if [ -S "$(SOCKET_DIR)/zdevd.sock" ]; then \
+		echo "socket: $(SOCKET_DIR)/zdevd.sock  [exists]"; \
+	else \
+		echo "socket: $(SOCKET_DIR)/zdevd.sock  [missing]"; \
+	fi
+
+logs:
+	@echo "--- tailing $(LOG_DIR)/zdevd.out.log and zdevd.err.log (Ctrl-C to stop) ---"
+	@tail -f "$(LOG_DIR)/zdevd.out.log" "$(LOG_DIR)/zdevd.err.log"
+
+build: $(GO_DAEMON) $(GO_RENDERER) $(GO_SHOW)
+
+$(GO_DAEMON): $(shell find cmd/zdevd internal -name '*.go' 2>/dev/null) go.mod
+	@mkdir -p "$(BIN_DIR)"
+	cd "$(ZDEVD_DIR)" && go build $(GOFLAGS) -o "$(GO_DAEMON)" ./cmd/zdevd
+
+$(GO_RENDERER): $(shell find cmd/zdev-sidebar internal -name '*.go' 2>/dev/null) go.mod
+	@mkdir -p "$(BIN_DIR)"
+	cd "$(ZDEVD_DIR)" && go build $(GOFLAGS) -o "$(GO_RENDERER)" ./cmd/zdev-sidebar
+
+$(GO_SHOW): $(shell find cmd/zdev-show internal -name '*.go' 2>/dev/null) go.mod
+	@mkdir -p "$(BIN_DIR)"
+	cd "$(ZDEVD_DIR)" && go build $(GOFLAGS) -o "$(GO_SHOW)" ./cmd/zdev-show
+
+# PLIST_BUILT — sed-substituted launchd plist. Generated into bin/ alongside
+# the Go binaries. Symlinked into ~/Library/LaunchAgents by `make install`.
+# plutil-lint validates the substituted output (real install target),
+# not the unsubstituted template. The first sed expression strips the
+# template-warning comment block (lines from a bare `<!--` to a bare `-->`)
+# so the substituted output is byte-clean for downstream tooling.
+$(PLIST_BUILT): $(PLIST_SRC) Makefile
+	@mkdir -p "$(BIN_DIR)"
+	sed -e '/^<!--$$/,/^-->$$/d' -e 's|@REPO_ROOT@|$(REPO_ROOT)|g' -e 's|@HOME@|$(HOME)|g' "$(PLIST_SRC)" > "$(PLIST_BUILT)"
+	plutil -lint "$(PLIST_BUILT)"
+
+# REAPER_PLIST_BUILT — substituted reaper plist. Same pattern as PLIST_BUILT.
+$(REAPER_PLIST_BUILT): $(REAPER_PLIST_SRC) Makefile
+	@mkdir -p "$(BIN_DIR)"
+	sed -e '/^<!--$$/,/^-->$$/d' -e 's|@HOME@|$(HOME)|g' "$(REAPER_PLIST_SRC)" > "$(REAPER_PLIST_BUILT)"
+	plutil -lint "$(REAPER_PLIST_BUILT)"
+
+# OPS-08, OPS-09 (the parts that run in pre-push). Sub-10s target per D-14.
+test: $(PLIST_BUILT)
+	plutil -lint "$(PLIST_BUILT)"
+	bash "$(ZDEVD_DIR)/scripts/check-no-daemon-fork.sh"
+	bash "$(ZDEVD_DIR)/scripts/check-no-tmux-poll.sh"
+	bash "$(ZDEVD_DIR)/scripts/check-no-shell-out.sh"
+	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
+
+# OPS-09 — golden-frame byte-equality (subset of `make test`, runnable solo).
+# Pass UPDATE=1 to regenerate fixtures.
+golden:
+ifeq ($(UPDATE),1)
+	cd "$(ZDEVD_DIR)" && go test -race -count=1 -run Golden ./internal/render/... -update
+else
+	cd "$(ZDEVD_DIR)" && go test -race -count=1 -run Golden ./internal/render/...
+endif
+
+# OPS-10 — manual/nightly idle-wakeup benchmark.
+# If zdevd is already running (e.g. via launchd) we measure that instance
+# directly — the bench cares about idle wakeups of the production daemon, not
+# a freshly-spawned one. If nothing is running, spawn a foreground daemon
+# bound to the canonical socket for the bench window. Either way, the
+# parse-powermetrics.sh awk pattern grabs zdevd's row from each sample.
+bench-idle: build
+	@mkdir -p "$(LOG_DIR)" "$(SOCKET_DIR)"
+	@rm -f /tmp/zdevd-bench.pid
+	@if pgrep -x zdevd >/dev/null 2>&1; then \
+		echo "bench-idle: existing zdevd detected — measuring it in place"; \
+		echo "bench-idle: (for a true idle reading, close sidebar panes first)"; \
+	else \
+		echo "bench-idle: no zdevd running — starting one in background..."; \
+		"$(GO_DAEMON)" & echo $$! > /tmp/zdevd-bench.pid; \
+		sleep 5; \
+	fi
+	@echo "bench-idle: running 60s sudo powermetrics window (sudo prompt incoming)..."
+	@bash "$(ZDEVD_DIR)/scripts/parse-powermetrics.sh" > /tmp/zdevd-bench.out || true
+	@if [ -f /tmp/zdevd-bench.pid ]; then \
+		kill $$(cat /tmp/zdevd-bench.pid) 2>/dev/null || true; \
+		rm -f /tmp/zdevd-bench.pid; \
+	fi
+	@echo "bench-idle: per-sample wakeups (one per line):"
+	@cat /tmp/zdevd-bench.out
+	@max=$$(awk 'BEGIN{m=0}{ if ($$1+0 > m) m=$$1+0 } END{print m}' /tmp/zdevd-bench.out); \
+		echo "bench-idle: max wakeups/sec = $$max (threshold: < $(BENCH_IDLE_THRESHOLD), Go_bench_median * 1.25 per D4-16)"; \
+		if [ "$$max" -ge $(BENCH_IDLE_THRESHOLD) ]; then echo "bench-idle: FAIL"; exit 1; fi
+	@echo "bench-idle: PASS"
+
+# OPS-07 / D4-15 — 8h workday powermetrics capture.
+# Output: $(LOG_DIR)/bench-workday-$(shell date +%F).out (one per day).
+# Run alternating days: one bash day, one Go day, then `make bench-workday-verdict`.
+# Requires sudo for powermetrics. Unattended: ensure laptop is powered.
+# NOTE: bench-workday invokes sudo powermetrics and blocks for ~8h. Do NOT run
+# in CI. This is an operator-driven workday benchmark gate per D4-15/D4-16.
+bench-workday: build
+	@mkdir -p "$(LOG_DIR)"
+	@OUTFILE="$(LOG_DIR)/bench-workday-$$(date +%F).out"; \
+		echo "bench-workday: writing to $$OUTFILE (8h sudo powermetrics window incoming)"; \
+		bash "$(ZDEVD_DIR)/scripts/parse-powermetrics-workday.sh" > "$$OUTFILE" || true; \
+		echo "bench-workday: complete — file at $$OUTFILE"; \
+		wc -l "$$OUTFILE"
+
+# OPS-07 / D4-16 — verdict gate: >=50% median wakeups/sec reduction.
+# Reads the two most-recent bench-workday-*.out (assumes alternating-day cadence).
+bench-workday-verdict:
+	@bash "$(ZDEVD_DIR)/scripts/parse-workday-verdict.sh"
+
+# D4-17 — drift detection: ZDEV_SIDEBAR_DETERMINISTIC=1 bash vs Go-self goldens.
+# The script lives at scripts/drift-check.sh (created in Plan 04-08).
+drift-check:
+	@bash "$(ZDEVD_DIR)/scripts/drift-check.sh"
+
+# SC1 + SC2 readiness — kill-9 recovery and 10-pane reconnect drills (Plan 04-06).
+# Excluded from default `make test` to keep that gate sub-15s.
+live-test:
+	cd "$(ZDEVD_DIR)" && go test -tags live -count=1 -timeout 90s ./...
+
+install: build $(PLIST_BUILT) $(REAPER_PLIST_BUILT)
+	@mkdir -p "$(LOCAL_BIN)" "$(LAUNCH_AGENTS)" "$(LOG_DIR)" "$(SOCKET_DIR)"
+	@chmod 700 "$(LOG_DIR)" "$(SOCKET_DIR)"
+	@# Symlink Go binaries into PATH.
+	ln -sf "$(GO_RENDERER)" "$(RENDER_LINK)"
+	ln -sf "$(GO_DAEMON)" "$(LOCAL_BIN)/zdevd"
+	ln -sf "$(GO_SHOW)" "$(LOCAL_BIN)/zdev-show"
+	@# Symlink substituted plists into LaunchAgents.
+	ln -sf "$(PLIST_BUILT)" "$(PLIST_DST)"
+	ln -sf "$(REAPER_PLIST_BUILT)" "$(REAPER_PLIST_DST)"
+	@# launchctl bootout-then-bootstrap for zdevd (Pitfall B).
+	bash "$(ZDEVD_DIR)/scripts/install-launchd.sh"
+	@# Reaper job — same bootout-then-bootstrap pattern, inline since it's a one-liner.
+	@launchctl bootout "$(DOMAIN)/$(REAPER_LABEL)" 2>/dev/null || true
+	@launchctl bootstrap "$(DOMAIN)" "$(REAPER_PLIST_DST)"
+	@echo "install: reaper job bootstrapped (hourly, $$ZDEV_REAP_AFTER_HOURS h threshold; default 24)"
+	@# Sapling pre-push hook (Pitfall D).
+	bash "$(ZDEVD_DIR)/scripts/install-prepush.sh"
+	@echo "install: complete. Open a tmux pane via zdev-sidebar-toggle to verify."
+
+uninstall:
+	@launchctl bootout "$(DOMAIN)/$(LABEL)" 2>/dev/null || true
+	@launchctl bootout "$(DOMAIN)/$(REAPER_LABEL)" 2>/dev/null || true
+	@rm -f "$(PLIST_DST)" "$(REAPER_PLIST_DST)"
+	@rm -f "$(RENDER_LINK)" "$(LOCAL_BIN)/zdevd" "$(LOCAL_BIN)/zdev-show"
+	@echo "uninstall: complete."
+
+use-go:
+	@if [ ! -x "$(GO_RENDERER)" ]; then echo "use-go: $(GO_RENDERER) missing — run 'make build' first" >&2; exit 1; fi
+	ln -sf "$(GO_RENDERER)" "$(RENDER_LINK)"
+	@echo "use-go: $(RENDER_LINK) → $(GO_RENDERER)"
+	@# Existing renderer processes bound to the old symlink survive — terminate
+	@# them so their tmux panes close. Re-running zdev-sidebar-toggle picks up
+	@# the new symlink. The Go and bash renderers both restore the cursor on
+	@# SIGTERM (Pitfall 8), so this is safe.
+	@N=$$(pgrep -f 'zdev-sidebar-render$$' 2>/dev/null | wc -l | tr -d ' '); \
+		if [ "$$N" != "0" ]; then \
+			pkill -TERM -f 'zdev-sidebar-render$$' 2>/dev/null || true; \
+			echo "use-go: terminated $$N running renderer(s); re-toggle the pane to see the Go renderer"; \
+		fi
+
+
+clean:
+	rm -rf "$(BIN_DIR)"

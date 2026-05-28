@@ -1,0 +1,2 @@
+%output %1 hello\012world
+%window-add @99

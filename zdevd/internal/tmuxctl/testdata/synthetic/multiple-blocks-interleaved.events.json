@@ -1,0 +1,20 @@
+[
+  {
+    "type": "WindowAdd",
+    "fields": {
+      "id": "@1"
+    }
+  },
+  {
+    "type": "WindowAdd",
+    "fields": {
+      "id": "@2"
+    }
+  },
+  {
+    "type": "WindowAdd",
+    "fields": {
+      "id": "@3"
+    }
+  }
+]

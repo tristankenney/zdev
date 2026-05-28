@@ -1,0 +1,6 @@
+p11001
+n/Users/me/workspace/alpha
+p11002
+n/Users/me/workspace/beta
+p11003
+n/Users/me/other/elsewhere

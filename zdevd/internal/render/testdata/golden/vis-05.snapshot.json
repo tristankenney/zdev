@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase3-v1",
+  "seq": 5,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha", "zitcha-frontend", "my-api-service"],
+  "projects": [
+    {"name": "alpha",          "status": "alive"},
+    {"name": "zitcha-frontend","status": "alive"},
+    {"name": "my-api-service", "status": "alive"}
+  ],
+  "current_session": ""
+}

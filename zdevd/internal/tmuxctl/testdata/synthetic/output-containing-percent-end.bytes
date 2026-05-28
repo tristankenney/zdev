@@ -1,0 +1,5 @@
+%begin 1714824000 5 1
+%end 99 1 0
+some opaque pane payload bytes
+%end 1714824000 5 1
+%window-add @42
