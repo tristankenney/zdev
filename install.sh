@@ -15,6 +15,36 @@ symlink() {
   echo "  $dst -> $src"
 }
 
+echo "==> Checking prerequisites"
+missing=()
+for tool in tmux go make jq plutil launchctl; do
+  command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+if (( ${#missing[@]} > 0 )); then
+  echo "  MISSING required tools: ${missing[*]}" >&2
+  echo "  Install via Homebrew: brew install ${missing[*]}" >&2
+  echo "  (plutil ships with macOS; launchctl too — re-run if these still show missing.)" >&2
+  exit 1
+fi
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "  WARNING: zdev targets macOS (launchd). Non-Darwin platforms are unsupported." >&2
+fi
+tmux_major=$(tmux -V 2>/dev/null | awk '{print $2}' | cut -d. -f1)
+if [[ -z "$tmux_major" || "$tmux_major" -lt 3 ]]; then
+  echo "  WARNING: tmux $(tmux -V 2>/dev/null) detected — zdev requires 3.x with control mode" >&2
+fi
+if command -v gh >/dev/null 2>&1; then
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "  NOTE: 'gh' is installed but not authenticated — PR probes will fail until you run 'gh auth login'"
+  fi
+else
+  echo "  NOTE: 'gh' (GitHub CLI) not installed — PR probes will be no-ops"
+fi
+if ! command -v claude >/dev/null 2>&1; then
+  echo "  NOTE: 'claude' not on PATH — sessions started by 'zdev <project>' will be shell-only."
+  echo "        Override agent pane via ZDEV_AGENT_CMD if you use a different tool."
+fi
+
 echo "==> Shell scripts"
 mkdir -p "$HOME/.local/bin"
 for f in "$REPO/bin"/*; do
