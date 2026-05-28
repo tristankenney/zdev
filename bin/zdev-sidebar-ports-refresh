@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Discover listening localhost ports owned by each tmux session's pane
+# tree. Walks `lsof` output and matches each listening PID to a pane
+# ancestor via the ps tree.
+#
+# Output (TSV): <session>\t<port,port,port>
+# Backgrounded by zdev-sidebar-render every few minutes.
+set -uo pipefail
+
+# pane_pid → session
+PANE_MAP=$(tmux list-panes -a -F '#{pane_pid}|#{session_name}' 2>/dev/null)
+[ -z "$PANE_MAP" ] && exit 0
+
+# All listening ports + owning PIDs (one PID|PORT per line, deduped).
+LSOF=$(lsof -P -nP -i -sTCP:LISTEN 2>/dev/null \
+  | awk 'NR>1 {
+      pid=$2; n=split($9, p, ":"); port=p[n];
+      if (port ~ /^[0-9]+$/ && pid ~ /^[0-9]+$/) print pid"|"port
+    }' \
+  | sort -u)
+[ -z "$LSOF" ] && exit 0
+
+# Full ps tree once (pid ppid pairs).
+PSTREE=$(ps -axo pid=,ppid= 2>/dev/null)
+
+# Walk pid's parent chain (max ~15 hops) and emit the first ancestor
+# that matches a known pane_pid. Empty output if no match.
+find_pane_ancestor() {
+  local pid="$1" depth=0
+  while [ "$depth" -lt 15 ] && [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "1" ]; do
+    if printf '%s\n' "$PANE_MAP" | grep -q "^${pid}|"; then
+      printf '%s' "$pid"
+      return 0
+    fi
+    pid=$(printf '%s\n' "$PSTREE" | awk -v p="$pid" '$1==p {print $2; exit}')
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+# Emit "session|port" for every listening port whose owning PID
+# descends from a tmux pane.
+{
+  while IFS='|' read -r pid port; do
+    [ -z "$pid" ] && continue
+    pane=$(find_pane_ancestor "$pid") || continue
+    session=$(printf '%s\n' "$PANE_MAP" | awk -F'|' -v p="$pane" '$1==p {print $2; exit}')
+    [ -z "$session" ] && continue
+    printf '%s|%s\n' "$session" "$port"
+  done <<< "$LSOF"
+} | sort -u | awk -F'|' '
+{
+  if (last && last != $1) {
+    print last "\t" out
+    out = ""; n = 0
+  }
+  last = $1
+  if (n < 4) {
+    out = out (out ? "," : "") $2
+    n++
+  }
+}
+END {
+  if (last) print last "\t" out
+}
+'

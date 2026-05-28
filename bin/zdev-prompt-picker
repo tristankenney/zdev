@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# fzf popup over recent claude prompts. Selecting one types it (without
+# submitting) into the originating tmux pane.
+#
+# Usage: zdev-prompt-picker <target-pane-id>
+set -euo pipefail
+
+# Rose Pine palette — keeps the popup visually consistent with the
+# tmux theme. Appends to any existing FZF_DEFAULT_OPTS so user overrides win.
+export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
+  --color=fg:#908caa,bg:#191724,hl:#ebbcba \
+  --color=fg+:#e0def4,bg+:#26233a,hl+:#ebbcba \
+  --color=border:#c4a7e7,header:#31748f,gutter:#191724 \
+  --color=spinner:#f6c177,info:#9ccfd8 \
+  --color=pointer:#c4a7e7,marker:#eb6f92,prompt:#908caa"
+
+TARGET="${1:-}"
+[ -z "$TARGET" ] && { echo "missing target pane id"; sleep 1; exit 1; }
+
+LOG="${HOME}/.claude/prompt-history.jsonl"
+if [ ! -s "$LOG" ]; then
+  echo "No prompt history yet."
+  echo "(Submit a prompt while the prompt-history.sh hook is wired up first.)"
+  read -r -n 1 -p "Press any key to close…"
+  exit 0
+fi
+
+# Build display lines: ts \t age \t session \t single-line-preview
+now=$(date +%s)
+display=$(jq -r '. | "\(.ts)\t\(.session)\t\(.prompt | gsub("\n"; " ⏎ ") | .[0:200])"' \
+  < "$LOG" 2>/dev/null \
+  | tail -r \
+  | awk -F'\t' '!seen[$3]++' \
+  | awk -F'\t' -v now="$now" '
+      {
+        age = now - $1
+        if      (age < 60)    a = age "s"
+        else if (age < 3600)  a = int(age/60) "m"
+        else if (age < 86400) a = int(age/3600) "h"
+        else                  a = int(age/86400) "d"
+        printf "%s\t%-6s\t%-30s\t%s\n", $1, a, $2, $3
+      }'
+)
+
+[ -z "$display" ] && { echo "No prompt history yet."; sleep 1; exit 0; }
+
+chosen=$(printf '%s\n' "$display" \
+  | fzf --delimiter=$'\t' --with-nth=2.. \
+        --prompt='prompt > ' \
+        --header='Recall a prompt — Enter types it (no auto-submit)' \
+        --height=100% --reverse --no-multi)
+
+[ -z "$chosen" ] && exit 0
+
+# Resolve full prompt text by ts.
+chosen_ts=$(printf '%s' "$chosen" | cut -f1)
+[ -z "$chosen_ts" ] && exit 0
+
+full_prompt=$(jq -r --argjson ts "$chosen_ts" 'select(.ts == $ts) | .prompt' \
+  < "$LOG" | head -200)
+
+[ -z "$full_prompt" ] && exit 0
+
+# Type into the originating pane without auto-submitting (-l = literal,
+# no key-name interpretation; preserves \n).
+tmux send-keys -t "$TARGET" -l -- "$full_prompt"

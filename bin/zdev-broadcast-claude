@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Broadcast a prompt to every tmux pane whose title is a claude pane
+# (matches "claude" optionally prefixed by ● or ◆ from zdev-notify).
+# Useful for /clear, "git pull && npm install", "run tests" style
+# universal commands across parallel agent sessions.
+set -euo pipefail
+
+# Find all claude panes.
+panes=$(tmux list-panes -a -F '#{pane_id}|#{session_name}|#{pane_title}' 2>/dev/null \
+  | awk -F'|' '$3 == "claude" || $3 == "● claude" || $3 == "◆ claude" {print $1 "|" $2}')
+
+if [ -z "$panes" ]; then
+  echo "No claude panes found."
+  read -r -n 1 -p "Press any key to close…"
+  exit 0
+fi
+
+count=$(printf '%s\n' "$panes" | wc -l | tr -d ' ')
+echo "Broadcast to ${count} claude pane(s):"
+printf '%s\n' "$panes" | awk -F'|' '{printf "  • %s\n", $2}'
+echo
+
+# Read the prompt — supports plain bash readline.
+read -r -p "> " message
+[ -z "$message" ] && { echo "(cancelled)"; exit 0; }
+
+# Default: type-only (no Enter) so user can verify in each pane before
+# submitting. Pass --submit to auto-Enter.
+submit=0
+case "$message" in
+  '!!'*)
+    # Shorthand: lead with '!!' to auto-submit, e.g. '!! /clear'
+    message="${message#!!}"
+    message="${message# }"
+    submit=1
+    ;;
+esac
+
+if (( submit == 0 )); then
+  read -r -n 1 -p "Auto-submit (Enter) in every pane? [y/N] " confirm
+  echo
+  case "$confirm" in y|Y) submit=1 ;; esac
+fi
+
+printf '%s\n' "$panes" | cut -d'|' -f1 | while read -r pane; do
+  [ -z "$pane" ] && continue
+  tmux send-keys -t "$pane" -l -- "$message"
+  (( submit == 1 )) && tmux send-keys -t "$pane" Enter
+done
+
+echo
+if (( submit == 1 )); then
+  echo "Sent + submitted to ${count} pane(s)."
+else
+  echo "Typed into ${count} pane(s) (no auto-submit)."
+fi
+sleep 0.6

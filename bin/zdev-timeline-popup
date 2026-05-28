@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# fzf popup showing recent agent state transitions across all sessions.
+# Bound to a tmux key so you can scan "what happened while I was away".
+set -euo pipefail
+
+# Rose Pine palette — keeps the popup visually consistent with the
+# tmux theme. Appends to any existing FZF_DEFAULT_OPTS so user overrides win.
+export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
+  --color=fg:#908caa,bg:#191724,hl:#ebbcba \
+  --color=fg+:#e0def4,bg+:#26233a,hl+:#ebbcba \
+  --color=border:#c4a7e7,header:#31748f,gutter:#191724 \
+  --color=spinner:#f6c177,info:#9ccfd8 \
+  --color=pointer:#c4a7e7,marker:#eb6f92,prompt:#908caa"
+
+LOG="${HOME}/.claude/state-timeline.log"
+if [ ! -s "$LOG" ]; then
+  echo "No state events recorded yet."
+  echo "(zdev-notify writes to $LOG on every Notification/Stop/Clear.)"
+  read -r -n 1 -p "Press any key to close…"
+  exit 0
+fi
+
+now=$(date +%s)
+
+# Format each line for display:
+#   <age>  <session>           <state>     <tool>
+# Reverse so newest is on top.
+formatted=$(tail -500 "$LOG" | awk -F'\t' -v now="$now" '
+{
+  age = now - $1
+  if      (age < 60)    a = age "s"
+  else if (age < 3600)  a = int(age/60) "m"
+  else if (age < 86400) a = int(age/3600) "h"
+  else                  a = int(age/86400) "d"
+  state = $3
+  if      (state ~ /^(waiting|needs-input|asking)$/) m = "●"
+  else if (state ~ /^(done|idle|finished)$/)         m = "◆"
+  else if (state == "clear")                         m = "·"
+  else                                               m = "?"
+  printf "%-6s %s  %-32s %-12s %s\n", a, m, $2, state, $4
+}' | tail -r)
+
+[ -z "$formatted" ] && exit 0
+
+printf '%s\n' "$formatted" \
+  | fzf --prompt='timeline > ' \
+        --header='Recent agent state transitions (newest first)' \
+        --height=100% --reverse --no-multi

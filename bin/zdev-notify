@@ -1,0 +1,63 @@
+#!/bin/bash
+# Update the current tmux pane title to flag attention state.
+# Called by Claude Code hooks and Codex `notify`.
+#
+# Usage: zdev-notify <tool> [state]
+#   state: "waiting" / "needs-input" → ●  (urgent: question, permission, etc.)
+#          "done" / "idle" / "finished" → ◆  (just-finished, no action urgent)
+#          "clear" / "working" → no marker
+set -eu
+
+TOOL="${1:-cli}"
+STATE="${2:-waiting}"
+
+if [ -z "${TMUX_PANE:-}" ]; then
+    exit 0
+fi
+
+# Per-session timestamp file lets the sidebar render show how long an
+# attention state has persisted.
+#
+# The timestamp lives in a PRIVATE subdir of $TMPDIR rather than $TMPDIR
+# itself so the zdevd fsnotify watcher does not wake on every unrelated
+# macOS TMPDIR event. The subdir name "zdevd-notif" must match
+# notif.SubdirName in zdevd/internal/notif/watcher.go.
+SESSION=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || echo "")
+TMP_PARENT="${TMPDIR:-/tmp/}"
+# Normalise: ensure trailing slash so concatenation is safe.
+case "$TMP_PARENT" in
+    */) ;;
+    *)  TMP_PARENT="${TMP_PARENT}/" ;;
+esac
+TS_DIR="${TMP_PARENT}zdevd-notif"
+TS_FILE="${TS_DIR}/zdev-notif-${SESSION}.ts"
+mkdir -p "$TS_DIR" 2>/dev/null || true
+
+case "$STATE" in
+    clear|working)
+        TITLE="$TOOL"
+        [ -n "$SESSION" ] && rm -f "$TS_FILE" 2>/dev/null
+        ;;
+    done|idle|finished)
+        TITLE="◆ $TOOL"
+        [ -n "$SESSION" ] && rm -f "$TS_FILE" 2>/dev/null
+        ;;
+    *)  # waiting, needs-input, asking, …
+        TITLE="● $TOOL"
+        # Only write timestamp on first entry to waiting; preserve the
+        # original wait-start time across repeated Notification fires.
+        if [ -n "$SESSION" ] && [ ! -f "$TS_FILE" ]; then
+            date +%s > "$TS_FILE" 2>/dev/null
+        fi
+        ;;
+esac
+
+tmux select-pane -t "$TMUX_PANE" -T "$TITLE" 2>/dev/null || true
+
+# Append to a global state timeline so the timeline popup can show
+# what happened across every session over the recent past.
+TIMELINE="${HOME}/.claude/state-timeline.log"
+if [ -d "$(dirname "$TIMELINE")" ] || mkdir -p "$(dirname "$TIMELINE")" 2>/dev/null; then
+    printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${SESSION:-?}" "$STATE" "$TOOL" \
+        >> "$TIMELINE" 2>/dev/null || true
+fi
