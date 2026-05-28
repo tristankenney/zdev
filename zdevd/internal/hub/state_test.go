@@ -1133,3 +1133,66 @@ func TestBuildSnapshot_WaitAcknowledged_NotWaiting(t *testing.T) {
 		t.Errorf("WaitAcknowledged = true; want false (WaitStartedTS == 0, not waiting)")
 	}
 }
+
+// TestPaneCaptureFailed_EvictsAfterThreshold verifies that the ghost-pane
+// guard removes a pane from state tracking once consecutive PaneCaptureFailed
+// events reach maxConsecutiveCaptureFailures. Reproduces bug 260528: a
+// session killed externally left a pane reference in panesByID that
+// recomputeAgents kept selecting for capture, flooding the eventlog channel.
+func TestPaneCaptureFailed_EvictsAfterThreshold(t *testing.T) {
+	t.Run("evicts_after_threshold_failures", func(t *testing.T) {
+		s := buildTestState("ghost-sess", []string{"%83"}, []string{"● claude"})
+
+		// First N-1 failures only increment the counter.
+		for i := 1; i < maxConsecutiveCaptureFailures; i++ {
+			applyEvent(s, tmuxctl.PaneCaptureFailed{Session: "ghost-sess", PaneID: "%83"}, nil)
+			if _, ok := s.panesByID["%83"]; !ok {
+				t.Fatalf("pane evicted prematurely after %d failures", i)
+			}
+			if got := s.paneCaptureFailures["%83"]; got != i {
+				t.Errorf("failure count after %d events = %d; want %d", i, got, i)
+			}
+		}
+
+		// The threshold-th failure triggers eviction.
+		applyEvent(s, tmuxctl.PaneCaptureFailed{Session: "ghost-sess", PaneID: "%83"}, nil)
+
+		if _, ok := s.panesByID["%83"]; ok {
+			t.Errorf("pane %%83 still in panesByID after threshold; want evicted")
+		}
+		if _, ok := s.paneCaptureFailures["%83"]; ok {
+			t.Errorf("failure counter for %%83 not cleared after eviction")
+		}
+		// Also gone from the window's panesIDs map.
+		if _, ok := s.sessions["$1"].windows["@1"].panesIDs["%83"]; ok {
+			t.Errorf("pane %%83 still in window.panesIDs after eviction")
+		}
+	})
+
+	t.Run("success_resets_counter", func(t *testing.T) {
+		s := buildTestState("live-sess", []string{"%99"}, []string{"● claude"})
+		// Pretend the pane is in waiting state so PaneCaptureReady applies.
+		s.projectData["live-sess"] = projectData{AgentClaude: "waiting"}
+
+		// Two failures, then a success.
+		applyEvent(s, tmuxctl.PaneCaptureFailed{Session: "live-sess", PaneID: "%99"}, nil)
+		applyEvent(s, tmuxctl.PaneCaptureFailed{Session: "live-sess", PaneID: "%99"}, nil)
+		if got := s.paneCaptureFailures["%99"]; got != 2 {
+			t.Fatalf("setup: failure count = %d; want 2", got)
+		}
+
+		applyEvent(s, tmuxctl.PaneCaptureReady{Session: "live-sess", Text: "stdout"}, nil)
+		if _, ok := s.paneCaptureFailures["%99"]; ok {
+			t.Errorf("PaneCaptureReady did not clear failure counter for %%99")
+		}
+
+		// A subsequent failure should restart counting from 1, not pick up at 3.
+		applyEvent(s, tmuxctl.PaneCaptureFailed{Session: "live-sess", PaneID: "%99"}, nil)
+		if got := s.paneCaptureFailures["%99"]; got != 1 {
+			t.Errorf("after success+failure, count = %d; want 1", got)
+		}
+		if _, ok := s.panesByID["%99"]; !ok {
+			t.Errorf("pane evicted after only 1 failure post-reset")
+		}
+	})
+}
