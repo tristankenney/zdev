@@ -28,7 +28,13 @@ RENDER_LINK   := $(LOCAL_BIN)/zdev-sidebar-render
 GO_RENDERER   := $(BIN_DIR)/zdev-sidebar
 GO_DAEMON     := $(BIN_DIR)/zdevd
 GO_SHOW       := $(BIN_DIR)/zdev-show
-GOFLAGS       := -trimpath -ldflags="-s -w"
+
+# VERSION derives from the nearest annotated git/sl tag plus dirty-state if any.
+# Falls back to "dev" outside a VCS checkout (e.g. tarball install).
+VERSION       := $(shell git describe --tags --dirty --always 2>/dev/null \
+                  || sl log -r . --template "{latesttag}" 2>/dev/null \
+                  || echo dev)
+GOFLAGS       := -trimpath -ldflags="-s -w -X main.version=$(VERSION)"
 
 # CONTEXT D4-16: bench-idle threshold finalized from Phase 4 bench-idle measurement.
 # bench-idle on 2026-05-06 showed 0 wakeups/sec at true idle (event-driven daemon).
