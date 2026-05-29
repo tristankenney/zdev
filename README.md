@@ -1,11 +1,30 @@
 # zdev
 
 [![CI](https://github.com/tristankenney/zdev/actions/workflows/ci.yml/badge.svg)](https://github.com/tristankenney/zdev/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Tmux + sidebar tooling for managing many concurrent dev sessions on macOS.
-One tmux session per project, an event-driven Go daemon that surfaces agent
-state and git/PR/port signals into a per-pane sidebar, and a CLI for
-starting, listing, killing, and auto-reaping sessions.
+You're 8 coding agents deep across 8 tmux sessions. Three of them have been
+silently waiting on input for the last 20 minutes. **zdev** is the daemon +
+tmux sidebar that surfaces which sessions need you (and what they're stuck
+on), plus a CLI that spins, kills, and auto-reaps one tmux session per
+project so the list stays tractable.
+
+![sidebar screenshot placeholder](docs/screenshot.png)
+
+> Drop a real screenshot at `docs/screenshot.png`. Until then this link
+> 404s. (Pre-1.0 lazy.)
+
+## What you get
+
+- **Sidebar pane in every tmux window** that surfaces, for each project:
+  agent attention state (waiting / working / idle), branch + dirty/ahead/
+  behind counts, open PRs with check status, listening dev-server ports,
+  and "you've been waiting N minutes" tier escalations
+- **`zdev` CLI** — one tmux session per project, plus `up` / `list` /
+  `kill` / `reap` with launchd-driven hourly idle reaping
+- **Event-driven Go daemon** that connects to `tmux -CC` control mode, so
+  it's measurably zero idle CPU between events (vs. polling tmux at 1 Hz
+  which the previous bash sidebar did, and which lit my laptop fan up)
 
 ## Prerequisites
 
