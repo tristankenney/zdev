@@ -28,7 +28,7 @@ const watcherSessionName = "zdevd-watcher"
 // %subscription-changed events for panes in the session the control-mode client
 // is currently attached to. The daemon attaches to zdevd-watcher which has no
 // user panes, so per-pane or %* subscriptions never fire for user panes in
-// dotfiles / zitcha-* sessions (confirmed against tmux 3.6a).
+// dotfiles / myorg-* sessions (confirmed against tmux 3.6a).
 //
 // The correct approach for cross-session title monitoring is periodic polling:
 // issue list-panes -a every N seconds; diff against cached titles; emit
@@ -276,7 +276,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 // panes in the session the control-mode client is currently attached to. The
 // daemon attaches to zdevd-watcher which has no user panes. %* subscriptions
 // issued while in zdevd-watcher silently never fire for panes in
-// dotfiles/zitcha-* sessions (confirmed against tmux 3.6a). There is no
+// dotfiles/myorg-* sessions (confirmed against tmux 3.6a). There is no
 // pane-title-changed hook in tmux 3.6a, and tmux does not broadcast cross-
 // session pane title changes as control-mode notifications.
 //

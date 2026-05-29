@@ -116,7 +116,7 @@ Usage:
 
 Favorites:
   Append ' *' to a line in $PROJECTS_FILE:
-      zitcha/backend *
+      myorg/backend *
   Favorites are started by 'zdev up' and never reaped automatically.
 
 Configured projects:
@@ -291,6 +291,16 @@ if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
 fi
 
 case "$1" in
+    --version|-v|version)
+        # Defer to zdevd, which has the build-time-injected version. Falls
+        # back to "dev" if the daemon binary isn't installed.
+        if command -v zdevd >/dev/null 2>&1; then
+            zdevd --version
+        else
+            echo "dev"
+        fi
+        exit 0
+        ;;
     --list-projects)
         for p in "${PROJECTS[@]}"; do echo "$p"; done
         exit 0
