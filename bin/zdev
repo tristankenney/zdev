@@ -3,7 +3,7 @@ set -euo pipefail
 
 WORKSPACE="${ZDEV_WORKSPACE:-$HOME/workspace}"
 PROJECTS_FILE="${ZDEV_PROJECTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zdev/projects}"
-REAP_AFTER_HOURS="${ZDEV_REAP_AFTER_HOURS:-24}"
+REAP_AFTER_HOURS="${ZDEV_REAP_AFTER_HOURS:-8}"
 REAP_LOG="${ZDEV_REAP_LOG:-$HOME/Library/Logs/zdev/reaper.log}"
 
 if [[ ! -f "$PROJECTS_FILE" ]]; then

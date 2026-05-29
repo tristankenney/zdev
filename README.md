@@ -107,7 +107,7 @@ running `$ZDEV_AGENT_CMD`.
 | `ZDEV_WORKSPACE` | `$HOME/workspace` | Root dir holding project checkouts |
 | `ZDEV_PROJECTS_FILE` | `$XDG_CONFIG_HOME/zdev/projects` | Project list |
 | `ZDEV_AGENT_CMD` | `claude --dangerously-skip-permissions --continue` if `claude` is on `$PATH`; else empty | Command launched in the right-hand pane; empty disables the pane |
-| `ZDEV_REAP_AFTER_HOURS` | `24` | Idle threshold for `zdev reap` |
+| `ZDEV_REAP_AFTER_HOURS` | `8` | Idle threshold for `zdev reap` |
 | `ZDEV_REAP_LOG` | `~/Library/Logs/zdev/reaper.log` | Reap event log |
 | `ZDEV_SIDEBAR_THRESHOLD` | `200` | Min client width (cols) for sidebar to appear |
 | `ZDEV_SIDEBAR_WIDTH` | `50` | Sidebar pane width (cols) |

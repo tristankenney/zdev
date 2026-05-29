@@ -9,7 +9,7 @@
 
   Behaviour:
     Runs `zdev reap` hourly. Kills tmux sessions that have not been
-    attached for ZDEV_REAP_AFTER_HOURS hours (default 24). Skips
+    attached for ZDEV_REAP_AFTER_HOURS hours (default 8). Skips
     favorites and the currently-attached session. See ~/.local/bin/zdev.
 -->
 <plist version="1.0">
