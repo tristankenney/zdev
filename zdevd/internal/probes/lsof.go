@@ -182,8 +182,8 @@ func parseLsofCwd(b []byte) map[string]string {
 // projectFromCwd extracts the project name from a cwd path. Returns "" if
 // cwd is not under the workspace.
 //
-// Workspace = "/Users/me/workspace", cwd = "/Users/me/workspace/example/frontend"
-// → project = "example" (first path component below workspace).
+// Workspace = "/Users/me/workspace", cwd = "/Users/me/workspace/myorg/frontend"
+// → project = "myorg" (first path component below workspace).
 //
 // Bash baseline (~/.local/bin/zdev-sidebar-ports-refresh) uses ps-tree
 // ancestor walk; D3-03 simplifies to cwd-based attribution.

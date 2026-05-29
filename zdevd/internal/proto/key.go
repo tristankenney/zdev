@@ -2,7 +2,7 @@ package proto
 
 import "strings"
 
-// SessionKey converts a slash-form project name (e.g. "example/.github") to
+// SessionKey converts a slash-form project name (e.g. "myorg/.github") to
 // the dash-form key used to look up data keyed by tmux session name.
 //
 // Two substitutions are required:

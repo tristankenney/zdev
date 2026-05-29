@@ -8,7 +8,7 @@ set -uo pipefail
 
 zdev --list-projects 2>/dev/null | while IFS= read -r proj; do
   [ -z "$proj" ] && continue
-  # Skip non org/repo entries (e.g. bare "example").
+  # Skip non org/repo entries (e.g. bare "myorg").
   [[ "$proj" == */* ]] || continue
 
   result=$(gh pr list --repo "$proj" --author @me --state open \

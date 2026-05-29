@@ -46,7 +46,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 	// DATA-10: project list is the canonical row source (D-03 — slash-form
 	// names). UNION with session-only entries so unlinked tmux sessions still
 	// surface. Slash-form project entries suppress their dash-form session
-	// twins so "example/backend" and "example-backend" never both appear.
+	// twins so "myorg/backend" and "myorg-backend" never both appear.
 	seen := make(map[string]struct{}, len(st.projectListNames)+len(nameToSession))
 	names := make([]string, 0, len(st.projectListNames)+len(nameToSession))
 
@@ -81,8 +81,8 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 	for _, n := range names {
 		// D-02 (Phase 999.1): nameToSession, projectData, prCounts, and
 		// celebrateUntil are all keyed by tmux session Name (dash-form, e.g.
-		// "example-backend"). st.projectListNames stores slash-form
-		// (e.g., "example/backend"). Normalize to dash-form for all data
+		// "myorg-backend"). st.projectListNames stores slash-form
+		// (e.g., "myorg/backend"). Normalize to dash-form for all data
 		// lookups; proto.Project.Name retains the canonical slash-form display name.
 		dataKey := proto.SessionKey(n)
 		pd := st.projectData[dataKey]

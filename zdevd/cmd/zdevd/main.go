@@ -51,6 +51,10 @@ import (
 // debounceDefault is the locked Phase 2 default per D2-01 / ARCH-05.
 const debounceDefault = 16 * time.Millisecond
 
+// version is injected at build time via -ldflags="-X main.version=…".
+// Falls back to "dev" for `go build` / `go install` without ldflags.
+var version = "dev"
+
 func main() {
 	// D4-06 subcommand routing: route BEFORE flag.Parse / Run so the diag
 	// and history clients never bind the daemon's socket. Subcommands run
@@ -62,6 +66,9 @@ func main() {
 			os.Exit(diagSubcmd(os.Args[2:]))
 		case "history":
 			os.Exit(historySubcmd(os.Args[2:]))
+		case "-v", "--version", "version":
+			fmt.Println(version)
+			os.Exit(0)
 		case "serve":
 			// Allow explicit `serve` for documentation. Strip it from
 			// os.Args so flag.Parse inside run() sees the rest as flags.
@@ -71,7 +78,7 @@ func main() {
 			// is a usage error — the daemon takes flags only.
 			if !strings.HasPrefix(os.Args[1], "-") {
 				fmt.Fprintf(os.Stderr,
-					"zdevd: unknown subcommand %q (expected: diag, history, or no args for daemon)\n",
+					"zdevd: unknown subcommand %q (expected: diag, history, version, or no args for daemon)\n",
 					os.Args[1])
 				os.Exit(2)
 			}
@@ -291,8 +298,8 @@ func run() error {
 				return
 			}
 			// Resolve the canonical slash-form project name for this session.
-			// zdev --list-projects returns slash-form ("example/backend") but
-			// tmux session names use dash-form ("example-backend"). Match by
+			// zdev --list-projects returns slash-form ("myorg/backend") but
+			// tmux session names use dash-form ("myorg-backend"). Match by
 			// normalizing the project list entry and comparing to e.Name.
 			probeKey := e.Name
 			for _, name := range lister.Names() {
