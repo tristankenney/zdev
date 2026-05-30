@@ -77,23 +77,31 @@ build_layout() {
     shell_pane=$(tmux display-message -p -t "$session:dev" '#{pane_id}')
     tmux select-pane -t "$shell_pane" -T "shell"
 
-    # Optional agent pane. Defaults to claude (the original layout) when it's
-    # on PATH; users can override with $ZDEV_AGENT_CMD or set it to empty to
-    # disable the second pane entirely.
+    # Optional agent pane. Defaults to claude when available; users can
+    # override with $ZDEV_AGENT_CMD or set it to empty to disable the
+    # second pane entirely. Detection of `claude` happens *inside* the
+    # spawned login shell (not in this script) because zdev is often
+    # invoked from contexts where the parent PATH is stripped — most
+    # commonly the M-p tmux popup, whose shell inherits the tmux server's
+    # global environment rather than the user's interactive PATH.
     local agent_cmd="${ZDEV_AGENT_CMD-__default__}"
+    local inner=""
     if [[ "$agent_cmd" == "__default__" ]]; then
-        if command -v claude >/dev/null 2>&1; then
-            agent_cmd="claude --dangerously-skip-permissions --continue"
-        else
-            agent_cmd=""
-        fi
+        inner='if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions --continue; fi; exec zsh -i'
+    elif [[ -n "$agent_cmd" ]]; then
+        inner="$agent_cmd; exec zsh -i"
     fi
 
-    if [[ -n "$agent_cmd" ]]; then
-        local agent_pane
-        agent_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}')
+    if [[ -n "$inner" ]]; then
+        # Pass the command directly to split-window (rather than send-keys
+        # after the fact) so the new pane's shell init can't race the
+        # keystrokes — that race left the agent command sitting in the
+        # buffer as literal text on lazy-opened sessions. `zsh -lic` makes
+        # .zprofile/.zshrc populate $PATH before the inner script runs.
+        local agent_pane launch
+        launch="zsh -lic $(printf '%q' "$inner")"
+        agent_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}' "$launch")
         tmux select-pane -t "$agent_pane" -T "agent"
-        tmux send-keys -t "$agent_pane" "$agent_cmd" C-m
         tmux select-layout -t "$session:dev" even-horizontal
     fi
 
