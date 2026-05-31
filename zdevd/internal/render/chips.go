@@ -9,6 +9,28 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
+// projectAttention returns the project's Attention enum, falling back to
+// a translation of the legacy Status string when Attention is empty
+// (older daemon builds, untouched test fixtures). Centralises the
+// fallback so MarkerFor / MoodFor / row chips read it the same way.
+// Takes a pointer to avoid copying the proto.Project struct on hot paths
+// (frame.go calls this once per project row per animation tick).
+func projectAttention(p *proto.Project) proto.Attention {
+	if p.Attention != "" {
+		return p.Attention
+	}
+	switch p.Status {
+	case "waiting":
+		return proto.AttWaiting
+	case "shell-running":
+		return proto.AttWorking
+	case "finished":
+		return proto.AttFinished
+	default:
+		return proto.AttIdle
+	}
+}
+
 // PaletteFor returns the ANSI escape sequence for the alive-marker hue
 // of the given project name. It wraps PaletteIndex+ProjectPalette into a
 // single call for use in MarkerFor and frame composition.
@@ -17,22 +39,48 @@ func PaletteFor(name string) string {
 }
 
 // MarkerFor returns the (glyph, ansiColor) pair for the given project's
-// current status, per VIS-01 / bash baseline lines 484-517.
+// current Attention state, per VIS-01 / bash baseline lines 484-517.
 //
-//   - waiting   → animator.PulseGlyph() + RedPulse
-//   - shell-running → "◎" + Icy
-//   - finished  → "◆" + Yellow
-//   - alive     → "·" + PaletteFor(p.Name)
-//   - absent (or any other) → "·" + Dim
+//   - Waiting   → animator.PulseGlyph() + RedPulse
+//   - Working   → "◎" + Icy
+//   - Finished  → "◆" + Yellow
+//   - Idle      → "·" + PaletteFor(p.Name) (when session exists)
+//   - absent or unknown → "·" + Dim
+//
+// Falls back to the legacy Status string when Attention is empty — the
+// daemon may be running a binary built before the Attention field was
+// added, or a test fixture may not have populated it.
 func MarkerFor(p proto.Project, animator *Animator) (glyph, color string) {
-	switch p.Status {
-	case "waiting":
+	att := p.Attention
+	if att == "" {
+		// Back-compat path. Step-1 commit fb2667b made Status a
+		// projection of Attention, so they agree in production, but
+		// keep this fallback until the field is universally set.
+		switch p.Status {
+		case "waiting":
+			att = proto.AttWaiting
+		case "shell-running":
+			att = proto.AttWorking
+		case "finished":
+			att = proto.AttFinished
+		case "alive":
+			att = proto.AttIdle
+		default:
+			// "absent" or unknown — dim dot.
+			return "·", Dim
+		}
+	}
+	switch att {
+	case proto.AttWaiting:
 		return animator.PulseGlyph(), RedPulse
-	case "shell-running":
+	case proto.AttWorking:
 		return "◎", Icy
-	case "finished":
+	case proto.AttFinished:
 		return "◆", Yellow
-	case "alive":
+	case proto.AttIdle:
+		if p.Status == "absent" {
+			return "·", Dim
+		}
 		return "·", PaletteFor(p.Name)
 	default:
 		return "·", Dim
@@ -53,16 +101,17 @@ func MoodFor(snap *proto.Snapshot, nowFn func() int64) string {
 	now := nowFn()
 	nWait, nDone, nRun := 0, 0, 0
 	urgent := false
-	for _, p := range snap.Projects {
-		switch p.Status {
-		case "waiting":
+	for i := range snap.Projects {
+		p := &snap.Projects[i]
+		switch projectAttention(p) {
+		case proto.AttWaiting:
 			nWait++
 			if p.WaitStartedTS > 0 && now-p.WaitStartedTS >= int64(WaitUrgentSec) {
 				urgent = true
 			}
-		case "finished":
+		case proto.AttFinished:
 			nDone++
-		case "shell-running":
+		case proto.AttWorking:
 			nRun++
 		}
 	}

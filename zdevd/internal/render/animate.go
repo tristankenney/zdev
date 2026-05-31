@@ -102,8 +102,8 @@ func (a *Animator) BreathFrame() int { return a.breathState % len(BreathBrightne
 func (a *Animator) LastSnap() *proto.Snapshot { return a.lastSnap }
 
 func anyWaiting(snap *proto.Snapshot) bool {
-	for _, p := range snap.Projects {
-		if p.Status == "waiting" {
+	for i := range snap.Projects {
+		if projectAttention(&snap.Projects[i]) == proto.AttWaiting {
 			return true
 		}
 	}

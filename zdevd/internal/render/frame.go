@@ -141,18 +141,23 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 
 	// Per-project rows.
 	var nWait, nRun, nDone, nAlive, nAbsent int
-	for _, p := range snap.Projects {
-		switch p.Status {
-		case "waiting":
-			nWait++
-		case "shell-running":
-			nRun++
-		case "finished":
-			nDone++
-		case "absent":
+	for i := range snap.Projects {
+		p := snap.Projects[i]
+		// Absent is a session-existence flag, not an Attention value;
+		// detect via Status here since Attention has no "absent" case.
+		if p.Status == "absent" {
 			nAbsent++
-		default:
-			nAlive++
+		} else {
+			switch projectAttention(&p) {
+			case proto.AttWaiting:
+				nWait++
+			case proto.AttWorking:
+				nRun++
+			case proto.AttFinished:
+				nDone++
+			default:
+				nAlive++
+			}
 		}
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
@@ -294,14 +299,15 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	}
 
 	pForMarker := *p
-	if isCurrent && pForMarker.Status == "waiting" {
+	if isCurrent && projectAttention(&pForMarker) == proto.AttWaiting {
 		// Suppress the attention-drawing pulse when the user is present —
 		// same rationale as zeroing agentClaude/agentPi in renderMetadataRow.
+		pForMarker.Attention = proto.AttIdle
 		pForMarker.Status = "alive"
 	}
 	glyph, color := MarkerFor(pForMarker, animator)
-	// VIS-12 stale dim-out: alive + age >= StaleThreshold => Dim
-	if p.Status == "alive" && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
+	// VIS-12 stale dim-out: idle + age >= StaleThreshold => Dim
+	if projectAttention(p) == proto.AttIdle && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
 		color = Dim
 	}
 	buf.WriteString(color)
@@ -430,7 +436,7 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	// Marker (reuse MarkerFor with stale-dim override, same as renderProjectRow VIS-12).
 	pForMarker := *p
 	glyph, color := MarkerFor(pForMarker, animator)
-	if p.Status == "alive" && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
+	if projectAttention(p) == proto.AttIdle && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
 		color = Dim
 	}
 	buf.WriteString(color)
@@ -450,7 +456,7 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 
 	// Wait-age (compact form: no "! " prefix; chipWaitAge with "! " is for
 	// current-session agent domain row only — compact rows use the tiered inline form).
-	if p.Status == "waiting" && p.WaitStartedTS > 0 {
+	if projectAttention(p) == proto.AttWaiting && p.WaitStartedTS > 0 {
 		now := nowFn()
 		age := now - p.WaitStartedTS
 		buf.WriteString(" ")
