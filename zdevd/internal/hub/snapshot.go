@@ -87,9 +87,25 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 		dataKey := proto.SessionKey(n)
 		pd := st.projectData[dataKey]
 		pr := st.prCounts[dataKey]
+		status := deriveStatus(st, nameToSession[dataKey])
+		// Stale-waiting demoter: claude leaves a `✳ <task>` pane title
+		// behind when it returns to its idle prompt, which deriveStatus
+		// (stateless, title-only) keeps classifying as `waiting` forever.
+		// If the user has visited the session since its titles last moved,
+		// they've already seen whatever the agent was asking about — so the
+		// chip shouldn't keep firing. The next real wait will rewrite a
+		// pane title, advancing lastTitleChangeTS past lastVisitTS and
+		// restoring `waiting`.
+		if status == tmuxctl.StatusWaiting {
+			visitTS := st.lastVisitTS[dataKey]
+			titleChangeTS := st.lastTitleChangeTS[dataKey]
+			if visitTS > 0 && visitTS >= titleChangeTS {
+				status = tmuxctl.StatusAlive
+			}
+		}
 		proj := proto.Project{
 			Name:           n,
-			Status:         deriveStatus(st, nameToSession[dataKey]),
+			Status:         status,
 			Branch:         pd.Branch,
 			Ahead:          pd.Ahead,
 			Behind:         pd.Behind,

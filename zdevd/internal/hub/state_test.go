@@ -790,34 +790,70 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test B: clear on transition OUT of waiting.
-	t.Run("B_clear_on_transition_out_of_waiting", func(t *testing.T) {
-		s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
-		s.paneCapturer = func(paneID string) (string, error) {
-			return "some captured context\n", nil
-		}
+	// Test B: clear on transition OUT of waiting REQUIRES a prior visit.
+	// Without a visit, the WaitStartedTS / WaitContext are latched (the user
+	// hasn't seen the chip yet — don't lose tier-escalation context or
+	// silently drop the chip if the agent briefly resumes work). With a
+	// visit, the clear path runs as before.
+	t.Run("B_clear_requires_visit", func(t *testing.T) {
+		t.Run("no_visit_latches", func(t *testing.T) {
+			s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
+			s.paneCapturer = func(paneID string) (string, error) {
+				return "some captured context\n", nil
+			}
 
-		// First: transition into waiting to populate WaitContext.
-		recomputeAgents(s, "example-agora")
-		if s.projectData["example-agora"].WaitContext == "" {
-			t.Fatal("pre-condition: WaitContext should be set after entering waiting")
-		}
+			recomputeAgents(s, "example-agora")
+			if s.projectData["example-agora"].WaitContext == "" {
+				t.Fatal("pre-condition: WaitContext should be set after entering waiting")
+			}
+			waitStartedAt := s.projectData["example-agora"].WaitStartedTS
 
-		// Now transition OUT of waiting.
-		var clearCallCount int
-		s.paneCapturer = func(paneID string) (string, error) {
-			clearCallCount++ // should NOT be called on clear
-			return "", nil
-		}
-		s.panesByID["%1"].Title = "shell"
-		recomputeAgents(s, "example-agora")
+			s.paneCapturer = func(paneID string) (string, error) {
+				return "", nil
+			}
+			s.panesByID["%1"].Title = "shell"
+			recomputeAgents(s, "example-agora")
 
-		if clearCallCount != 0 {
-			t.Errorf("paneCapturer should NOT be called on exit from waiting; got %d calls", clearCallCount)
-		}
-		if got := s.projectData["example-agora"].WaitContext; got != "" {
-			t.Errorf("WaitContext = %q after exit from waiting; want empty", got)
-		}
+			if got := s.projectData["example-agora"].WaitStartedTS; got != waitStartedAt {
+				t.Errorf("WaitStartedTS = %d after no-visit exit; want %d (latched)", got, waitStartedAt)
+			}
+			if got := s.projectData["example-agora"].WaitContext; got == "" {
+				t.Errorf("WaitContext cleared after no-visit exit; want latched")
+			}
+		})
+
+		t.Run("with_visit_clears", func(t *testing.T) {
+			s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
+			s.paneCapturer = func(paneID string) (string, error) {
+				return "some captured context\n", nil
+			}
+
+			recomputeAgents(s, "example-agora")
+			if s.projectData["example-agora"].WaitContext == "" {
+				t.Fatal("pre-condition: WaitContext should be set after entering waiting")
+			}
+
+			// Simulate a visit after the wait started.
+			s.lastVisitTS["example-agora"] = s.projectData["example-agora"].WaitStartedTS + 1
+
+			var clearCallCount int
+			s.paneCapturer = func(paneID string) (string, error) {
+				clearCallCount++ // should NOT be called on clear
+				return "", nil
+			}
+			s.panesByID["%1"].Title = "shell"
+			recomputeAgents(s, "example-agora")
+
+			if clearCallCount != 0 {
+				t.Errorf("paneCapturer should NOT be called on exit from waiting; got %d calls", clearCallCount)
+			}
+			if got := s.projectData["example-agora"].WaitContext; got != "" {
+				t.Errorf("WaitContext = %q after visited exit from waiting; want empty", got)
+			}
+			if got := s.projectData["example-agora"].WaitStartedTS; got != 0 {
+				t.Errorf("WaitStartedTS = %d after visited exit from waiting; want 0", got)
+			}
+		})
 	})
 
 	// Test C: no capture when already waiting (title text changes but status stays waiting).
@@ -1111,6 +1147,62 @@ func TestBuildSnapshot_FiltersEmptyNameSession(t *testing.T) {
 	if findProject(snap.Projects, "alpha") == nil {
 		t.Errorf("project 'alpha' missing from snapshot (real session should not be dropped)")
 	}
+}
+
+// TestBuildSnapshot_StaleWaitingTitleDemotedAfterVisit covers the live
+// scenario where Claude Code leaves a `✳ <task>` pane title behind when it
+// returns to its idle prompt. Without the demoter, deriveStatus would keep
+// reporting the session as `waiting` forever and visits would never quiet
+// the chip. With the demoter, a visit that post-dates the most recent pane-
+// title change demotes `waiting` to `alive`; a fresh title change re-elevates.
+func TestBuildSnapshot_StaleWaitingTitleDemotedAfterVisit(t *testing.T) {
+	now := time.Now().Unix()
+	build := func() *state {
+		s := buildTestState("example-agora-c", []string{"%15"}, []string{"✳ Check CI for PR #784"})
+		s.projectListNames = []string{"example/agora-c"}
+		return s
+	}
+
+	t.Run("no_visit_keeps_waiting", func(t *testing.T) {
+		s := build()
+		s.lastTitleChangeTS["example-agora-c"] = now - 60
+		snap := buildSnapshot(s, 1, time.Now(), now)
+		proj := findProject(snap.Projects, "example/agora-c")
+		if proj == nil {
+			t.Fatal("project missing")
+		}
+		if proj.Status != tmuxctl.StatusWaiting {
+			t.Errorf("Status = %q; want waiting (no visit yet)", proj.Status)
+		}
+	})
+
+	t.Run("visit_after_last_title_change_demotes", func(t *testing.T) {
+		s := build()
+		s.lastTitleChangeTS["example-agora-c"] = now - 60
+		s.lastVisitTS["example-agora-c"] = now - 30 // post-dates the title
+		snap := buildSnapshot(s, 1, time.Now(), now)
+		proj := findProject(snap.Projects, "example/agora-c")
+		if proj == nil {
+			t.Fatal("project missing")
+		}
+		if proj.Status != tmuxctl.StatusAlive {
+			t.Errorf("Status = %q; want alive (visited since title last moved)", proj.Status)
+		}
+	})
+
+	t.Run("title_change_after_visit_re_elevates", func(t *testing.T) {
+		s := build()
+		s.lastVisitTS["example-agora-c"] = now - 60
+		s.lastTitleChangeTS["example-agora-c"] = now - 30 // post-dates the visit
+		snap := buildSnapshot(s, 1, time.Now(), now)
+		proj := findProject(snap.Projects, "example/agora-c")
+		if proj == nil {
+			t.Fatal("project missing")
+		}
+		if proj.Status != tmuxctl.StatusWaiting {
+			t.Errorf("Status = %q; want waiting (title moved after the last visit)", proj.Status)
+		}
+	})
 }
 
 // TestBuildSnapshot_WaitAcknowledged_NotWaiting verifies that WaitAcknowledged

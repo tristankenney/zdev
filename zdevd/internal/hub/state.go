@@ -60,6 +60,18 @@ type state struct {
 	// waiting (which advances WaitStartedTS past lastVisitTS).
 	lastVisitTS map[string]int64
 
+	// lastTitleChangeTS records the unix-second timestamp at which any pane
+	// title within a session most recently changed. Used by the snapshot
+	// "stale waiting title" demoter: when Claude Code leaves a `✳ <task>`
+	// title in the pane after returning to its idle prompt (a real claude
+	// quirk circa Sonnet 4.6), deriveStatus would otherwise keep reporting
+	// the session as `waiting` forever and the user's visits would never
+	// quiet the chip. The demoter rule is `lastVisitTS >= lastTitleChangeTS`
+	// → demote `waiting` to `alive` (user has visited since the title last
+	// moved, so whatever state the title encodes has already been seen).
+	// Stamped from PaneTitleChanged in applyEvent.
+	lastTitleChangeTS map[string]int64
+
 	// pendingActivityTS holds ActivityRefresh timestamps that arrived before
 	// the corresponding session was known to the hub (260511-d3p). Keyed by
 	// session ID ("$<N>"). The activity poll fires faster than the
@@ -144,6 +156,7 @@ func newState() *state {
 		panesByID:           make(map[string]*pane),
 		clientSessions:      make(map[string]string),
 		lastVisitTS:         make(map[string]int64),
+		lastTitleChangeTS:   make(map[string]int64),
 		pendingActivityTS:   make(map[string]int64),
 		projectData:         make(map[string]projectData),
 		prCounts:            make(map[string]prCount),
@@ -309,14 +322,23 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			}
 		}
 	case tmuxctl.PaneTitleChanged:
+		titleActuallyChanged := true
 		if p, ok := s.panesByID[e.PaneID]; ok {
+			titleActuallyChanged = p.Title != e.Title
 			p.Title = e.Title
 		} else {
 			s.panesByID[e.PaneID] = &pane{ID: e.PaneID, Title: e.Title}
 		}
-		// Recompute agents for any session that owns this pane.
+		// Recompute agents for any session that owns this pane. Also stamp
+		// lastTitleChangeTS so the snapshot's stale-waiting demoter can tell
+		// "user visited since claude's title moved" apart from "user visited
+		// once and the title is now stuck".
+		now := time.Now().Unix()
 		for _, sess := range s.sessions {
 			if sessionOwnsPane(sess, e.PaneID) {
+				if titleActuallyChanged {
+					s.lastTitleChangeTS[sess.Name] = now
+				}
 				recomputeAgents(s, sess.Name)
 			}
 		}

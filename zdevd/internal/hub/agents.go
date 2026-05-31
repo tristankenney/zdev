@@ -199,9 +199,20 @@ func recomputeAgents(s *state, sessionName string) {
 		// time.Now(), making lastVisitTS look stale and the chip re-flash.
 		// Restricting to (prevWaiting && !nowWaiting) means we only clear on
 		// an actual exit from waiting we observed.
-		pd.WaitStartedTS = 0
-		pd.WaitContext = ""
-		pd.WaitNotifiedTiers = 0
+		//
+		// Visit guard: only wipe WaitStartedTS if the user has actually
+		// visited the session since the wait started. Otherwise a brief
+		// transition out of waiting (sub-agent returning, autonomous
+		// follow-up) would reset the wait-age clock and the tier-escalation
+		// bitmap — so when the agent flips back to waiting moments later,
+		// the user sees a fresh "0s" instead of the accumulated age. The
+		// next ClientSessionChanged advances lastVisitTS and lets a
+		// subsequent transition clear cleanly.
+		if visitTS, ok := s.lastVisitTS[sessionName]; ok && visitTS >= pd.WaitStartedTS {
+			pd.WaitStartedTS = 0
+			pd.WaitContext = ""
+			pd.WaitNotifiedTiers = 0
+		}
 	}
 	s.projectData[sessionName] = pd
 }
