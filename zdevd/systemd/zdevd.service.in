@@ -1,0 +1,43 @@
+# TEMPLATE FILE — do NOT install directly.
+# Placeholders substituted by zdevd/Makefile $(SYSTEMD_ZDEVD_BUILT) rule:
+#   @REPO_ROOT@  → output of `sl root` (or `git rev-parse --show-toplevel`)
+#   @HOME@       → $HOME at install time
+# Substituted output lands at zdevd/bin/zdevd.service and is what gets
+# linked into ~/.config/systemd/user/.
+#
+# Linux equivalent of zdevd/launchd/com.zdev.zdevd.plist.in. Same
+# semantics: foreground process, auto-restart on crash, 30s throttle,
+# stdout/stderr captured to log files under XDG state home.
+#
+# Install:   make install
+# Start:     systemctl --user enable --now zdevd.service
+# Restart:   systemctl --user restart zdevd.service
+# Status:    systemctl --user status zdevd.service
+# Logs:      journalctl --user -u zdevd.service       (or tail the StandardOutput files)
+
+[Unit]
+Description=zdev sidebar daemon
+Documentation=https://github.com/tristankenney/zdev
+# tmux is the data source; only meaningful once user-bus is up.
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=@REPO_ROOT@/zdevd/bin/zdevd
+Restart=on-failure
+RestartSec=30s
+# Equivalent of launchd's ProcessType=Background — lower scheduling priority.
+Nice=10
+# Match the macOS plist's restricted PATH; users in unusual setups can
+# override via `systemctl --user edit zdevd.service`.
+Environment=PATH=@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=LANG=en_US.UTF-8
+# launchd captures stdout/stderr via StandardOutPath / StandardErrorPath
+# (separate files). systemd's StandardOutput=file: requires v240+; on
+# older systemd, journald captures and we lose nothing — `journalctl
+# --user -u zdevd.service` is the operator's tail.
+StandardOutput=append:@HOME@/.local/state/zdev/zdevd.out.log
+StandardError=append:@HOME@/.local/state/zdev/zdevd.err.log
+
+[Install]
+WantedBy=default.target

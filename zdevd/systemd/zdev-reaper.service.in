@@ -1,0 +1,16 @@
+# TEMPLATE FILE — do NOT install directly.
+# Linux equivalent of zdevd/launchd/com.zdev.reaper.plist.in.
+# Substituted output: zdevd/bin/zdev-reaper.service.
+# Pair with zdev-reaper.timer.in for the hourly schedule (the timer is the
+# unit that gets `enable`d; this .service is invoked by it).
+
+[Unit]
+Description=Reap idle tmux sessions managed by zdev
+
+[Service]
+Type=oneshot
+ExecStart=@HOME@/.local/bin/zdev reap
+Environment=PATH=@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=LANG=en_US.UTF-8
+StandardOutput=append:@HOME@/.local/state/zdev/reaper.out.log
+StandardError=append:@HOME@/.local/state/zdev/reaper.err.log

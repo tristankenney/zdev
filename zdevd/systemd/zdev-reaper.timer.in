@@ -1,0 +1,15 @@
+# TEMPLATE FILE — drives zdev-reaper.service on a 1-hour cadence.
+# This is the unit users `systemctl --user enable --now zdev-reaper.timer`.
+
+[Unit]
+Description=Hourly reap of idle tmux sessions
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Unit=zdev-reaper.service
+# Don't pile up missed runs while the laptop was asleep.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

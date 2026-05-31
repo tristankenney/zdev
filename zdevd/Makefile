@@ -14,20 +14,44 @@ REPO_ROOT     := $(shell sl root 2>/dev/null || git rev-parse --show-toplevel 2>
 ZDEVD_DIR     := $(REPO_ROOT)/zdevd
 BIN_DIR       := $(ZDEVD_DIR)/bin
 LOCAL_BIN     := $(HOME)/.local/bin
-LAUNCH_AGENTS := $(HOME)/Library/LaunchAgents
-LOG_DIR       := $(HOME)/Library/Logs/zdev
-SOCKET_DIR    := $(HOME)/Library/Application Support/zdev
-PLIST_SRC     := $(ZDEVD_DIR)/launchd/com.zdev.zdevd.plist.in
-PLIST_BUILT   := $(BIN_DIR)/com.zdev.zdevd.plist
-PLIST_DST     := $(LAUNCH_AGENTS)/com.zdev.zdevd.plist
-REAPER_PLIST_SRC   := $(ZDEVD_DIR)/launchd/com.zdev.reaper.plist.in
-REAPER_PLIST_BUILT := $(BIN_DIR)/com.zdev.reaper.plist
-REAPER_PLIST_DST   := $(LAUNCH_AGENTS)/com.zdev.reaper.plist
-REAPER_LABEL  := com.zdev.reaper
 RENDER_LINK   := $(LOCAL_BIN)/zdev-sidebar-render
 GO_RENDERER   := $(BIN_DIR)/zdev-sidebar
 GO_DAEMON     := $(BIN_DIR)/zdevd
 GO_SHOW       := $(BIN_DIR)/zdev-show
+
+# OS detection — controls which service manager (launchd / systemd) the
+# install/start/stop/restart/status/logs targets dispatch to. Path layout
+# for logs and the socket follow internal/platform's per-OS conventions.
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),Darwin)
+  # macOS — launchd + Library directories.
+  LAUNCH_AGENTS := $(HOME)/Library/LaunchAgents
+  LOG_DIR       := $(HOME)/Library/Logs/zdev
+  SOCKET_DIR    := $(HOME)/Library/Application Support/zdev
+  PLIST_SRC     := $(ZDEVD_DIR)/launchd/com.zdev.zdevd.plist.in
+  PLIST_BUILT   := $(BIN_DIR)/com.zdev.zdevd.plist
+  PLIST_DST     := $(LAUNCH_AGENTS)/com.zdev.zdevd.plist
+  REAPER_PLIST_SRC   := $(ZDEVD_DIR)/launchd/com.zdev.reaper.plist.in
+  REAPER_PLIST_BUILT := $(BIN_DIR)/com.zdev.reaper.plist
+  REAPER_PLIST_DST   := $(LAUNCH_AGENTS)/com.zdev.reaper.plist
+else ifeq ($(UNAME_S),Linux)
+  # Linux — systemd user units + XDG directories.
+  XDG_STATE_HOME ?= $(HOME)/.local/state
+  XDG_RUNTIME_DIR ?= /run/user/$(shell id -u)
+  SYSTEMD_USER_DIR := $(HOME)/.config/systemd/user
+  LOG_DIR       := $(XDG_STATE_HOME)/zdev
+  SOCKET_DIR    := $(XDG_RUNTIME_DIR)/zdev
+  ZDEVD_UNIT_SRC     := $(ZDEVD_DIR)/systemd/zdevd.service.in
+  ZDEVD_UNIT_BUILT   := $(BIN_DIR)/zdevd.service
+  ZDEVD_UNIT_DST     := $(SYSTEMD_USER_DIR)/zdevd.service
+  REAPER_UNIT_SRC    := $(ZDEVD_DIR)/systemd/zdev-reaper.service.in
+  REAPER_UNIT_BUILT  := $(BIN_DIR)/zdev-reaper.service
+  REAPER_UNIT_DST    := $(SYSTEMD_USER_DIR)/zdev-reaper.service
+  REAPER_TIMER_SRC   := $(ZDEVD_DIR)/systemd/zdev-reaper.timer.in
+  REAPER_TIMER_BUILT := $(BIN_DIR)/zdev-reaper.timer
+  REAPER_TIMER_DST   := $(SYSTEMD_USER_DIR)/zdev-reaper.timer
+endif
 
 # VERSION derives from the nearest annotated git/sl tag plus dirty-state if any.
 # Falls back to "dev" outside a VCS checkout (e.g. tarball install).
@@ -51,6 +75,7 @@ GOFLAGS       := -trimpath -ldflags="-s -w -X main.version=$(VERSION)"
 BENCH_IDLE_THRESHOLD ?= 10
 
 LABEL  := com.zdev.zdevd
+REAPER_LABEL  := com.zdev.reaper
 DOMAIN := gui/$(shell id -u)
 
 .PHONY: all build test golden bench-idle bench-workday bench-workday-verdict drift-check live-test install uninstall use-go kill-renderers clean help start stop restart status logs
@@ -80,6 +105,7 @@ help:
 	@echo "  use-go          — symlink ~/.local/bin/zdev-sidebar-render → Go binary"
 	@echo "  clean           — rm -rf bin/"
 
+ifeq ($(UNAME_S),Darwin)
 start:
 	@if launchctl print "$(DOMAIN)/$(LABEL)" >/dev/null 2>&1; then \
 		echo "start: already running — use 'make restart' to reload"; \
@@ -95,6 +121,23 @@ stop:
 	else \
 		echo "stop: daemon not running"; \
 	fi
+else
+start:
+	@if systemctl --user is-active --quiet zdevd.service; then \
+		echo "start: already running — use 'make restart' to reload"; \
+	else \
+		systemctl --user start zdevd.service; \
+		echo "start: daemon started"; \
+	fi
+
+stop:
+	@if systemctl --user is-active --quiet zdevd.service; then \
+		systemctl --user stop zdevd.service; \
+		echo "stop: daemon stopped"; \
+	else \
+		echo "stop: daemon not running"; \
+	fi
+endif
 
 # kill-renderers sends SIGTERM to all running zdev-sidebar processes.
 # Each renderer's Layer 2 signal handler restores the cursor and exits cleanly,
@@ -110,6 +153,7 @@ kill-renderers:
 			echo "kill-renderers: no running zdev-sidebar-render processes found"; \
 		fi
 
+ifeq ($(UNAME_S),Darwin)
 restart: build kill-renderers
 	@launchctl bootout "$(DOMAIN)/$(LABEL)" 2>/dev/null || true
 	@sleep 0.5
@@ -131,6 +175,30 @@ status:
 logs:
 	@echo "--- tailing $(LOG_DIR)/zdevd.out.log and zdevd.err.log (Ctrl-C to stop) ---"
 	@tail -f "$(LOG_DIR)/zdevd.out.log" "$(LOG_DIR)/zdevd.err.log"
+else
+restart: build kill-renderers
+	@systemctl --user restart zdevd.service
+	@sleep 0.5
+	@systemctl --user show -p MainPID -p ExecMainStatus --value zdevd.service | paste -sd' ' - | awk '{printf "restart: pid=%s exit=%s\n", $$1, $$2}'
+
+status:
+	@systemctl --user is-active --quiet zdevd.service && \
+		systemctl --user show -p MainPID -p ExecMainStatus --value zdevd.service | paste -sd' ' - | awk '{printf "pid=%s  last-exit=%s\n", $$1, $$2}' || \
+		echo "status: not running"
+	@echo "log:    $(LOG_DIR)/zdevd.out.log"
+	@echo "errlog: $(LOG_DIR)/zdevd.err.log"
+	@if [ -S "$(SOCKET_DIR)/zdevd.sock" ]; then \
+		echo "socket: $(SOCKET_DIR)/zdevd.sock  [exists]"; \
+	else \
+		echo "socket: $(SOCKET_DIR)/zdevd.sock  [missing]"; \
+	fi
+
+logs:
+	@echo "--- tailing journalctl + $(LOG_DIR)/zdevd.{out,err}.log (Ctrl-C to stop) ---"
+	@journalctl --user -u zdevd.service -f & \
+		tail -f "$(LOG_DIR)/zdevd.out.log" "$(LOG_DIR)/zdevd.err.log" 2>/dev/null; \
+		kill %1 2>/dev/null
+endif
 
 build: $(GO_DAEMON) $(GO_RENDERER) $(GO_SHOW)
 
@@ -146,6 +214,7 @@ $(GO_SHOW): $(shell find cmd/zdev-show internal -name '*.go' 2>/dev/null) go.mod
 	@mkdir -p "$(BIN_DIR)"
 	cd "$(ZDEVD_DIR)" && go build $(GOFLAGS) -o "$(GO_SHOW)" ./cmd/zdev-show
 
+ifeq ($(UNAME_S),Darwin)
 # PLIST_BUILT — sed-substituted launchd plist. Generated into bin/ alongside
 # the Go binaries. Symlinked into ~/Library/LaunchAgents by `make install`.
 # plutil-lint validates the substituted output (real install target),
@@ -162,7 +231,27 @@ $(REAPER_PLIST_BUILT): $(REAPER_PLIST_SRC) Makefile
 	@mkdir -p "$(BIN_DIR)"
 	sed -e '/^<!--$$/,/^-->$$/d' -e 's|@HOME@|$(HOME)|g' "$(REAPER_PLIST_SRC)" > "$(REAPER_PLIST_BUILT)"
 	plutil -lint "$(REAPER_PLIST_BUILT)"
+else
+# systemd unit substitution — same @REPO_ROOT@ / @HOME@ placeholders.
+# `systemd-analyze verify` lints the substituted output when systemd is
+# available; otherwise we ship the raw substituted file (`make test` on
+# CI runners without an active user bus would otherwise fail).
+$(ZDEVD_UNIT_BUILT): $(ZDEVD_UNIT_SRC) Makefile
+	@mkdir -p "$(BIN_DIR)"
+	sed -e 's|@REPO_ROOT@|$(REPO_ROOT)|g' -e 's|@HOME@|$(HOME)|g' "$(ZDEVD_UNIT_SRC)" > "$(ZDEVD_UNIT_BUILT)"
+	@command -v systemd-analyze >/dev/null && systemd-analyze --user verify "$(ZDEVD_UNIT_BUILT)" || true
 
+$(REAPER_UNIT_BUILT): $(REAPER_UNIT_SRC) Makefile
+	@mkdir -p "$(BIN_DIR)"
+	sed -e 's|@HOME@|$(HOME)|g' "$(REAPER_UNIT_SRC)" > "$(REAPER_UNIT_BUILT)"
+	@command -v systemd-analyze >/dev/null && systemd-analyze --user verify "$(REAPER_UNIT_BUILT)" || true
+
+$(REAPER_TIMER_BUILT): $(REAPER_TIMER_SRC) Makefile
+	@mkdir -p "$(BIN_DIR)"
+	cp "$(REAPER_TIMER_SRC)" "$(REAPER_TIMER_BUILT)"
+endif
+
+ifeq ($(UNAME_S),Darwin)
 # OPS-08, OPS-09 (the parts that run in pre-push). Sub-10s target per D-14.
 test: $(PLIST_BUILT)
 	plutil -lint "$(PLIST_BUILT)"
@@ -170,6 +259,17 @@ test: $(PLIST_BUILT)
 	bash "$(ZDEVD_DIR)/scripts/check-no-tmux-poll.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-shell-out.sh"
 	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
+else
+test: $(ZDEVD_UNIT_BUILT)
+	@# systemd-analyze is best-effort (CI may lack a user bus); the unit
+	@# file is still substituted and present in bin/ for inspection.
+	@command -v systemd-analyze >/dev/null && systemd-analyze --user verify "$(ZDEVD_UNIT_BUILT)" || \
+		echo "test: systemd-analyze not available; skipping unit-file lint"
+	bash "$(ZDEVD_DIR)/scripts/check-no-daemon-fork.sh"
+	bash "$(ZDEVD_DIR)/scripts/check-no-tmux-poll.sh"
+	bash "$(ZDEVD_DIR)/scripts/check-no-shell-out.sh"
+	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
+endif
 
 # OPS-09 — golden-frame byte-equality (subset of `make test`, runnable solo).
 # Pass UPDATE=1 to regenerate fixtures.
@@ -180,6 +280,7 @@ else
 	cd "$(ZDEVD_DIR)" && go test -race -count=1 -run Golden ./internal/render/...
 endif
 
+ifeq ($(UNAME_S),Darwin)
 # OPS-10 — manual/nightly idle-wakeup benchmark.
 # If zdevd is already running (e.g. via launchd) we measure that instance
 # directly — the bench cares about idle wakeups of the production daemon, not
@@ -228,6 +329,13 @@ bench-workday: build
 # Reads the two most-recent bench-workday-*.out (assumes alternating-day cadence).
 bench-workday-verdict:
 	@bash "$(ZDEVD_DIR)/scripts/parse-workday-verdict.sh"
+else
+bench-idle bench-workday bench-workday-verdict:
+	@echo "$@: powermetrics is macOS-only. On Linux, use one of:"
+	@echo "  pidstat -p \"\$$(pgrep -x zdevd)\" 5 12"
+	@echo "  perf stat -e context-switches -p \"\$$(pgrep -x zdevd)\" sleep 60"
+	@exit 1
+endif
 
 # D4-17 — drift detection: ZDEV_SIDEBAR_DETERMINISTIC=1 bash vs Go-self goldens.
 # The script lives at scripts/drift-check.sh (created in Plan 04-08).
@@ -239,6 +347,7 @@ drift-check:
 live-test:
 	cd "$(ZDEVD_DIR)" && go test -tags live -count=1 -timeout 90s ./...
 
+ifeq ($(UNAME_S),Darwin)
 install: build $(PLIST_BUILT) $(REAPER_PLIST_BUILT)
 	@mkdir -p "$(LOCAL_BIN)" "$(LAUNCH_AGENTS)" "$(LOG_DIR)" "$(SOCKET_DIR)"
 	@chmod 700 "$(LOG_DIR)" "$(SOCKET_DIR)"
@@ -265,6 +374,39 @@ uninstall:
 	@rm -f "$(PLIST_DST)" "$(REAPER_PLIST_DST)"
 	@rm -f "$(RENDER_LINK)" "$(LOCAL_BIN)/zdevd" "$(LOCAL_BIN)/zdev-show"
 	@echo "uninstall: complete."
+else
+install: build $(ZDEVD_UNIT_BUILT) $(REAPER_UNIT_BUILT) $(REAPER_TIMER_BUILT)
+	@mkdir -p "$(LOCAL_BIN)" "$(SYSTEMD_USER_DIR)" "$(LOG_DIR)"
+	@# SOCKET_DIR is XDG_RUNTIME_DIR/zdev — only mkdir if XDG_RUNTIME_DIR
+	@# exists (systemd-logind creates it on login; not present in some CI).
+	@if [ -d "$(XDG_RUNTIME_DIR)" ]; then mkdir -p "$(SOCKET_DIR)" && chmod 700 "$(SOCKET_DIR)"; fi
+	@chmod 700 "$(LOG_DIR)"
+	@# Symlink Go binaries into PATH.
+	ln -sf "$(GO_RENDERER)" "$(RENDER_LINK)"
+	ln -sf "$(GO_DAEMON)" "$(LOCAL_BIN)/zdevd"
+	ln -sf "$(GO_SHOW)" "$(LOCAL_BIN)/zdev-show"
+	@# Symlink substituted unit files into ~/.config/systemd/user.
+	ln -sf "$(ZDEVD_UNIT_BUILT)" "$(ZDEVD_UNIT_DST)"
+	ln -sf "$(REAPER_UNIT_BUILT)" "$(REAPER_UNIT_DST)"
+	ln -sf "$(REAPER_TIMER_BUILT)" "$(REAPER_TIMER_DST)"
+	@# Reload + enable + start. `daemon-reload` picks up the new units;
+	@# `enable --now` both enables on login and starts immediately.
+	systemctl --user daemon-reload
+	systemctl --user enable --now zdevd.service
+	systemctl --user enable --now zdev-reaper.timer
+	@echo "install: zdevd + reaper.timer enabled and started."
+	@# Sapling pre-push hook (Pitfall D).
+	bash "$(ZDEVD_DIR)/scripts/install-prepush.sh"
+	@echo "install: complete. Open a tmux pane via zdev-sidebar-toggle to verify."
+
+uninstall:
+	@systemctl --user disable --now zdevd.service 2>/dev/null || true
+	@systemctl --user disable --now zdev-reaper.timer 2>/dev/null || true
+	@rm -f "$(ZDEVD_UNIT_DST)" "$(REAPER_UNIT_DST)" "$(REAPER_TIMER_DST)"
+	@systemctl --user daemon-reload 2>/dev/null || true
+	@rm -f "$(RENDER_LINK)" "$(LOCAL_BIN)/zdevd" "$(LOCAL_BIN)/zdev-show"
+	@echo "uninstall: complete."
+endif
 
 use-go:
 	@if [ ! -x "$(GO_RENDERER)" ]; then echo "use-go: $(GO_RENDERER) missing — run 'make build' first" >&2; exit 1; fi
