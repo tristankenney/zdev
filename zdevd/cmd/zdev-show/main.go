@@ -20,10 +20,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/socket"
 )
@@ -224,7 +224,4 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-func defaultSocketPath() string {
-	return filepath.Join(os.Getenv("HOME"),
-		"Library", "Application Support", "zdev", "zdevd.sock")
-}
+func defaultSocketPath() string { return platform.SocketPath() }

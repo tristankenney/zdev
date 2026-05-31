@@ -40,6 +40,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/notif"
+	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/probes"
 	"github.com/tristankenney/zdev/zdevd/internal/projects"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
@@ -428,20 +429,11 @@ func tmuxVersion() string {
 	return strings.TrimSpace(string(out))
 }
 
-func defaultSocketPath() string {
-	return filepath.Join(os.Getenv("HOME"),
-		"Library", "Application Support", "zdev", "zdevd.sock")
-}
-
-func defaultStatePath() string {
-	return filepath.Join(os.Getenv("HOME"),
-		"Library", "Application Support", "zdev", "zdevd-state.json")
-}
-
-func defaultLogPath() string {
-	return filepath.Join(os.Getenv("HOME"),
-		"Library", "Logs", "zdev", "zdevd.log")
-}
+// Defaults delegate to internal/platform so the same binary works on
+// macOS (Library/...) and Linux (XDG dirs).
+func defaultSocketPath() string { return platform.SocketPath() }
+func defaultStatePath() string  { return platform.StatePath() }
+func defaultLogPath() string    { return platform.LogPath("zdevd") }
 
 // setupSlog is unchanged from Phase 1: opens (or creates) the JSON log file,
 // mkdir-ing the parent dir at 0700 if missing (Pitfall E). The slog default

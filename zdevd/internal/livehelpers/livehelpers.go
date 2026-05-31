@@ -21,6 +21,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -209,11 +211,21 @@ func IsolatedHome(t *testing.T) string {
 	return dir
 }
 
-// SocketPathFor returns the socket path the daemon will bind given a HOME
-// override — mirrors cmd/zdevd/main.go's defaultSocketPath() exactly:
-// $HOME/Library/Application Support/zdev/zdevd.sock on macOS.
+// SocketPathFor returns the socket path the daemon will bind given a
+// per-test HOME override. Mirrors cmd/zdevd/main.go's defaultSocketPath()
+// across both platforms. On macOS the path is
+// $HOME/Library/Application Support/zdev/zdevd.sock; on Linux it follows
+// XDG ($XDG_RUNTIME_DIR/zdev/zdevd.sock, or $TMPDIR/zdev-$UID/zdevd.sock
+// when XDG_RUNTIME_DIR is unset — which IsolatedHome's env IS the case).
+// Tests construct the same env via withIsolatedEnv so this stays in sync.
 func SocketPathFor(homeDir string) string {
-	return filepath.Join(homeDir, "Library", "Application Support", "zdev", "zdevd.sock")
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(homeDir, "Library", "Application Support", "zdev", "zdevd.sock")
+	}
+	// Linux/other: match paths_linux.go's runtimeDir() against the env
+	// withIsolatedEnv sets (HOME, TMPDIR; XDG_RUNTIME_DIR is intentionally
+	// left unset so the per-test TMPDIR/zdev-<uid>/ subdir is used).
+	return filepath.Join(homeDir, "tmp", "zdev-"+strconv.Itoa(os.Getuid()), "zdevd.sock")
 }
 
 // SetupDaemon is the all-in-one convenience helper. Returns the running cmd

@@ -31,12 +31,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/backoff"
+	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/render"
 	"github.com/tristankenney/zdev/zdevd/internal/socket"
@@ -545,19 +545,16 @@ func (m *outageMachine) Run() (*proto.Snapshot, net.Conn, error) {
 	}
 }
 
-func defaultSocketPath() string {
-	return filepath.Join(os.Getenv("HOME"),
-		"Library", "Application Support", "zdev", "zdevd.sock")
-}
+func defaultSocketPath() string { return platform.SocketPath() }
 
 func setupSlog() {
-	logDir := filepath.Join(os.Getenv("HOME"), "Library", "Logs", "zdev")
+	logDir := platform.LogDir()
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		// Slog isn't ready yet — this is a best-effort; no stderr write
 		// because plist captures stderr only for the daemon, not the renderer.
 		return
 	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("zdev-sidebar-%d.log", os.Getpid()))
+	logPath := platform.LogPath(fmt.Sprintf("zdev-sidebar-%d", os.Getpid()))
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
