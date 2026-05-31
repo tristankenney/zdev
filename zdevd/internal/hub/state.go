@@ -757,21 +757,6 @@ func sessionContainsWindow(sess *session, winID string) bool {
 	return ok
 }
 
-// recomputeAgents walks all panes owned by the named session and writes
-// AgentClaude / AgentPi onto state.projectData[sessionName] using
-// tmuxctl.ClassifyAgent. Per-session aggregation:
-//
-//   - If any pane's title is "● claude*" -> AgentClaude="waiting"
-//     else if any "◆ claude*"             -> AgentClaude="finished"
-//     else                                 -> AgentClaude=""
-//   - Same shape for pi.
-//
-// Source-of-truth: ~/.local/bin/zdev-sidebar-render lines 146-149.
-//
-// Called from applyEvent on every event that may have changed the set of
-// pane titles owned by the session: PaneTitleChanged, WindowPaneChanged,
-// WindowAdd, WindowClose, SessionChanged. The recompute is bounded by
-// the number of panes in the session — typically <10.
 // recomputeAgents has moved to internal/hub/agents.go (staff-review PR #4).
 
 // attachWindow adds a window to a session, creating the session if absent.

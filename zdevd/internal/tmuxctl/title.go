@@ -73,9 +73,9 @@ func isBrailleSpinnerTitle(title string) bool {
 //
 // claude/pi appear in the list because panes running those agents also match
 // `pane_current_command == "claude"` etc. In the Go pipeline, agent
-// attribution is handled separately by ClassifyAgent on the pane-title path;
-// panes with title "shell" and cmd="claude" still should not show a ShellCmd
-// chip, so agent-variant commands are suppressed here too.
+// attribution is handled separately by agents.Registry on the pane-title
+// path; panes with title "shell" and cmd="claude" still should not show a
+// ShellCmd chip, so agent-variant commands are suppressed here too.
 var DefaultShells = []string{"bash", "zsh", "sh", "fish", "dash", "claude", "claude.exe"} // 260519-hww: pi removed while pi.dev integration is disabled (sl undo to restore)
 
 // IsDefaultShell returns true when cmd is one of DefaultShells.
@@ -86,64 +86,6 @@ func IsDefaultShell(cmd string) bool {
 		}
 	}
 	return false
-}
-
-// ClassifyAgent inspects the suffix after the marker glyph for agent-name
-// attribution. Returns "claude" / "pi" / "" — empty when the title has
-// no agent identifier OR when the marker is not the waiting/finished glyph.
-//
-// Source: ~/.local/bin/zdev-sidebar-render lines 146-149.
-// 260512-cpa: codex slot replaced with pi (pi.dev).
-//
-// Legacy format:
-//
-//	"● claude"  / "● claude *"   -> "claude"
-//	"◆ claude"  / "◆ claude *"   -> "claude"
-//	"● pi"      / "● pi *"       -> "pi"
-//	"◆ pi"      / "◆ pi *"       -> "pi"
-//
-// New Claude Code v2.1+ format:
-//
-//	"✳ Claude Code"              -> "claude"
-//	"✳ <task description>"       -> "claude"
-//	"⠂ <task description>"       -> "claude" (braille spinner = working)
-//
-// The bash regex requires either end-of-string or a SPACE after the agent
-// name — so "claude-foo" is NOT classified as claude. Byte-exact-with-
-// trailing-space.
-//
-// Sibling to ClassifyPaneTitle (which Phase 2 widened to "● " — see
-// Pitfall D in 03-RESEARCH.md). ClassifyAgent narrows back specifically
-// for DATA-08 chip attribution; ClassifyPaneTitle's return value is
-// unchanged so Phase 2's hub.deriveStatus tests still pass.
-func ClassifyAgent(title string) string {
-	// Check new Claude Code v2.1+ format first:
-	// ✳ prefix (waiting) or Braille spinner prefix (working) = always claude.
-	if strings.HasPrefix(title, MarkerWaitingNew) {
-		return "claude"
-	}
-	if isBrailleSpinnerTitle(title) {
-		return "claude"
-	}
-
-	// Legacy format: ● or ◆ prefix with "claude" or "pi" suffix.
-	for _, marker := range []string{MarkerWaiting, MarkerFinished} {
-		if !strings.HasPrefix(title, marker) {
-			continue
-		}
-		rest := title[len(marker):]
-		// 260519-hww: pi.dev integration temporarily disabled (sl undo to restore "pi").
-		for _, agent := range [1]string{"claude"} {
-			if !strings.HasPrefix(rest, agent) {
-				continue
-			}
-			tail := rest[len(agent):]
-			if tail == "" || tail[0] == ' ' {
-				return agent
-			}
-		}
-	}
-	return ""
 }
 
 // ClassifyPaneTitle returns the per-pane status from the title's leading

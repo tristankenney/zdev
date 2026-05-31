@@ -61,7 +61,7 @@ type Config struct {
 
 // AgentSpec is one entry under [[agent]] in sidebar.toml. Drives:
 //
-//   - tmuxctl.ClassifyAgent: marker-glyph → agent-name mapping
+//   - agents.Registry.Classify: marker-glyph → agent-name mapping
 //   - the sidebar chip per attributed agent (glyph)
 //   - bin/zdev's default agent-launcher selection (launch line + PATH probe)
 //
