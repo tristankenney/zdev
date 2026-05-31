@@ -77,17 +77,39 @@ build_layout() {
     shell_pane=$(tmux display-message -p -t "$session:dev" '#{pane_id}')
     tmux select-pane -t "$shell_pane" -T "shell"
 
-    # Optional agent pane. Defaults to claude when available; users can
-    # override with $ZDEV_AGENT_CMD or set it to empty to disable the
-    # second pane entirely. Detection of `claude` happens *inside* the
-    # spawned login shell (not in this script) because zdev is often
-    # invoked from contexts where the parent PATH is stripped — most
-    # commonly the M-p tmux popup, whose shell inherits the tmux server's
-    # global environment rather than the user's interactive PATH.
+    # Optional agent pane. Defaults to whichever agent in the registry
+    # (sidebar.toml [[agent]] entries, or builtin defaults: claude before
+    # opencode) resolves first on PATH at exec time. Users can override
+    # with $ZDEV_AGENT_CMD or set it to empty to disable the second pane.
+    #
+    # PATH detection happens *inside* the spawned login shell (not in this
+    # script) because zdev is often invoked from PATH-stripped contexts —
+    # most commonly the M-p tmux popup, whose shell inherits the tmux
+    # server's global environment rather than the user's interactive PATH.
     local agent_cmd="${ZDEV_AGENT_CMD-__default__}"
     local inner=""
     if [[ "$agent_cmd" == "__default__" ]]; then
-        inner='if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions --continue; fi; exec zsh -i'
+        # Compose a chained `if command -v X; then exec X-launch; fi` per
+        # agent, in the registry's declaration order. First PATH hit wins;
+        # if none match, the spawned shell falls through to `exec zsh -i`.
+        local chain=""
+        if command -v zdev-show >/dev/null 2>&1; then
+            local binary launch
+            while IFS=$'\t' read -r binary launch; do
+                [[ -z "$binary" || -z "$launch" ]] && continue
+                if [[ -n "$chain" ]]; then
+                    chain="$chain "
+                fi
+                chain+="if command -v $binary >/dev/null 2>&1; then exec $launch; fi;"
+            done < <(zdev-show agents 2>/dev/null || true)
+        fi
+        if [[ -n "$chain" ]]; then
+            inner="$chain exec zsh -i"
+        else
+            # zdev-show unavailable (build skew during install) — fall back
+            # to the historical claude-or-zsh path so the popup still works.
+            inner='if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions --continue; fi; exec zsh -i'
+        fi
     elif [[ -n "$agent_cmd" ]]; then
         inner="$agent_cmd; exec zsh -i"
     fi
