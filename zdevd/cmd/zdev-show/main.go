@@ -5,8 +5,8 @@
 // Usage:
 //
 //	zdev-show                  # list every project currently in "waiting" status
-//	zdev-show myorg/agora     # show wait context for a project (slash-form)
-//	zdev-show myorg-agora     # same, dash-form accepted
+//	zdev-show example/agora     # show wait context for a project (slash-form)
+//	zdev-show example-agora     # same, dash-form accepted
 //	zdev-show --legend         # print the sidebar glyph legend (no daemon dial)
 //	zdev-show -l               # alias for --legend
 //	zdev-show agents           # print the agent registry one-per-line (no daemon dial)
@@ -177,8 +177,8 @@ func formatLegend() string {
 	return b.String()
 }
 
-// normalizeProjectName converts slash-form ("myorg/agora") to dash-form
-// ("myorg-agora") so both input styles resolve to the same project row.
+// normalizeProjectName converts slash-form ("example/agora") to dash-form
+// ("example-agora") so both input styles resolve to the same project row.
 func normalizeProjectName(s string) string {
 	return proto.SessionKey(s)
 }

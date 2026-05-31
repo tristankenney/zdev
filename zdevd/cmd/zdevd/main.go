@@ -300,8 +300,8 @@ func run() error {
 				return
 			}
 			// Resolve the canonical slash-form project name for this session.
-			// zdev --list-projects returns slash-form ("myorg/backend") but
-			// tmux session names use dash-form ("myorg-backend"). Match by
+			// zdev --list-projects returns slash-form ("example/backend") but
+			// tmux session names use dash-form ("example-backend"). Match by
 			// normalizing the project list entry and comparing to e.Name.
 			probeKey := e.Name
 			for _, name := range lister.Names() {

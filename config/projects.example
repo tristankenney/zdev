@@ -3,9 +3,9 @@
 #
 # Append ' *' to mark a project as a favorite. Favorites are started by
 # `zdev up` and skipped by `zdev reap`:
-#   myorg/web *
+#   example/web *
 #
 # Replace the examples below with your own projects.
 dotfiles
-myorg/api
-myorg/web *
+example/api
+example/web *

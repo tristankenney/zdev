@@ -546,7 +546,7 @@ func snapshotStatuses(s *state) map[string]string {
 		out[sess.Name] = deriveStatus(s, sess)
 	}
 	// Workspace projects: normalize slash-form project names to dash-form so
-	// "myorg/backend" and "myorg-backend" resolve to the same status key.
+	// "example/backend" and "example-backend" resolve to the same status key.
 	// Mirrors the buildSnapshot normalization (D-02 / Phase 999.1).
 	for _, name := range s.projectListNames {
 		dashName := proto.SessionKey(name)
@@ -609,9 +609,9 @@ func emitStateChanges(w *eventlog.Writer, before, after map[string]string, ts ti
 //     connect.
 //
 // CurrentSession is set to the canonical project name (slash-form, e.g.
-// "myorg/backend") so that the renderer's p.Name == CurrentSession
+// "example/backend") so that the renderer's p.Name == CurrentSession
 // comparison works correctly. Tmux session names are dash-form
-// ("myorg-backend"); we scan projects normalizing p.Name slash→dash to find
+// ("example-backend"); we scan projects normalizing p.Name slash→dash to find
 // a match and then set CurrentSession to the original slash-form p.Name.
 func snapWithCurrentSession(base *proto.Snapshot, st *state, sub *Subscriber, now int64) *proto.Snapshot {
 	var sessName string

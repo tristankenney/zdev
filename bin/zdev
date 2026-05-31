@@ -146,7 +146,7 @@ Usage:
 
 Favorites:
   Append ' *' to a line in $PROJECTS_FILE:
-      myorg/backend *
+      example/backend *
   Favorites are started by 'zdev up' and never reaped automatically.
 
 Configured projects:

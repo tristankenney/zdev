@@ -429,7 +429,7 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 	// --- Phase 3 probe / fsnotify / project-list events ---
 
 	case tmuxctl.DataRefresh:
-		// Probes supply e.Project in slash-form ("myorg/backend"); normalize
+		// Probes supply e.Project in slash-form ("example/backend"); normalize
 		// to dash-form so the key matches recomputeAgents and buildSnapshot.
 		key := proto.SessionKey(e.Project)
 		pd := s.projectData[key]
@@ -623,10 +623,10 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		//
 		// e.Session is the tmux session ID (e.g. "$4") from the
 		// zdev-act-$<sessid> subscription header. projectData is keyed by
-		// session NAME (dash-form, e.g. "myorg-agora"), so we resolve
+		// session NAME (dash-form, e.g. "example-agora"), so we resolve
 		// ID→name via s.sessions before writing. Without this lookup the
 		// activity timestamp lands in projectData["$4"], invisible to
-		// buildSnapshot which reads projectData["myorg-agora"].
+		// buildSnapshot which reads projectData["example-agora"].
 		//
 		// 260511-d3p: if the session ID is unknown (or known but unnamed)
 		// at the moment this event lands, queue the timestamp in

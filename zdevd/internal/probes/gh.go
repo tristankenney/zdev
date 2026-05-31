@@ -34,8 +34,8 @@ const ghProbeTimeout = 30 * time.Second
 // branch switch is reflected within one steady-state poll.
 const branchCacheTTL = 5 * time.Minute
 
-// RepoResolver maps a project name (e.g., "myorg/agora-a") to its canonical
-// GitHub owner/repo identifier (e.g., "myorg/agora") so probes can address
+// RepoResolver maps a project name (e.g., "example/agora-a") to its canonical
+// GitHub owner/repo identifier (e.g., "example/agora") so probes can address
 // the correct upstream when multiple local working copies share the same
 // repo. ok=false means the project hasn't been seen; cached "" means the
 // project was seen but has no resolvable GitHub remote — both cases skip
@@ -110,7 +110,7 @@ func defaultExec(ctx context.Context, name string, args ...string) ([]byte, erro
 func (g *GHProbe) Class() string { return "gh" }
 
 // Refresh fetches PR aggregate counts for the given project and emits a
-// PRRefresh event. The project key is the owner/repo string ("myorg/frontend").
+// PRRefresh event. The project key is the owner/repo string ("example/frontend").
 //
 // On rate-limit failure (gh CLI returns non-zero with "rate limit" in
 // stderr), Refresh logs a WARN and returns nil — the scheduler's

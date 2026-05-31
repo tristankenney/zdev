@@ -2,9 +2,9 @@
 // canonical GitHub repo identifier (owner/repo) by consulting the local VCS.
 //
 // Why this exists (260512-cfg): the project list emits names like
-// "myorg/agora-a", which is the local *worktree directory name*, not the
+// "example/agora-a", which is the local *worktree directory name*, not the
 // GitHub repo. Multiple worktree directories (agora-a, agora-b, agora-c) can
-// share a single upstream repo (myorg/agora). Without resolving the actual
+// share a single upstream repo (example/agora). Without resolving the actual
 // remote, gh probes ask GitHub for repos that don't exist.
 //
 // Resolution strategy:

@@ -29,7 +29,7 @@ panes. State is re-derived from tmux events on every start.
 | `waitNotifiedTiers` | Bitmap of which "you've been waiting N minutes" notifications have already fired (so we don't spam after a daemon restart) |
 | `celebrateUntil` | Unix-second deadline for the post-PR-merge celebration glyph |
 
-Session names are dash-form (e.g. `myorg-backend`, never `myorg/backend`)
+Session names are dash-form (e.g. `example-backend`, never `example/backend`)
 because they map 1:1 to tmux session names.
 
 ## Migration policy
