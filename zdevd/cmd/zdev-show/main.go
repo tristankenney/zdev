@@ -9,11 +9,14 @@
 //	zdev-show myorg-agora     # same, dash-form accepted
 //	zdev-show --legend         # print the sidebar glyph legend (no daemon dial)
 //	zdev-show -l               # alias for --legend
+//	zdev-show agents           # print the agent registry one-per-line (no daemon dial)
 //
 // zdev-show dials the daemon's unix socket, reads one snapshot, and exits.
 // It never subscribes to the stream — the connection is closed immediately
 // after the snapshot is received. Schema mismatch and dial errors go to
-// stderr with exit code 1; "no context" cases exit 0. --legend never dials.
+// stderr with exit code 1; "no context" cases exit 0. --legend and `agents`
+// never dial — both read local config only so bin/zdev can use them when
+// the daemon hasn't been launched yet.
 package main
 
 import (
@@ -23,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/agents"
+	"github.com/tristankenney/zdev/zdevd/internal/config"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/socket"
@@ -53,6 +58,21 @@ func run() int {
 	// the daemon is down, so it's always discoverable.
 	if len(os.Args) >= 2 && (os.Args[1] == "--legend" || os.Args[1] == "-l") {
 		fmt.Print(formatLegend())
+		return 0
+	}
+
+	// `agents` is the bin/zdev integration point: it lists the configured
+	// agent registry one line per agent (binary<TAB>launch) so a shell
+	// script can iterate and pick the first whose binary resolves on PATH.
+	// No daemon dial — sidebar.toml is the source of truth and bin/zdev
+	// may run before the daemon is alive.
+	if len(os.Args) >= 2 && os.Args[1] == "agents" {
+		out, err := formatAgents()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+			return 1
+		}
+		fmt.Print(out)
 		return 0
 	}
 
@@ -225,3 +245,38 @@ func firstNonEmptyLine(s string) string {
 }
 
 func defaultSocketPath() string { return platform.SocketPath() }
+
+// formatAgents loads sidebar.toml and delegates to formatAgentsFromRegistry.
+// Returns an error only on hard parse failures; missing file falls back to
+// defaults silently per CONFIG-01.
+func formatAgents() (string, error) {
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return "", err
+	}
+	return formatAgentsFromRegistry(cfg.AgentRegistry()), nil
+}
+
+// formatAgentsFromRegistry prints one line per registered agent (registry
+// declaration order) for shell-script consumption by bin/zdev. Format:
+//
+//	<binary><TAB><launch>
+//
+// where <binary> is the first whitespace-delimited token of the agent's
+// launch command (used for `command -v` PATH probes in the consumer) and
+// <launch> is the full launch line. Agents whose Launch is empty are
+// skipped — they exist for detection only and shouldn't be auto-spawned.
+func formatAgentsFromRegistry(r *agents.Registry) string {
+	var b strings.Builder
+	for _, spec := range r.All() {
+		if spec.Launch == "" {
+			continue
+		}
+		binary := strings.Fields(spec.Launch)
+		if len(binary) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "%s\t%s\n", binary[0], spec.Launch)
+	}
+	return b.String()
+}

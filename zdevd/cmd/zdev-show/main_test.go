@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
@@ -186,5 +187,31 @@ func TestFormatList_PreviewTruncation(t *testing.T) {
 	}
 	if !strings.Contains(got, "...") {
 		t.Errorf("formatList truncation marker '...' not found; got: %q", got)
+	}
+}
+
+// TestFormatAgentsFromRegistry verifies the registry-list output shape used
+// by bin/zdev: one line per agent (declaration order), <binary>\t<launch>,
+// detection-only agents (empty Launch) skipped.
+func TestFormatAgentsFromRegistry(t *testing.T) {
+	r := agents.NewRegistry([]agents.Spec{
+		{Name: "claude", Glyph: "✻", Launch: "claude --dangerously-skip-permissions --continue"},
+		{Name: "opencode", Glyph: "○", Launch: "opencode"},
+		{Name: "detect-only", Glyph: "•"}, // empty Launch — must be skipped
+	})
+	got := formatAgentsFromRegistry(r)
+	want := "claude\tclaude --dangerously-skip-permissions --continue\n" +
+		"opencode\topencode\n"
+	if got != want {
+		t.Errorf("formatAgentsFromRegistry =\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// TestFormatAgentsFromRegistry_Empty verifies an empty registry produces
+// no output (consumers must treat empty output as "no auto-launch").
+func TestFormatAgentsFromRegistry_Empty(t *testing.T) {
+	r := agents.NewRegistry(nil)
+	if got := formatAgentsFromRegistry(r); got != "" {
+		t.Errorf("formatAgentsFromRegistry(empty) = %q; want empty", got)
 	}
 }
