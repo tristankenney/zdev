@@ -70,7 +70,13 @@ import (
 // behaves identical to prior renderers ignoring the field) but bumped for
 // strict-equality validation. Restart all zdev-sidebar-render instances
 // after deploying the new zdevd binary.
-const SchemaVersion = "phase4-v7"
+//
+// phase4-v8 (2026-05-31): adds Project.AgentStates map[string]Attention
+// for the data-driven multi-agent registry. Replaces the hardcoded
+// AgentClaude / AgentPi shape (those fields remain on the wire for one
+// release as a back-compat projection from AgentStates so a v7 renderer
+// still works). Restart all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v8"
 
 // MaxHelloBytes caps the hello frame size on the daemon side. Hello frames
 // are tiny (~80 bytes) so 64 KB is a generous safety bound. Frames larger
@@ -170,9 +176,14 @@ type Project struct {
 	PRFail         int    `json:"pr_fail,omitempty"`
 	PRPend         int    `json:"pr_pend,omitempty"`
 	CelebrateUntil int64  `json:"celebrate_until,omitempty"`
-	AgentClaude    string `json:"agent_claude,omitempty"` // "waiting"/"finished"/""
-	AgentPi        string `json:"agent_pi,omitempty"`     // phase4-v6: replaces AgentCodex
-	WaitContext    string `json:"wait_context,omitempty"` // verbatim last ~20 lines of agent pane at wait-start
+	AgentClaude    string `json:"agent_claude,omitempty"` // DEPRECATED in v8; projection of AgentStates["claude"]
+	AgentPi        string `json:"agent_pi,omitempty"`     // DEPRECATED in v8; projection of AgentStates["pi"]
+	// AgentStates is the per-agent attention map keyed by lowercase agent
+	// name (from the registry's [[agent]].name). Replaces the static
+	// AgentClaude/AgentPi pair as of phase4-v8 — the legacy fields remain
+	// on the wire for one release, populated from this map.
+	AgentStates map[string]Attention `json:"agent_states,omitempty"`
+	WaitContext string               `json:"wait_context,omitempty"` // verbatim last ~20 lines of agent pane at wait-start
 	CIStatus       string `json:"ci_status,omitempty"`    // "queued"|"in_progress"|"completed"|""
 	CIConclusion   string `json:"ci_conclusion,omitempty"` // "success"|"failure"|"cancelled"|... or ""
 	// FailingChecks / PendingChecks (phase4-v5, 260512-abi) carry deduped, sorted

@@ -973,11 +973,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v7 (bumped by 260515 for
-	// Snapshot.PaneVisible addition).
-	t.Run("H_schema_version_is_phase4_v7", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v7" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v7")
+	// Test H: proto.SchemaVersion must be phase4-v8 (bumped 2026-05-31
+	// for Project.AgentStates addition).
+	t.Run("H_schema_version_is_phase4_v8", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v8" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v8")
 		}
 	})
 }
