@@ -29,6 +29,8 @@ import (
 	"strconv"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/tristankenney/zdev/zdevd/internal/agents"
 )
 
 // Config is decoded from ~/.config/zdev/sidebar.toml. The flat snake_case
@@ -150,6 +152,27 @@ func (c Config) EffectiveAgents() []AgentSpec {
 		return c.Agents
 	}
 	return BuiltinAgents()
+}
+
+// AgentRegistry returns the freshly-built agents.Registry that the rest
+// of the daemon (hub, renderer, classifier) should consume. It bridges
+// the config-side AgentSpec onto the runtime agents.Spec — same data,
+// different home package, to avoid an import cycle (agents must not
+// import config since hub eventually pulls agents in via state).
+func (c Config) AgentRegistry() *agents.Registry {
+	specs := c.EffectiveAgents()
+	runtime := make([]agents.Spec, len(specs))
+	for i, s := range specs {
+		runtime[i] = agents.Spec{
+			Name:            s.Name,
+			Glyph:           s.Glyph,
+			WaitingMarkers:  s.WaitingMarkers,
+			FinishedMarkers: s.FinishedMarkers,
+			SpinnerMarkers:  s.SpinnerMarkers,
+			Launch:          s.Launch,
+		}
+	}
+	return agents.NewRegistry(runtime)
 }
 
 // Load reads a TOML config file at path and returns the merged config.
