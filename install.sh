@@ -16,18 +16,39 @@ symlink() {
 }
 
 echo "==> Checking prerequisites"
+OS="$(uname -s)"
 missing=()
-for tool in tmux go make jq plutil launchctl; do
+common_tools=(tmux go make jq)
+case "$OS" in
+  Darwin)
+    platform_tools=(plutil launchctl)
+    ;;
+  Linux)
+    platform_tools=(systemctl)
+    ;;
+  *)
+    echo "  ERROR: unsupported OS \"$OS\". zdev supports macOS and Linux." >&2
+    exit 1
+    ;;
+esac
+for tool in "${common_tools[@]}" "${platform_tools[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 if (( ${#missing[@]} > 0 )); then
   echo "  MISSING required tools: ${missing[*]}" >&2
-  echo "  Install via Homebrew: brew install ${missing[*]}" >&2
-  echo "  (plutil ships with macOS; launchctl too — re-run if these still show missing.)" >&2
+  case "$OS" in
+    Darwin)
+      echo "  Install via Homebrew: brew install ${missing[*]}" >&2
+      echo "  (plutil ships with macOS; launchctl too — re-run if these still show missing.)" >&2
+      ;;
+    Linux)
+      echo "  Install via your distro's package manager. Examples:" >&2
+      echo "    Debian/Ubuntu: sudo apt install ${missing[*]}" >&2
+      echo "    Fedora/RHEL:   sudo dnf install ${missing[*]}" >&2
+      echo "    Arch:          sudo pacman -S ${missing[*]}" >&2
+      ;;
+  esac
   exit 1
-fi
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "  WARNING: zdev targets macOS (launchd). Non-Darwin platforms are unsupported." >&2
 fi
 tmux_major=$(tmux -V 2>/dev/null | awk '{print $2}' | cut -d. -f1)
 if [[ -z "$tmux_major" || "$tmux_major" -lt 3 ]]; then
@@ -61,7 +82,11 @@ else
   echo "  ~/.config/zdev/projects exists — leaving it alone"
 fi
 
-echo "==> Building zdevd + installing launchd jobs"
+if [[ "$OS" == "Darwin" ]]; then
+  echo "==> Building zdevd + installing launchd jobs"
+else
+  echo "==> Building zdevd + installing systemd user units"
+fi
 make -C "$REPO/zdevd" install
 
 echo ""

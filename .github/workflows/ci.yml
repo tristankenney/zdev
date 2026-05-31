@@ -12,10 +12,11 @@ concurrency:
 
 jobs:
   test:
-    # macOS runner because zdevd is macOS-only: plutil, launchctl, and the
-    # tmux control-mode integration aren't portable. Apple Silicon matches
-    # the dev environment.
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +25,16 @@ jobs:
         with:
           go-version-file: zdevd/go.mod
           cache-dependency-path: zdevd/go.sum
+
+      - name: Install platform prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          sudo apt-get update -qq
+          # zsh because some scripts use #!/bin/zsh; systemd-analyze for unit
+          # linting (`make test` runs it best-effort).
+          sudo apt-get install -y --no-install-recommends \
+            tmux zsh jq systemd
 
       - name: Shell-syntax checks
         run: |
@@ -45,5 +56,5 @@ jobs:
           for f in zdevd/scripts/*.sh; do check "$f"; done
           for f in bin/*; do check "$f"; done
 
-      - name: make test (plutil lint + anti-fork gates + go test -race)
+      - name: make test (lint + anti-fork gates + go test -race)
         run: make -C zdevd test
