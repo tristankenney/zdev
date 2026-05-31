@@ -1,0 +1,79 @@
+# zdev sidebar configuration. Copy to ~/.config/zdev/sidebar.toml and edit.
+# All keys are optional — anything you don't set falls back to its default.
+# The 4 ZDEV_SIDEBAR_* env vars override the corresponding key when set.
+
+# Where zdev finds your project checkouts.
+# workspace = "/Users/you/workspace"
+
+# Sidebar pane width (cols).
+# width = 50
+
+# Idle threshold for the dim-grey "no recent activity" indicator (seconds).
+# stale_seconds = 3600
+
+# Wait-age escalation tiers (seconds since the agent started waiting).
+# wait_warn_seconds   = 60     # orange after a minute
+# wait_urgent_seconds = 300    # pulsing red + macOS notification after 5 min
+
+# Listening-ports chip cap.
+# ports_max = 4
+
+# Branches considered "default" — ahead/behind chips compare against these.
+# default_branches = ["main", "master", "develop", "trunk"]
+
+# pane_current_command values that mean "this is just a shell, no chip-worthy
+# command is running". Add custom shells (e.g. "nu", "elvish") if you use them.
+# default_shells = ["bash", "zsh", "sh", "fish", "dash"]
+
+# PR-status / git-floor probe cadences (seconds).
+# pr_refresh_seconds = 300
+# git_floor_seconds  = 10
+
+# Glyphs used in the legacy claude/pi chip slots — kept for renderer
+# back-compat; new agents inherit their glyph from the [[agent]].glyph field.
+# claude_glyph = "✻"
+# pi_glyph     = "π"
+
+
+# ─── Agent registry ───────────────────────────────────────────────────────
+#
+# [[agent]] blocks tell zdev which AI clients exist, how to detect their
+# state from a pane title, and how `zdev <project>` should auto-launch them.
+#
+# When the section is ABSENT, zdev uses the built-in defaults (claude +
+# opencode below). When PRESENT, your list REPLACES the defaults wholesale
+# — list every agent you want, including claude if you still use it.
+#
+# bin/zdev iterates these in declaration order at session-start: the first
+# agent whose `launch` binary resolves on $PATH wins the auto-spawned pane.
+# Set $ZDEV_AGENT_CMD to override manually, or "" to disable the pane.
+
+[[agent]]
+name             = "claude"
+glyph            = "✻"
+waiting_markers  = ["● claude", "✳ "]
+finished_markers = ["◆ claude"]
+# Braille spinner range U+2800–U+28FF — listing any Braille marker opts the
+# agent into the generic Braille-prefix-is-spinning heuristic, so you don't
+# have to enumerate every code point.
+spinner_markers  = ["⠂ ", "⠐ ", "⠠ ", "⠈ ", "⠁ ", "⠉ ", "⠋ ", "⠙ ", "⠹ ", "⠸ "]
+launch           = "claude --dangerously-skip-permissions --continue"
+
+[[agent]]
+name             = "opencode"
+glyph            = "○"
+waiting_markers  = ["● opencode"]
+finished_markers = ["◆ opencode"]
+launch           = "opencode"
+
+# Detection-only agent (no auto-launch). Useful when you drive state from a
+# hook that calls `zdev-notify <name> waiting` and just want the sidebar to
+# pick up your custom marker glyph. Leave `launch` empty to suppress
+# bin/zdev's auto-spawn for this entry.
+#
+# [[agent]]
+# name             = "aider"
+# glyph            = "✦"
+# waiting_markers  = ["● aider"]
+# finished_markers = ["◆ aider"]
+# launch           = ""

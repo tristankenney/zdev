@@ -74,7 +74,7 @@ Each line is a newline-delimited JSON snapshot. `Ctrl-C` to disconnect.
 
 The sidebar is toggled by `zdev-sidebar-toggle` (bound to a key in `.tmux.conf`). Each sidebar pane runs `zdev-sidebar-render`, which is symlinked to the `zdev-sidebar` binary.
 
-Agent status (● Claude, ◆ Codex) is read from tmux pane titles. Pane titles must use the `● claude` / `◆ codex` format for detection to work.
+Agent status (● claude, ● opencode, ✳ Claude Code, Braille spinners, ◆ finished) is read from tmux pane titles. The set of recognised markers is configured by the `[[agent]]` registry in `~/.config/zdev/sidebar.toml` — see `../config/sidebar.toml.example`.
 
 ## Testing
 

@@ -39,9 +39,13 @@ Strongly recommended:
 
 - **gh** (GitHub CLI), authenticated via `gh auth login` — without it the
   PR-status probes are no-ops and the sidebar's PR column stays blank
-- **claude** CLI on `$PATH` if you want the agent pane that `zdev <project>`
-  spawns. Otherwise set `ZDEV_AGENT_CMD=""` to disable it, or
-  `ZDEV_AGENT_CMD="aider --foo"` (or whatever) to use a different tool.
+- **claude** or **opencode** CLI on `$PATH` if you want the agent pane that
+  `zdev <project>` spawns. Both are first-class — the first one found on
+  `$PATH` (claude before opencode by default) wins. Override registration
+  order or add new agents via `~/.config/zdev/sidebar.toml`; see
+  [`config/sidebar.toml.example`](config/sidebar.toml.example) for a
+  worked example. Set `ZDEV_AGENT_CMD=""` to disable the pane, or
+  `ZDEV_AGENT_CMD="aider --foo"` to force a specific command.
 
 Optional:
 
@@ -106,7 +110,7 @@ running `$ZDEV_AGENT_CMD`.
 |---|---|---|
 | `ZDEV_WORKSPACE` | `$HOME/workspace` | Root dir holding project checkouts |
 | `ZDEV_PROJECTS_FILE` | `$XDG_CONFIG_HOME/zdev/projects` | Project list |
-| `ZDEV_AGENT_CMD` | `claude --dangerously-skip-permissions --continue` if `claude` is on `$PATH`; else empty | Command launched in the right-hand pane; empty disables the pane |
+| `ZDEV_AGENT_CMD` | First `launch` line from `sidebar.toml` whose binary is on `$PATH` (defaults: claude before opencode); empty if none resolve | Command launched in the right-hand pane; empty disables the pane |
 | `ZDEV_REAP_AFTER_HOURS` | `8` | Idle threshold for `zdev reap` |
 | `ZDEV_REAP_LOG` | `~/Library/Logs/zdev/reaper.log` | Reap event log |
 | `ZDEV_SIDEBAR_THRESHOLD` | `200` | Min client width (cols) for sidebar to appear |
@@ -115,15 +119,24 @@ running `$ZDEV_AGENT_CMD`.
 ## Pane title convention
 
 Agents write status into pane titles, which is how the sidebar identifies
-state. Examples:
+state. Examples (built-in detection):
 
-- `● claude` — claude is waiting on user input
-- `⠐ Claude Code` — claude is working
-- `π - <project>` — pi pane (if you use it)
+- `● claude` / `✳ Implementing X` — claude is waiting on user input
+- `⠐ Claude Code` — claude is working (any Braille spinner prefix)
+- `● opencode tui` — opencode is waiting on user input
+- `◆ claude` / `◆ opencode` — agent finished a task
 
-If you wire up another agent, write the same kinds of glyphs into the pane
-title via `tmux set-option -p @pane-title …` (or whatever escape sequence
-the agent supports).
+To wire up a new agent: add an `[[agent]]` block to
+`~/.config/zdev/sidebar.toml` listing the marker prefixes the agent emits.
+See [`config/sidebar.toml.example`](config/sidebar.toml.example) for the
+full schema. Adding an entry automatically:
+
+- Teaches the sidebar to attribute matching pane titles to that agent
+- Adds the agent to `bin/zdev`'s auto-launch rotation (if `launch` is set)
+- Makes `AgentStates[name]` available in the daemon's snapshot
+
+Agents that can't set their own pane titles can be driven externally via
+`zdev-notify <name> waiting` from a hook.
 
 ## Uninstall
 
