@@ -13,7 +13,6 @@ package hub
 
 import (
 	"log/slog"
-	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
@@ -103,19 +102,14 @@ func recomputeAgents(s *state, sessionName string) {
 	nowWaiting := pd.AgentClaude == "waiting" || pd.AgentPi == "waiting"
 	switch {
 	case !prevWaiting && nowWaiting:
-		// Transition INTO waiting — stamp the moment so the acknowledgment
-		// rule (lastVisitTS >= WaitStartedTS) can correctly distinguish
-		// "user has seen this wait" from "agent just started waiting again".
-		// Don't override a value already set by NotifSeen (zdev-notify file
-		// timestamp): that's the more accurate origin time when available.
+		// Transition INTO waiting — fire the side effects only. The
+		// canonical WaitStartedTS lifecycle and tier-escalation are now
+		// owned by hub.DeriveAttention (snapshot.go), which sees the same
+		// title-change event one debounce later. The only event-time
+		// effect that can't wait for the next snapshot is the pane
+		// capture: it needs the agent pane content AS OF NOW, before the
+		// user types anything that scrolls it away.
 		//
-		// Reset bitmap BEFORE stamping WaitStartedTS — replay-safe ordering:
-		// a crash between these two lines leaves (waiting=false, bits=0), not
-		// (waiting=true, stale bits set).
-		pd.WaitNotifiedTiers = 0
-		if pd.WaitStartedTS == 0 {
-			pd.WaitStartedTS = time.Now().Unix()
-		}
 		// phase4-v2: capture the agent pane content so the user can see what
 		// the agent is waiting on without switching sessions. Prefer claude over
 		// pi on tiebreak. Skip for daemon-internal sessions.
@@ -182,37 +176,11 @@ func recomputeAgents(s *state, sessionName string) {
 				}
 			}
 		}
-	case prevWaiting && !nowWaiting:
-		// Transition OUT of waiting — clear the timestamp so a future re-entry
-		// cleanly advances WaitStartedTS past prior visits, drop the captured
-		// context so it doesn't go stale, and reset the tier bitmap so the
-		// next wait cycle starts firing from the lowest tier again.
-		//
-		// IMPORTANT: this branch must NOT fire on the merely-still-not-waiting
-		// case (prevWaiting=false, nowWaiting=false). Bootstrap after a daemon
-		// restart calls recomputeAgents for each session BEFORE pane titles
-		// arrive — the fresh in-memory pd has AgentClaude/AgentPi == "" so
-		// prevWaiting=false, and with no titles yet, nowWaiting=false too. If
-		// this branch fired in that case, it would wipe the WaitStartedTS just
-		// restored from zdevd-state.json. Then once the "● claude" title
-		// arrives, the transition-INTO branch would re-stamp WaitStartedTS to
-		// time.Now(), making lastVisitTS look stale and the chip re-flash.
-		// Restricting to (prevWaiting && !nowWaiting) means we only clear on
-		// an actual exit from waiting we observed.
-		//
-		// Visit guard: only wipe WaitStartedTS if the user has actually
-		// visited the session since the wait started. Otherwise a brief
-		// transition out of waiting (sub-agent returning, autonomous
-		// follow-up) would reset the wait-age clock and the tier-escalation
-		// bitmap — so when the agent flips back to waiting moments later,
-		// the user sees a fresh "0s" instead of the accumulated age. The
-		// next ClientSessionChanged advances lastVisitTS and lets a
-		// subsequent transition clear cleanly.
-		if visitTS, ok := s.lastVisitTS[sessionName]; ok && visitTS >= pd.WaitStartedTS {
-			pd.WaitStartedTS = 0
-			pd.WaitContext = ""
-			pd.WaitNotifiedTiers = 0
-		}
 	}
+	// Transition OUT of waiting is handled in buildSnapshot, where the
+	// canonical decision lives — DeriveAttention produces the new
+	// WaitStartedTS (0 on exit, with latch-until-visit semantics) and
+	// the snapshot loop cascades the dependent clears (WaitContext,
+	// WaitNotifiedTiers) when WaitStartedTS transitions back to 0.
 	s.projectData[sessionName] = pd
 }

@@ -104,6 +104,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 		// AttentionToStatus — no independent decision logic.
 		var ar AttentionResult
 		if !absent {
+			prevWaitStartedTS := pd.WaitStartedTS
 			ar = DeriveAttention(AttentionInputs{
 				Titles:            sessionTitles(st, sess),
 				LastVisitTS:       st.lastVisitTS[dataKey],
@@ -113,6 +114,18 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 			}, now)
 			pd.Attention = ar.Attention
 			pd.WaitStartedTS = ar.WaitStartedTS
+
+			// Cascade the wait-lifecycle dependents off WaitStartedTS.
+			// When the wait clears (non-zero → 0), drop the captured pane
+			// context so it doesn't go stale and reset the tier bitmap so
+			// the next wait cycle escalates from the lowest tier again.
+			// agents.go used to do this directly; now it's owned here so
+			// "the wait state cleared" has a single point of authority.
+			if prevWaitStartedTS != 0 && ar.WaitStartedTS == 0 {
+				pd.WaitContext = ""
+				pd.WaitNotifiedTiers = 0
+			}
+
 			st.projectData[dataKey] = pd
 		}
 

@@ -790,50 +790,60 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test B: clear on transition OUT of waiting REQUIRES a prior visit.
-	// Without a visit, the WaitStartedTS / WaitContext are latched (the user
-	// hasn't seen the chip yet — don't lose tier-escalation context or
-	// silently drop the chip if the agent briefly resumes work). With a
-	// visit, the clear path runs as before.
-	t.Run("B_clear_requires_visit", func(t *testing.T) {
-		t.Run("no_visit_latches", func(t *testing.T) {
+	// Test B: clear-on-exit lives in buildSnapshot now (it cascades the
+	// dependent fields off the WaitStartedTS lifecycle owned by
+	// DeriveAttention). Verify the latch (no visit → stay set) and the
+	// clear (visit + title moves → wipe) at that layer.
+	t.Run("B_clear_lifecycle_lives_in_buildSnapshot", func(t *testing.T) {
+		t.Run("no_visit_latches_wait_state", func(t *testing.T) {
 			s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
+			s.projectListNames = []string{"example-agora"}
 			s.paneCapturer = func(paneID string) (string, error) {
 				return "some captured context\n", nil
 			}
 
+			// Enter waiting via the event path.
 			recomputeAgents(s, "example-agora")
-			if s.projectData["example-agora"].WaitContext == "" {
+			// Bake the wait into the snapshot lifecycle.
+			_ = buildSnapshot(s, 1, time.Now(), time.Now().Unix())
+			pd := s.projectData["example-agora"]
+			if pd.WaitContext == "" {
 				t.Fatal("pre-condition: WaitContext should be set after entering waiting")
 			}
-			waitStartedAt := s.projectData["example-agora"].WaitStartedTS
-
-			s.paneCapturer = func(paneID string) (string, error) {
-				return "", nil
+			if pd.WaitStartedTS == 0 {
+				t.Fatal("pre-condition: WaitStartedTS should be non-zero after entering waiting")
 			}
+			waitStartedAt := pd.WaitStartedTS
+
+			// Agent self-exits waiting without a visit — latch path.
 			s.panesByID["%1"].Title = "shell"
+			s.lastTitleChangeTS["example-agora"] = time.Now().Unix() + 1
 			recomputeAgents(s, "example-agora")
+			_ = buildSnapshot(s, 2, time.Now(), time.Now().Unix()+1)
+			pd = s.projectData["example-agora"]
 
-			if got := s.projectData["example-agora"].WaitStartedTS; got != waitStartedAt {
-				t.Errorf("WaitStartedTS = %d after no-visit exit; want %d (latched)", got, waitStartedAt)
+			if pd.WaitStartedTS != waitStartedAt {
+				t.Errorf("WaitStartedTS = %d after no-visit exit; want %d (latched)", pd.WaitStartedTS, waitStartedAt)
 			}
-			if got := s.projectData["example-agora"].WaitContext; got == "" {
+			if pd.WaitContext == "" {
 				t.Errorf("WaitContext cleared after no-visit exit; want latched")
 			}
 		})
 
-		t.Run("with_visit_clears", func(t *testing.T) {
+		t.Run("visit_then_title_change_clears", func(t *testing.T) {
 			s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
+			s.projectListNames = []string{"example-agora"}
 			s.paneCapturer = func(paneID string) (string, error) {
 				return "some captured context\n", nil
 			}
 
 			recomputeAgents(s, "example-agora")
+			_ = buildSnapshot(s, 1, time.Now(), time.Now().Unix())
 			if s.projectData["example-agora"].WaitContext == "" {
 				t.Fatal("pre-condition: WaitContext should be set after entering waiting")
 			}
 
-			// Simulate a visit after the wait started.
+			// Visit, then agent transitions out of waiting.
 			s.lastVisitTS["example-agora"] = s.projectData["example-agora"].WaitStartedTS + 1
 
 			var clearCallCount int
@@ -842,16 +852,19 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 				return "", nil
 			}
 			s.panesByID["%1"].Title = "shell"
+			s.lastTitleChangeTS["example-agora"] = s.lastVisitTS["example-agora"] - 1
 			recomputeAgents(s, "example-agora")
+			_ = buildSnapshot(s, 2, time.Now(), time.Now().Unix())
+			pd := s.projectData["example-agora"]
 
 			if clearCallCount != 0 {
 				t.Errorf("paneCapturer should NOT be called on exit from waiting; got %d calls", clearCallCount)
 			}
-			if got := s.projectData["example-agora"].WaitContext; got != "" {
-				t.Errorf("WaitContext = %q after visited exit from waiting; want empty", got)
+			if pd.WaitContext != "" {
+				t.Errorf("WaitContext = %q after visited exit; want empty", pd.WaitContext)
 			}
-			if got := s.projectData["example-agora"].WaitStartedTS; got != 0 {
-				t.Errorf("WaitStartedTS = %d after visited exit from waiting; want 0", got)
+			if pd.WaitStartedTS != 0 {
+				t.Errorf("WaitStartedTS = %d after visited exit; want 0", pd.WaitStartedTS)
 			}
 		})
 	})
