@@ -87,25 +87,44 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 		dataKey := proto.SessionKey(n)
 		pd := st.projectData[dataKey]
 		pr := st.prCounts[dataKey]
-		status := deriveStatus(st, nameToSession[dataKey])
-		// Stale-waiting demoter: claude leaves a `✳ <task>` pane title
-		// behind when it returns to its idle prompt, which deriveStatus
-		// (stateless, title-only) keeps classifying as `waiting` forever.
-		// If the user has visited the session since its titles last moved,
-		// they've already seen whatever the agent was asking about — so the
-		// chip shouldn't keep firing. The next real wait will rewrite a
-		// pane title, advancing lastTitleChangeTS past lastVisitTS and
-		// restoring `waiting`.
-		if status == tmuxctl.StatusWaiting {
-			visitTS := st.lastVisitTS[dataKey]
-			titleChangeTS := st.lastTitleChangeTS[dataKey]
-			if visitTS > 0 && visitTS >= titleChangeTS {
-				status = tmuxctl.StatusAlive
-			}
+
+		// Existence flag — "absent" means the tmux session has no panes
+		// (or no entry at all). DeriveAttention has no notion of absence
+		// because it works on titles; carve it out up-front. When absent,
+		// the wire Status is "absent" and Attention is the zero value
+		// (AttIdle); the renderer treats absent as a dim row.
+		sess := nameToSession[dataKey]
+		absent := sess == nil || len(sess.windows) == 0
+
+		// Single-source-of-truth: DeriveAttention reads pane titles +
+		// visit/title-change timestamps and produces the per-session UX
+		// state plus the wait-start timestamp. The legacy Status string
+		// is kept in the wire payload (back-compat for renderers still
+		// reading it) but is now a projection of Attention via
+		// AttentionToStatus — no independent decision logic.
+		var ar AttentionResult
+		if !absent {
+			ar = DeriveAttention(AttentionInputs{
+				Titles:            sessionTitles(st, sess),
+				LastVisitTS:       st.lastVisitTS[dataKey],
+				LastTitleChangeTS: st.lastTitleChangeTS[dataKey],
+				WaitStartedTS:     pd.WaitStartedTS,
+				PrevAttention:     pd.Attention,
+			}, now)
+			pd.Attention = ar.Attention
+			pd.WaitStartedTS = ar.WaitStartedTS
+			st.projectData[dataKey] = pd
 		}
+
+		status := AttentionToStatus(ar.Attention)
+		if absent {
+			status = tmuxctl.StatusAbsent
+		}
+
 		proj := proto.Project{
 			Name:           n,
 			Status:         status,
+			Attention:      ar.Attention,
 			Branch:         pd.Branch,
 			Ahead:          pd.Ahead,
 			Behind:         pd.Behind,
@@ -196,6 +215,24 @@ func emitPortDiff(emit func(eventlog.Event), project string, prev, now []int) {
 // the shell-running signal; Phase 2 uses the `◎ ` glyph prefix in the
 // title (which zdev's pane-titling tooling already emits). Phase 3 lands
 // pane_current_command via a second format subscription (DATA-03).
+// sessionTitles returns the title of every pane owned by the named session.
+// Returns nil when the session is unknown or has no windows (a session
+// freshly created by SessionChanged but not yet populated).
+func sessionTitles(st *state, s *session) []string {
+	if s == nil || len(s.windows) == 0 {
+		return nil
+	}
+	var titles []string
+	for _, w := range s.windows {
+		for paneID := range w.panesIDs {
+			if p, ok := st.panesByID[paneID]; ok {
+				titles = append(titles, p.Title)
+			}
+		}
+	}
+	return titles
+}
+
 func deriveStatus(st *state, s *session) string {
 	if s == nil || len(s.windows) == 0 {
 		return tmuxctl.StatusAbsent

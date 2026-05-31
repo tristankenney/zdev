@@ -137,9 +137,26 @@ type Snapshot struct {
 // transition edge; cleared when the agent leaves waiting. Not persisted across
 // daemon restarts — the next legitimate waiting transition re-captures from
 // the live pane.
+// Attention is the per-session UX state that drives the sidebar marker
+// (gray ·, cyan ◎, yellow ◆, pink ●). It is derived once per snapshot
+// from pane titles + visit/title-change timestamps via
+// hub.deriveAttention, so all consumers (marker, mood block, chip color)
+// dispatch on a single field instead of independently re-deriving from
+// Status/AgentClaude/AgentPi/WaitStartedTS — which previously drifted
+// (gray dot but waiting-age timer text, etc.).
+type Attention string
+
+const (
+	AttIdle     Attention = ""         // omitted on the wire — default
+	AttWorking  Attention = "working"  // braille spinner / ◎ — claude is busy
+	AttFinished Attention = "finished" // ◆ — just-completed, not blocking
+	AttWaiting  Attention = "waiting"  // ● pulsing — blocking on user
+)
+
 type Project struct {
 	Name           string `json:"name"`
 	Status         string `json:"status"`
+	Attention      Attention `json:"attention,omitempty"`
 	Branch         string `json:"branch,omitempty"`
 	Ahead          int    `json:"ahead,omitempty"`
 	Behind         int    `json:"behind,omitempty"`

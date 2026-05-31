@@ -129,8 +129,13 @@ type projectData struct {
 	Ports          []int
 	LastActivityTS int64
 	WaitStartedTS  int64
-	AgentClaude    string
-	AgentPi     string
+	// Attention is the persisted UX state computed by DeriveAttention in
+	// snapshot.go. Kept on projectData so the next derivation pass can
+	// see the prior value (drives the latch path). Wire representation is
+	// the proto.Attention enum.
+	Attention         proto.Attention
+	AgentClaude       string
+	AgentPi           string
 	WaitContext       string // verbatim capture from tmux at wait-start; cleared on exit; NOT persisted
 	WaitNotifiedTiers uint8  // bit0=60s, bit1=5m, bit2=15m; reset on transition edges; persisted
 	CIStatus          string // last CIRefresh.Status; "" = unknown / no runs
