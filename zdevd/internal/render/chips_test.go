@@ -247,69 +247,6 @@ func TestChipPorts_FivePortsTruncated(t *testing.T) {
 	}
 }
 
-// ---- chipAgentClaude / chipAgentPi ----
-
-func TestChipAgentClaude_Empty(t *testing.T) {
-	var buf bytes.Buffer
-	chipAgentClaude(&buf, "", ClaudeGlyphDefault)
-	if buf.Len() != 0 {
-		t.Errorf("chipAgentClaude empty should be suppressed, got %q", buf.Bytes())
-	}
-}
-
-func TestChipAgentClaude_Waiting(t *testing.T) {
-	var buf bytes.Buffer
-	chipAgentClaude(&buf, "waiting", ClaudeGlyphDefault)
-	want := []byte(RedPulse + ClaudeGlyphDefault + "●" + Reset)
-	if !bytes.Equal(buf.Bytes(), want) {
-		t.Errorf("chipAgentClaude waiting\nwant: %q\ngot:  %q", want, buf.Bytes())
-	}
-}
-
-func TestChipAgentClaude_Finished(t *testing.T) {
-	var buf bytes.Buffer
-	chipAgentClaude(&buf, "finished", ClaudeGlyphDefault)
-	want := []byte(Yellow + ClaudeGlyphDefault + "◆" + Reset)
-	if !bytes.Equal(buf.Bytes(), want) {
-		t.Errorf("chipAgentClaude finished\nwant: %q\ngot:  %q", want, buf.Bytes())
-	}
-}
-
-func TestChipAgentClaude_OverriddenGlyph(t *testing.T) {
-	var buf bytes.Buffer
-	chipAgentClaude(&buf, "waiting", "✦")
-	want := []byte(RedPulse + "✦" + "●" + Reset)
-	if !bytes.Equal(buf.Bytes(), want) {
-		t.Errorf("chipAgentClaude overridden glyph\nwant: %q\ngot:  %q", want, buf.Bytes())
-	}
-}
-
-func TestChipAgentPi_Empty(t *testing.T) {
-	var buf bytes.Buffer
-	chipAgentPi(&buf, "", PiGlyphDefault)
-	if buf.Len() != 0 {
-		t.Errorf("chipAgentPi empty should be suppressed, got %q", buf.Bytes())
-	}
-}
-
-func TestChipAgentPi_Waiting(t *testing.T) {
-	var buf bytes.Buffer
-	chipAgentPi(&buf, "waiting", PiGlyphDefault)
-	want := []byte(RedPulse + PiGlyphDefault + "●" + Reset)
-	if !bytes.Equal(buf.Bytes(), want) {
-		t.Errorf("chipAgentPi waiting\nwant: %q\ngot:  %q", want, buf.Bytes())
-	}
-}
-
-func TestChipAgentPi_Finished(t *testing.T) {
-	var buf bytes.Buffer
-	chipAgentPi(&buf, "finished", PiGlyphDefault)
-	want := []byte(Yellow + PiGlyphDefault + "◆" + Reset)
-	if !bytes.Equal(buf.Bytes(), want) {
-		t.Errorf("chipAgentPi finished\nwant: %q\ngot:  %q", want, buf.Bytes())
-	}
-}
-
 // ---- chipWaitAge ----
 
 func TestChipWaitAge_Zero(t *testing.T) {

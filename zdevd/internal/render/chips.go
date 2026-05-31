@@ -255,41 +255,6 @@ func chipPorts(buf *bytes.Buffer, ports []int) {
 	buf.WriteString(Reset)
 }
 
-// chipAgentClaude composes the claude-agent state chip per DATA-08 /
-// bash baseline lines 585-590.
-//
-// Suppressed when agent == "". The glyph parameter is ClaudeGlyphDefault
-// ("✻") by default; env-var override is read once at renderer startup
-// and passed in by the caller.
-func chipAgentClaude(buf *bytes.Buffer, agent string, glyph string) {
-	chipAgent(buf, agent, glyph)
-}
-
-// chipAgentPi composes the pi-agent state chip per DATA-08 / bash baseline
-// lines 591-596. 260512-cpa: replaces chipAgentCodex (codex slot retired).
-//
-// Same shape as chipAgentClaude with a different default glyph ("π").
-func chipAgentPi(buf *bytes.Buffer, agent string, glyph string) {
-	chipAgent(buf, agent, glyph)
-}
-
-// chipAgent is the shared implementation for chipAgentClaude and
-// chipAgentPi.
-func chipAgent(buf *bytes.Buffer, agent string, glyph string) {
-	switch agent {
-	case "waiting":
-		buf.WriteString(RedPulse)
-		buf.WriteString(glyph)
-		buf.WriteString("●")
-		buf.WriteString(Reset)
-	case "finished":
-		buf.WriteString(Yellow)
-		buf.WriteString(glyph)
-		buf.WriteString("◆")
-		buf.WriteString(Reset)
-	}
-}
-
 // chipWaitAge composes the wait-age escalation chip per DATA-09 / bash
 // baseline lines 600-611. Restored to 3-tier in 260511-nxy after the urgent
 // tier was removed in 260511-n4n (bg-fill approach dropped due to SGR-state

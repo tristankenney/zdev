@@ -402,9 +402,9 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 	})
 
 	// Agent domain row: wait-age only.
-	// Agent chips (chipAgentClaude / chipAgentPi) are suppressed for the
-	// current session — the user is present, so the unattended-agent indicator
-	// is misleading. chipWaitAge retains its full 3-tier behavior including the
+	// Per-agent chips were dropped in the 260511-ohu domain-row refactor —
+	// agent state surfaces through MarkerFor's attention-driven glyph
+	// instead. chipWaitAge retains its full 3-tier behavior including the
 	// RedPulse "! " prefix for cross-threshold urgency.
 	renderDomainRow(buf, prefix, "✻", func(inner *bytes.Buffer) {
 		chipWaitAge(inner, p.WaitStartedTS, now)
