@@ -23,11 +23,23 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
-// stateSchemaV is the current on-disk schema version. Increment only when the
-// persistedState shape changes in a backward-incompatible way.
-const stateSchemaV = 1
+// stateSchemaV is the current on-disk schema version. v1 was the
+// pre-Attention shape (LastVisitTS / WaitStartedTS / CelebrateUntil /
+// WaitNotifiedTiers). v2 adds Attention + LastTitleChangeTS so the
+// DeriveAttention latch and stale-waiting demoter survive a daemon
+// restart. Older v1 files load fine — the added maps are absent and
+// treated as zero values.
+const stateSchemaV = 2
+
+// minSupportedSchemaV is the oldest schema version we can load. v1
+// payloads round-trip into the new shape with Attention="" and
+// LastTitleChangeTS missing — that's a clean fallback (the first event
+// after restart populates them).
+const minSupportedSchemaV = 1
 
 // persistedState is the JSON envelope written to disk. Only the fields
 // that need to survive restarts are included; all re-derived fields (branch,
@@ -51,6 +63,15 @@ type persistedState struct {
 	WaitStartedTS     map[string]int64 `json:"waitStartedTS,omitempty"`
 	CelebrateUntil    map[string]int64 `json:"celebrateUntil,omitempty"`
 	WaitNotifiedTiers map[string]uint8 `json:"waitNotifiedTiers,omitempty"`
+	// v2 additions — persist DeriveAttention inputs so a daemon restart
+	// mid-wait keeps the latch and the stale-✳ demoter accurate.
+	// Attention: PrevAttention input to DeriveAttention; without it, a
+	// session that was Waiting before restart loses the latch on the
+	// first post-restart snapshot.
+	// LastTitleChangeTS: input to the stale-waiting demoter; preserves
+	// the "user has seen the current title" relation across restarts.
+	Attention         map[string]proto.Attention `json:"attention,omitempty"`
+	LastTitleChangeTS map[string]int64           `json:"lastTitleChangeTS,omitempty"`
 }
 
 // loadState reads and unmarshals the persisted state from path.
@@ -84,9 +105,9 @@ func loadState(path string) (*persistedState, error) {
 		return nil, nil
 	}
 
-	if ps.V != stateSchemaV {
-		slog.Warn("hub: persisted state schema version mismatch; starting with empty state",
-			"path", path, "want_v", stateSchemaV, "got_v", ps.V)
+	if ps.V < minSupportedSchemaV || ps.V > stateSchemaV {
+		slog.Warn("hub: persisted state schema version out of range; starting with empty state",
+			"path", path, "want_v", stateSchemaV, "min_v", minSupportedSchemaV, "got_v", ps.V)
 		return nil, nil
 	}
 
@@ -132,12 +153,26 @@ func saveState(path string, s *state) error {
 		}
 	}
 
+	// Flatten Attention out of projectData — only non-idle entries (the
+	// zero value AttIdle is the implicit default on load).
+	var attMap map[string]proto.Attention
+	for k, pd := range s.projectData {
+		if pd.Attention != "" && pd.Attention != proto.AttIdle {
+			if attMap == nil {
+				attMap = make(map[string]proto.Attention)
+			}
+			attMap[k] = pd.Attention
+		}
+	}
+
 	ps := persistedState{
 		V:                 stateSchemaV,
 		LastVisitTS:       s.lastVisitTS,
 		WaitStartedTS:     waitMap,
 		CelebrateUntil:    s.celebrateUntil,
 		WaitNotifiedTiers: tierMap,
+		Attention:         attMap,
+		LastTitleChangeTS: s.lastTitleChangeTS,
 	}
 
 	body, err := json.Marshal(ps)
@@ -182,6 +217,16 @@ func applyPersistedState(s *state, ps *persistedState) {
 		pd := s.projectData[k]
 		pd.WaitNotifiedTiers = v
 		s.projectData[k] = pd
+	}
+
+	for k, v := range ps.Attention {
+		pd := s.projectData[k]
+		pd.Attention = v
+		s.projectData[k] = pd
+	}
+
+	for k, v := range ps.LastTitleChangeTS {
+		s.lastTitleChangeTS[k] = v
 	}
 
 	now := time.Now().Unix()

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
@@ -465,6 +466,112 @@ func TestSaveState_WaitNotifiedTiersRoundTrip(t *testing.T) {
 	}
 	if len(tierMap) != 2 {
 		t.Errorf("waitNotifiedTiers map len = %d, want 2 (proj-a + proj-b only)", len(tierMap))
+	}
+}
+
+// TestSaveState_AttentionAndTitleChangeRoundTrip covers the v2 schema
+// additions: per-project Attention (the PrevAttention input to
+// DeriveAttention's latch path) and per-session LastTitleChangeTS (the
+// stale-✳ demoter's title freshness anchor). Both must survive a
+// daemon restart, otherwise the bootstrap snapshot loses the latch
+// (silently clearing a wait the user hasn't seen) or the demoter
+// (which would then unconditionally fire after restore).
+func TestSaveState_AttentionAndTitleChangeRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state-att.json")
+
+	s := newState()
+	pd := s.projectData["proj-x"]
+	pd.Attention = proto.AttWaiting
+	pd.WaitStartedTS = 1714000050
+	s.projectData["proj-x"] = pd
+	// Idle is the zero value — should NOT appear in JSON.
+	pd2 := s.projectData["proj-y"]
+	pd2.Attention = proto.AttIdle
+	s.projectData["proj-y"] = pd2
+
+	s.lastTitleChangeTS["proj-x"] = 1714000040
+	s.lastTitleChangeTS["proj-z"] = 1714000020
+
+	if err := saveState(path, s); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+
+	ps, err := loadState(path)
+	if err != nil {
+		t.Fatalf("loadState: %v", err)
+	}
+	if ps == nil {
+		t.Fatal("loadState returned nil")
+	}
+
+	s2 := newState()
+	applyPersistedState(s2, ps)
+
+	if got := s2.projectData["proj-x"].Attention; got != proto.AttWaiting {
+		t.Errorf("proj-x Attention after roundtrip = %q, want %q", got, proto.AttWaiting)
+	}
+	if got := s2.projectData["proj-y"].Attention; got != proto.AttIdle && got != "" {
+		t.Errorf("proj-y Attention after roundtrip = %q, want idle/empty", got)
+	}
+	if got, want := s2.lastTitleChangeTS["proj-x"], int64(1714000040); got != want {
+		t.Errorf("proj-x lastTitleChangeTS = %d, want %d", got, want)
+	}
+	if got, want := s2.lastTitleChangeTS["proj-z"], int64(1714000020); got != want {
+		t.Errorf("proj-z lastTitleChangeTS = %d, want %d", got, want)
+	}
+
+	// Idle entries must be omitted from JSON.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if attSection, ok := generic["attention"].(map[string]any); ok {
+		if _, found := attSection["proj-y"]; found {
+			t.Error("proj-y (Idle) must be omitted from attention map")
+		}
+		if _, found := attSection["proj-x"]; !found {
+			t.Error("proj-x (Waiting) missing from attention map")
+		}
+	}
+}
+
+// TestLoadState_V1Forward verifies a v1 file (pre-Attention era) loads
+// cleanly into the v2 shape, with Attention defaulting to AttIdle and
+// LastTitleChangeTS absent (both behaviors match the safe-fallback for
+// a daemon that hasn't yet seen a title-change event after restart).
+func TestLoadState_V1Forward(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state-v1.json")
+	// A canonical v1 payload — no Attention, no LastTitleChangeTS.
+	payload := `{"v":1,"lastVisitTS":{"alpha":1000},"waitStartedTS":{"alpha":900},"celebrateUntil":{},"waitNotifiedTiers":{"alpha":3}}`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	ps, err := loadState(path)
+	if err != nil {
+		t.Fatalf("loadState: %v", err)
+	}
+	if ps == nil {
+		t.Fatal("loadState returned nil for v1 payload")
+	}
+	s := newState()
+	applyPersistedState(s, ps)
+	if got, want := s.lastVisitTS["alpha"], int64(1000); got != want {
+		t.Errorf("v1 → lastVisitTS = %d, want %d", got, want)
+	}
+	if got, want := s.projectData["alpha"].WaitStartedTS, int64(900); got != want {
+		t.Errorf("v1 → WaitStartedTS = %d, want %d", got, want)
+	}
+	if got := s.projectData["alpha"].Attention; got != proto.AttIdle && got != "" {
+		t.Errorf("v1 → Attention = %q, want idle/empty (no upgrade inference)", got)
+	}
+	if got := s.lastTitleChangeTS["alpha"]; got != 0 {
+		t.Errorf("v1 → lastTitleChangeTS = %d, want 0", got)
 	}
 }
 
