@@ -54,6 +54,32 @@ tmux_major=$(tmux -V 2>/dev/null | awk '{print $2}' | cut -d. -f1)
 if [[ -z "$tmux_major" || "$tmux_major" -lt 3 ]]; then
   echo "  WARNING: tmux $(tmux -V 2>/dev/null) detected — zdev requires 3.x with control mode" >&2
 fi
+# Go version floor: 1.23 (driven by fsnotify v1.10 + log/slog + math/rand/v2).
+# Ubuntu apt's golang-go is 1.18–1.22 on every current LTS, which fails to
+# compile with a cryptic "package log/slog is not in GOROOT" error halfway
+# through `make install`. Detect early and point users at a working install.
+go_raw=$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//')
+go_major=${go_raw%%.*}
+go_minor=${go_raw#*.}
+go_minor=${go_minor%%.*}
+if [[ -z "$go_major" || "$go_major" -lt 1 ]] || \
+   { [[ "$go_major" -eq 1 ]] && [[ -z "$go_minor" || "$go_minor" -lt 23 ]]; }; then
+  echo "  ERROR: Go ${go_raw:-<unknown>} detected — zdev requires Go 1.23+" >&2
+  echo "         (uses log/slog, math/rand/v2, and fsnotify v1.10 which need ≥1.23)" >&2
+  case "$OS" in
+    Darwin)
+      echo "         macOS: brew install go    # currently ships 1.23+" >&2
+      ;;
+    Linux)
+      echo "         Ubuntu apt's golang-go is too old on every current LTS." >&2
+      echo "         Pick one of:" >&2
+      echo "           sudo snap install go --classic" >&2
+      echo "           sudo add-apt-repository -y ppa:longsleep/golang-backports && sudo apt update && sudo apt install -y golang-go" >&2
+      echo "           # or download from https://go.dev/dl/ and add /usr/local/go/bin to PATH" >&2
+      ;;
+  esac
+  exit 1
+fi
 if command -v gh >/dev/null 2>&1; then
   if ! gh auth status >/dev/null 2>&1; then
     echo "  NOTE: 'gh' is installed but not authenticated — PR probes will fail until you run 'gh auth login'"

@@ -32,7 +32,9 @@ Required:
 
 - macOS (the daemon uses launchd; the rest is portable but unsupported)
 - **tmux 3.x** with control mode (`tmux -CC`) — `brew install tmux`
-- **Go 1.23+** to build the daemon — `brew install go`
+- **Go 1.23+** to build the daemon
+  - macOS: `brew install go`
+  - Ubuntu / Debian: `apt`'s `golang-go` ships 1.18–1.22 on every current LTS and won't build. Use `sudo snap install go --classic`, or the [longsleep PPA](https://github.com/golang/go/wiki/Ubuntu), or download from [go.dev/dl](https://go.dev/dl/) and add `/usr/local/go/bin` to your `PATH`.
 - **make**, **jq**, **plutil**, **launchctl** (plutil + launchctl ship with macOS)
 
 Strongly recommended:
