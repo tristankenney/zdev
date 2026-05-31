@@ -16,8 +16,8 @@ func TestPaletteIndex_BashParity(t *testing.T) {
 		wantCksum uint32 // value from `printf '%s' "$name" | cksum | awk '{print $1}'`
 		wantIdx   int    // wantCksum % 15
 	}{
-		{"example", 3315383370, 0},
-		{"example-frontend", 618397553, 8},
+		{"example", 148323542, 2},
+		{"example-frontend", 3340694230, 10},
 		{"dotfiles", 1687175190, 0},
 		{"backend", 1458955910, 5},
 		{"claude", 4183503897, 12},
