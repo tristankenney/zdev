@@ -457,3 +457,100 @@ func TestDefaultsValues(t *testing.T) {
 		t.Errorf("GitFloorSeconds = %d, want 10", d.GitFloorSeconds)
 	}
 }
+
+// TestBuiltinAgents covers the default agent registry: at least claude
+// and opencode are present with non-empty glyphs and launch lines.
+func TestBuiltinAgents(t *testing.T) {
+	got := BuiltinAgents()
+	if len(got) < 2 {
+		t.Fatalf("BuiltinAgents() returned %d entries; want >= 2", len(got))
+	}
+	byName := map[string]AgentSpec{}
+	for _, a := range got {
+		byName[a.Name] = a
+	}
+	for _, name := range []string{"claude", "opencode"} {
+		spec, ok := byName[name]
+		if !ok {
+			t.Errorf("BuiltinAgents missing %q: %+v", name, got)
+			continue
+		}
+		if spec.Glyph == "" {
+			t.Errorf("BuiltinAgents[%q].Glyph empty", name)
+		}
+		if spec.Launch == "" {
+			t.Errorf("BuiltinAgents[%q].Launch empty", name)
+		}
+	}
+}
+
+// TestEffectiveAgents_FallbackToBuiltins covers the "no [[agent]] in
+// TOML" path: callers see the built-in registry, not an empty slice.
+func TestEffectiveAgents_FallbackToBuiltins(t *testing.T) {
+	c := Defaults()
+	got := c.EffectiveAgents()
+	if len(got) != len(BuiltinAgents()) {
+		t.Errorf("EffectiveAgents() with no Agents set = %d entries; want %d (builtin count)",
+			len(got), len(BuiltinAgents()))
+	}
+}
+
+// TestEffectiveAgents_UserAgentsReplace covers the "any [[agent]] in TOML
+// replaces the defaults" semantic. Writing one custom agent should NOT
+// inherit claude/opencode — the user opts into managing the full list.
+func TestEffectiveAgents_UserAgentsReplace(t *testing.T) {
+	c := Defaults()
+	c.Agents = []AgentSpec{{Name: "custom-agent", Glyph: "★", Launch: "myagent"}}
+	got := c.EffectiveAgents()
+	if len(got) != 1 {
+		t.Fatalf("EffectiveAgents() with 1 user agent = %d entries; want 1 (replace semantic)", len(got))
+	}
+	if got[0].Name != "custom-agent" {
+		t.Errorf("EffectiveAgents()[0].Name = %q; want %q", got[0].Name, "custom-agent")
+	}
+}
+
+// TestLoad_AgentsTOML covers TOML decoding of a sample [[agent]] block —
+// nested-table support (CONFIG-06).
+func TestLoad_AgentsTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/sidebar.toml"
+	payload := `
+width = 60
+
+[[agent]]
+name = "claude"
+glyph = "✻"
+waiting_markers = ["● claude", "✳ "]
+finished_markers = ["◆ claude"]
+launch = "claude --custom-flag"
+
+[[agent]]
+name = "opencode"
+glyph = "○"
+waiting_markers = ["● opencode"]
+launch = "opencode"
+`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Width != 60 {
+		t.Errorf("Width = %d; want 60", cfg.Width)
+	}
+	if len(cfg.Agents) != 2 {
+		t.Fatalf("Agents len = %d; want 2", len(cfg.Agents))
+	}
+	if cfg.Agents[0].Name != "claude" || cfg.Agents[0].Glyph != "✻" {
+		t.Errorf("Agents[0] = %+v; want claude with ✻ glyph", cfg.Agents[0])
+	}
+	if cfg.Agents[1].Name != "opencode" || cfg.Agents[1].Glyph != "○" {
+		t.Errorf("Agents[1] = %+v; want opencode with ○ glyph", cfg.Agents[1])
+	}
+	if cfg.Agents[0].Launch != "claude --custom-flag" {
+		t.Errorf("Agents[0].Launch = %q; want %q", cfg.Agents[0].Launch, "claude --custom-flag")
+	}
+}

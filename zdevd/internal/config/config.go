@@ -31,9 +31,11 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Config is the flat schema decoded from ~/.config/zdev/sidebar.toml. The 12
-// snake_case TOML keys map 1:1 to the documented sidebar.toml schema; no
-// nested tables (CONFIG-02).
+// Config is decoded from ~/.config/zdev/sidebar.toml. The flat snake_case
+// keys map 1:1 to the documented schema. CONFIG-02 historically restricted
+// the file to flat keys; the [[agent]] table (CONFIG-06, 2026-05) adds the
+// first nested structure so users can register new agents (claude,
+// opencode, future N) without recompiling.
 type Config struct {
 	Workspace         string   `toml:"workspace"`
 	Width             int      `toml:"width"`
@@ -47,6 +49,73 @@ type Config struct {
 	GitFloorSeconds   int      `toml:"git_floor_seconds"`
 	ClaudeGlyph       string   `toml:"claude_glyph"`
 	PiGlyph           string   `toml:"pi_glyph"` // 260512-cpa: was codex_glyph
+
+	// Agents is the multi-agent registry (CONFIG-06). When any [[agent]]
+	// entries appear in the user's TOML, the built-in defaults are
+	// REPLACED wholesale — opt-in management of the full list. Leaving
+	// the section absent uses the defaults from BuiltinAgents().
+	Agents []AgentSpec `toml:"agent"`
+}
+
+// AgentSpec is one entry under [[agent]] in sidebar.toml. Drives:
+//
+//   - tmuxctl.ClassifyAgent: marker-glyph → agent-name mapping
+//   - the sidebar chip per attributed agent (glyph)
+//   - bin/zdev's default agent-launcher selection (launch line + PATH probe)
+//
+// All fields except Name are optional; an entry with only Name set is
+// treated as "this agent exists but emits no recognisable pane titles" —
+// useful for marking a shell-only client whose state is set via
+// zdev-notify alone.
+type AgentSpec struct {
+	// Name is the agent identifier used as the map key on the wire and
+	// passed to zdev-notify as its first arg. Lowercase, no spaces.
+	Name string `toml:"name"`
+
+	// Glyph is the single-character icon shown in the sidebar chip when
+	// the agent is attributed to a pane (e.g., "✻", "○", "π").
+	Glyph string `toml:"glyph"`
+
+	// WaitingMarkers lists pane-title prefixes (including any trailing
+	// space the agent uses) that mean "this agent is blocking on the
+	// user". Examples: "● claude ", "✳ ".
+	WaitingMarkers []string `toml:"waiting_markers"`
+
+	// FinishedMarkers lists pane-title prefixes that mean "this agent
+	// has finished its task and is presenting a result". Example: "◆ ".
+	FinishedMarkers []string `toml:"finished_markers"`
+
+	// SpinnerMarkers lists pane-title prefixes meaning "this agent is
+	// actively working". Typically Braille U+2800–U+28FF prefixes.
+	SpinnerMarkers []string `toml:"spinner_markers"`
+
+	// Launch is the shell command that `bin/zdev` invokes to start the
+	// agent pane when this agent is the chosen default. Empty means
+	// the agent is detection-only (no auto-launch).
+	Launch string `toml:"launch"`
+}
+
+// BuiltinAgents returns the default agent registry — used when the user's
+// sidebar.toml has no [[agent]] entries. The first entry whose binary is
+// on $PATH wins the auto-launch in bin/zdev (claude before opencode).
+func BuiltinAgents() []AgentSpec {
+	return []AgentSpec{
+		{
+			Name:             "claude",
+			Glyph:            "✻",
+			WaitingMarkers:   []string{"● claude", "✳ "},
+			FinishedMarkers:  []string{"◆ claude"},
+			SpinnerMarkers:   []string{"⠂ ", "⠐ ", "⠠ ", "⠈ ", "⠁ ", "⠉ ", "⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "},
+			Launch:           "claude --dangerously-skip-permissions --continue",
+		},
+		{
+			Name:             "opencode",
+			Glyph:            "○",
+			WaitingMarkers:   []string{"● opencode"},
+			FinishedMarkers:  []string{"◆ opencode"},
+			Launch:           "opencode",
+		},
+	}
 }
 
 // Defaults returns the code-defined fallback values used when no TOML file is
@@ -66,7 +135,21 @@ func Defaults() Config {
 		GitFloorSeconds:   10,
 		ClaudeGlyph:       "✻", // DATA-08
 		PiGlyph:           "π", // DATA-08 (260512-cpa: was ◉ for codex)
+		// Agents is intentionally left nil here; callers should consult
+		// EffectiveAgents() which substitutes BuiltinAgents() when empty.
+		// Keeping the field nil at the Defaults() layer means a user's
+		// [[agent]] block in TOML wins via a simple zero-vs-non-zero check.
 	}
+}
+
+// EffectiveAgents returns the agent list to use at runtime — the user's
+// [[agent]] entries if any, else BuiltinAgents(). This is the single
+// source of truth callers should consume.
+func (c Config) EffectiveAgents() []AgentSpec {
+	if len(c.Agents) > 0 {
+		return c.Agents
+	}
+	return BuiltinAgents()
 }
 
 // Load reads a TOML config file at path and returns the merged config.
