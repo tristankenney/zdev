@@ -100,24 +100,23 @@ type AgentSpec struct {
 // BuiltinAgents returns the default agent registry — used when the user's
 // sidebar.toml has no [[agent]] entries. The first entry whose binary is
 // on $PATH wins the auto-launch in bin/zdev (claude before opencode).
+//
+// The canonical defaults live in agents.Builtin(); this function projects
+// them into the TOML-tagged AgentSpec shape the config loader expects.
 func BuiltinAgents() []AgentSpec {
-	return []AgentSpec{
-		{
-			Name:             "claude",
-			Glyph:            "✻",
-			WaitingMarkers:   []string{"● claude", "✳ "},
-			FinishedMarkers:  []string{"◆ claude"},
-			SpinnerMarkers:   []string{"⠂ ", "⠐ ", "⠠ ", "⠈ ", "⠁ ", "⠉ ", "⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "},
-			Launch:           "claude --dangerously-skip-permissions --continue",
-		},
-		{
-			Name:             "opencode",
-			Glyph:            "○",
-			WaitingMarkers:   []string{"● opencode"},
-			FinishedMarkers:  []string{"◆ opencode"},
-			Launch:           "opencode",
-		},
+	specs := agents.Builtin()
+	out := make([]AgentSpec, len(specs))
+	for i, s := range specs {
+		out[i] = AgentSpec{
+			Name:            s.Name,
+			Glyph:           s.Glyph,
+			WaitingMarkers:  s.WaitingMarkers,
+			FinishedMarkers: s.FinishedMarkers,
+			SpinnerMarkers:  s.SpinnerMarkers,
+			Launch:          s.Launch,
+		}
 	}
+	return out
 }
 
 // Defaults returns the code-defined fallback values used when no TOML file is

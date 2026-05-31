@@ -167,6 +167,7 @@ func run() error {
 		SocketPath: *socketFlag,
 		EventLog:   evlog,
 		StatePath:  *stateFlag,
+		Agents:     cfg.AgentRegistry(),
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve

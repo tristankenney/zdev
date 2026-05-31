@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
@@ -112,6 +113,14 @@ type state struct {
 	// panesByID and from any window's panesIDs map, which stops
 	// recomputeAgents from selecting it for further capture attempts.
 	paneCaptureFailures map[string]int
+
+	// agents is the registered agent specs (claude, opencode, …) sourced
+	// from sidebar.toml at startup. recomputeAgents iterates this in
+	// declaration order to classify every pane title and build AgentStates.
+	// Read-only after Run starts. Set by NewHub from hub.Config.Agents; for
+	// tests that build *state directly, newState() seeds the builtin default
+	// so recomputeAgents has a registry to consult.
+	agents *agents.Registry
 }
 
 // maxConsecutiveCaptureFailures is the eviction threshold. Three attempts
@@ -134,6 +143,14 @@ type projectData struct {
 	// see the prior value (drives the latch path). Wire representation is
 	// the proto.Attention enum.
 	Attention         proto.Attention
+	// AgentStates is the per-agent status map keyed by lowercase agent name
+	// (claude, opencode, …) as registered in agents.Registry. Values are the
+	// raw status strings "waiting" / "finished" / "shell-running" / "" (empty
+	// when no marker for that agent matched any pane). buildSnapshot projects
+	// this into proto.Project.AgentStates[name] = proto.Attention for the
+	// wire. AgentClaude / AgentPi below remain as deprecated projections of
+	// this map for one release of renderer back-compat.
+	AgentStates       map[string]string
 	AgentClaude       string
 	AgentPi           string
 	WaitContext       string // verbatim capture from tmux at wait-start; cleared on exit; NOT persisted
@@ -167,6 +184,7 @@ func newState() *state {
 		prCounts:            make(map[string]prCount),
 		celebrateUntil:      make(map[string]int64),
 		paneCaptureFailures: make(map[string]int),
+		agents:              agents.NewRegistry(agents.Builtin()),
 	}
 	s.paneCapturer = realPaneCapture
 	return s

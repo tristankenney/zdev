@@ -153,6 +153,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 			FailingChecks:  pr.FailingChecks,
 			PendingChecks:  pr.PendingChecks,
 			CelebrateUntil: st.celebrateUntil[dataKey],
+			AgentStates:    projectAgentStates(pd.AgentStates),
 			AgentClaude:    pd.AgentClaude,
 			AgentPi:        pd.AgentPi,
 			WaitContext:    pd.WaitContext,
@@ -172,6 +173,43 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 		Projects:       projects,
 		CurrentSession: "", // resolved per-connection in Plan 02-04 from hello.TmuxPane
 	}
+}
+
+// projectAgentStates lifts the per-agent raw status strings stored on
+// projectData (recomputeAgents writes "waiting" / "finished" / …) into the
+// proto.Attention enum used on the wire. Returns nil when the input map is
+// empty so projects with no recognised agent panes don't carry an empty
+// agent_states JSON object.
+//
+// Status → Attention mapping:
+//
+//	"waiting"       → AttWaiting
+//	"finished"      → AttFinished
+//	"shell-running" → AttWorking
+//	anything else   → skipped (empty/unknown values do not surface)
+func projectAgentStates(src map[string]string) map[string]proto.Attention {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]proto.Attention, len(src))
+	for name, status := range src {
+		var att proto.Attention
+		switch status {
+		case "waiting":
+			att = proto.AttWaiting
+		case "finished":
+			att = proto.AttFinished
+		case "shell-running":
+			att = proto.AttWorking
+		default:
+			continue
+		}
+		out[name] = att
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // emitPortDiff fires one eventlog.Event per port that opened (in `now`

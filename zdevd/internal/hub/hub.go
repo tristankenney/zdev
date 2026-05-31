@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/diag"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
@@ -121,6 +122,11 @@ type Config struct {
 	EventLog   *eventlog.Writer
 	StatePath  string
 	Notifier   func(project, msg, sound string)
+	// Agents is the runtime registry of recognised AI clients. When nil,
+	// NewHub falls back to agents.NewRegistry(agents.Builtin()) — matching
+	// what newState() seeds — so tests building hubs with the zero-value
+	// Config still get the default claude+opencode classifier.
+	Agents *agents.Registry
 }
 
 // NewHub constructs a hub from a Config. Every dependency is bundled into
@@ -132,6 +138,14 @@ type Config struct {
 // doc).
 func NewHub(cfg Config) *Hub {
 	now := time.Now()
+	st := newState()
+	if cfg.Agents != nil {
+		// Caller supplied a registry built from sidebar.toml — override the
+		// builtin default that newState() seeded. Safe to mutate here because
+		// Run has not started; the agents field is hub-goroutine-owned only
+		// after the event loop begins.
+		st.agents = cfg.Agents
+	}
 	return &Hub{
 		debounce:     cfg.Debounce,
 		events:       make(chan tmuxctl.Event, eventsChanCap),
@@ -140,7 +154,7 @@ func NewHub(cfg Config) *Hub {
 		diagRequests: make(chan diagReq),
 		errInc:       make(chan struct{}, errIncChanCap),
 		stopped:      make(chan struct{}),
-		state:        newState(),
+		state:        st,
 		subs:         make(map[*Subscriber]struct{}),
 		startedAt:    now,
 		lastEventAt:  now, // sentinel: 0 ago at boot — diag.Reply.LastEventAgoSec ~ 0 until first event
@@ -752,6 +766,14 @@ func projectEquals(a, b proto.Project) bool {
 	}
 	for i := range a.ListeningPorts {
 		if a.ListeningPorts[i] != b.ListeningPorts[i] {
+			return false
+		}
+	}
+	if len(a.AgentStates) != len(b.AgentStates) {
+		return false
+	}
+	for k, v := range a.AgentStates {
+		if w, ok := b.AgentStates[k]; !ok || w != v {
 			return false
 		}
 	}

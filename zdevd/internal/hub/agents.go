@@ -18,165 +18,179 @@ import (
 )
 
 // recomputeAgents walks every pane in the named session, classifies each
-// pane's title via tmuxctl.ClassifyAgent + ClassifyPaneTitle, and updates
-// projectData[sessionName].AgentClaude / AgentPi accordingly.
+// pane's title through state.agents (agents.Registry.Classify) once per
+// pane, and writes the per-agent status map onto projectData.AgentStates.
 //
-// Transition handling:
-//   - !prevWaiting && nowWaiting → stamp WaitStartedTS (if zero), reset the
-//     WaitNotifiedTiers bitmap (replay-safe ordering), and dispatch a pane
-//     capture so WaitContext gets populated for the snapshot.
-//   - prevWaiting && !nowWaiting → clear WaitStartedTS, WaitContext, and the
-//     tier bitmap. Restricted to observed-exit only so a daemon-restart
-//     replay can't wipe restored state before pane titles arrive.
+// AgentClaude / AgentPi remain populated as deprecated projections of
+// AgentStates["claude"] and AgentStates["pi"] respectively for one release
+// of renderer back-compat. buildSnapshot copies pd.AgentStates onto
+// proto.Project.AgentStates so the wire carries the full map.
 //
-// Pane capture: prefers the production async path (state.asyncCapture)
-// which dispatches off the hub goroutine so a slow tmux can't stall event
-// processing for up to 1.5s per wait-start. Tests fall back to the
-// synchronous paneCapturer when asyncCapture is nil.
+// Transition handling (set-diff against the prior AgentStates):
+//   - For any agent whose status flips from non-"waiting" to "waiting",
+//     this counts as an enter-waiting edge for the session. The pane
+//     capture dispatches off the first such agent's waiting pane, in
+//     registry declaration order — generalising the prior claude-before-pi
+//     hard-coded tiebreak.
+//   - WaitStartedTS lifecycle + WaitContext clear-on-exit + tier-bitmap
+//     reset are owned by DeriveAttention (snapshot.go); recomputeAgents
+//     only fires the side effect that can't wait for the next debounce —
+//     the pane capture itself, which needs the agent pane content AS OF
+//     NOW before the user types anything that scrolls it away.
 func recomputeAgents(s *state, sessionName string) {
 	sess, ok := sessionByName(s, sessionName)
 	if !ok {
 		// Session no longer exists — clear chip attribution.
 		pd := s.projectData[sessionName]
+		pd.AgentStates = nil
 		pd.AgentClaude = ""
 		pd.AgentPi = ""
 		s.projectData[sessionName] = pd
 		return
 	}
-	var claudeWait, claudeDone, piWait, piDone bool
+
+	// Walk every pane once, classify via the registry, and bucket the
+	// resulting (agent, status) pair into per-agent priority slots.
+	// Priority within an agent: waiting > finished > shell-running > "".
+	// A single pane can only contribute one slot for its attributed agent.
+	//
+	// paneByAgent records the FIRST pane (in iteration order) that drove the
+	// agent into the waiting bucket — used for the enter-waiting capture
+	// dispatch below. Iteration order across windows/panesIDs maps is not
+	// stable in Go, but registry declaration order IS — so we pick the
+	// capture pane by walking s.agents.All() and selecting whichever agent
+	// declared first has a waiting pane recorded.
+	type agentBucket struct {
+		hasWaiting, hasFinished, hasSpinner bool
+		waitingPaneID                       string
+	}
+	buckets := make(map[string]*agentBucket)
+
 	for _, w := range sess.windows {
 		for paneID := range w.panesIDs {
 			p, ok := s.panesByID[paneID]
 			if !ok {
 				continue
 			}
-			// Agent attribution and pane-status are orthogonal: a pane can
-			// be classified as an agent (claude/pi) AND have any status
-			// (waiting/finished/shell-running/alive). Only StatusWaiting and
-			// StatusFinished translate to a visible agent chip; idle prompts
-			// (StatusShellRunning for the literal "✳ Claude Code" form) and
-			// working spinners (Braille = StatusShellRunning) leave the chip
-			// empty so the user isn't pulsed at for sessions where the agent
-			// is alive but not demanding a response.
-			agent := tmuxctl.ClassifyAgent(p.Title)
-			if agent == "" {
+			// Registry → name attribution: "which agent owns this title?"
+			// ClassifyPaneTitle → authoritative status: the registry's status
+			// would surface "✳ Claude Code" as waiting because it matches
+			// the "✳ " WaitingMarker, but ClassifyPaneTitle's literal-string
+			// carve-out demotes that specific idle-prompt title to alive so
+			// 19 idle Claude sessions don't pulse on every daemon restart.
+			// Keep the two responsibilities separate; agents.Registry is for
+			// attribution, tmuxctl.ClassifyPaneTitle for status semantics.
+			name, _ := s.agents.Classify(p.Title)
+			if name == "" {
 				continue
 			}
 			status := tmuxctl.ClassifyPaneTitle(p.Title)
-			switch agent {
-			case "claude":
-				switch status {
-				case tmuxctl.StatusFinished:
-					claudeDone = true
-				case tmuxctl.StatusWaiting:
-					claudeWait = true
+			b := buckets[name]
+			if b == nil {
+				b = &agentBucket{}
+				buckets[name] = b
+			}
+			switch status {
+			case tmuxctl.StatusWaiting:
+				if !b.hasWaiting {
+					b.waitingPaneID = paneID
 				}
-			case "pi":
-				switch status {
-				case tmuxctl.StatusFinished:
-					piDone = true
-				case tmuxctl.StatusWaiting:
-					piWait = true
-				}
+				b.hasWaiting = true
+			case tmuxctl.StatusFinished:
+				b.hasFinished = true
+			case tmuxctl.StatusShellRunning:
+				b.hasSpinner = true
 			}
 		}
 	}
+
 	pd := s.projectData[sessionName]
-	prevWaiting := pd.AgentClaude == "waiting" || pd.AgentPi == "waiting"
-	switch {
-	case claudeWait:
-		pd.AgentClaude = "waiting"
-	case claudeDone:
-		pd.AgentClaude = "finished"
-	default:
-		pd.AgentClaude = ""
+	prev := pd.AgentStates
+	// Walking the registry in declaration order keeps AgentStates' insertion
+	// order deterministic across recompute passes — important because Go
+	// map iteration is randomized and any consumer that picks "the first
+	// agent" (e.g. enter-waiting capture below, A6's renderer chip order)
+	// needs the registry's order, not whatever Go decided this run.
+	next := make(map[string]string, len(buckets))
+	for _, spec := range s.agents.All() {
+		b, ok := buckets[spec.Name]
+		if !ok {
+			continue
+		}
+		var status string
+		switch {
+		case b.hasWaiting:
+			status = "waiting"
+		case b.hasFinished:
+			status = "finished"
+		case b.hasSpinner:
+			// Mirrors the agent attribution path used by recomputeAgents
+			// historically — only Waiting and Finished produce a visible
+			// chip; the spinner bucket exists for completeness but emits
+			// no per-agent state entry today.
+			continue
+		default:
+			continue
+		}
+		next[spec.Name] = status
 	}
-	switch {
-	case piWait:
-		pd.AgentPi = "waiting"
-	case piDone:
-		pd.AgentPi = "finished"
-	default:
-		pd.AgentPi = ""
+
+	// Enter-waiting detection: any agent that wasn't waiting in `prev` but
+	// IS waiting in `next` is a transition. Pick the capture pane from the
+	// FIRST such agent in registry declaration order. Generalises the
+	// claude-before-pi hard-coded tiebreak.
+	enteredWaiting := ""
+	for _, spec := range s.agents.All() {
+		if next[spec.Name] != "waiting" {
+			continue
+		}
+		if prev[spec.Name] == "waiting" {
+			continue
+		}
+		enteredWaiting = spec.Name
+		break
 	}
-	nowWaiting := pd.AgentClaude == "waiting" || pd.AgentPi == "waiting"
-	switch {
-	case !prevWaiting && nowWaiting:
-		// Transition INTO waiting — fire the side effects only. The
-		// canonical WaitStartedTS lifecycle and tier-escalation are now
-		// owned by hub.DeriveAttention (snapshot.go), which sees the same
-		// title-change event one debounce later. The only event-time
-		// effect that can't wait for the next snapshot is the pane
-		// capture: it needs the agent pane content AS OF NOW, before the
-		// user types anything that scrolls it away.
-		//
+
+	pd.AgentStates = next
+	// Back-compat projection for one release: legacy AgentClaude/AgentPi
+	// fields stay populated so the renderer + zdev-show don't need to
+	// switch over in the same commit as the registry plumbing.
+	pd.AgentClaude = next["claude"]
+	pd.AgentPi = next["pi"]
+
+	if enteredWaiting != "" && !shouldSkipSession(sessionName) {
 		// phase4-v2: capture the agent pane content so the user can see what
-		// the agent is waiting on without switching sessions. Prefer claude over
-		// pi on tiebreak. Skip for daemon-internal sessions.
-		if !shouldSkipSession(sessionName) {
-			capturePaneID := ""
-			for _, w := range sess.windows {
-				for pid := range w.panesIDs {
-					p, ok := s.panesByID[pid]
-					if !ok {
-						continue
-					}
-					if tmuxctl.ClassifyAgent(p.Title) == "claude" &&
-						tmuxctl.ClassifyPaneTitle(p.Title) == tmuxctl.StatusWaiting {
-						capturePaneID = pid
-						break // claude wins — stop search
-					}
-				}
-				if capturePaneID != "" {
-					break
-				}
-			}
-			// Fallback: pi pane.
-			if capturePaneID == "" {
-				for _, w := range sess.windows {
-					for pid := range w.panesIDs {
-						p, ok := s.panesByID[pid]
-						if !ok {
-							continue
-						}
-						if tmuxctl.ClassifyAgent(p.Title) == "pi" &&
-							tmuxctl.ClassifyPaneTitle(p.Title) == tmuxctl.StatusWaiting {
-							capturePaneID = pid
-							break
-						}
-					}
-					if capturePaneID != "" {
-						break
-					}
-				}
-			}
-			if capturePaneID != "" {
-				if s.asyncCapture != nil {
-					// Production path: dispatch the capture off the hub
-					// goroutine. The worker re-enters via
-					// h.Submit(PaneCaptureReady{...}) and applyEvent's
-					// PaneCaptureReady case writes the text onto
-					// pd.WaitContext. WaitContext stays "" until the
-					// capture returns; that's an acceptable ~50ms (worker
-					// + debounce) delay before the captured text appears
-					// in a snapshot, and replaces a 1.5s worst-case stall
-					// of the entire hub goroutine on every wait-start.
-					s.asyncCapture(sessionName, capturePaneID)
-				} else if s.paneCapturer != nil {
-					// Fallback (tests, hubs constructed without asyncCapture
-					// wiring): synchronous capture. Bounded by the 1.5s
-					// timeout inside realPaneCapture.
-					captured, cerr := s.paneCapturer(capturePaneID)
-					if cerr != nil {
-						slog.Warn("hub: capture-pane failed",
-							"err", cerr, "pane", capturePaneID, "project", sessionName)
-					} else {
-						pd.WaitContext = captured
-					}
+		// the agent is waiting on without switching sessions. The pane to
+		// capture is the first one we saw drive `enteredWaiting` to waiting
+		// during the bucket walk above.
+		capturePaneID := buckets[enteredWaiting].waitingPaneID
+		if capturePaneID != "" {
+			if s.asyncCapture != nil {
+				// Production path: dispatch the capture off the hub
+				// goroutine. The worker re-enters via
+				// h.Submit(PaneCaptureReady{...}) and applyEvent's
+				// PaneCaptureReady case writes the text onto
+				// pd.WaitContext. WaitContext stays "" until the
+				// capture returns; that's an acceptable ~50ms (worker
+				// + debounce) delay before the captured text appears
+				// in a snapshot, and replaces a 1.5s worst-case stall
+				// of the entire hub goroutine on every wait-start.
+				s.asyncCapture(sessionName, capturePaneID)
+			} else if s.paneCapturer != nil {
+				// Fallback (tests, hubs constructed without asyncCapture
+				// wiring): synchronous capture. Bounded by the 1.5s
+				// timeout inside realPaneCapture.
+				captured, cerr := s.paneCapturer(capturePaneID)
+				if cerr != nil {
+					slog.Warn("hub: capture-pane failed",
+						"err", cerr, "pane", capturePaneID, "project", sessionName)
+				} else {
+					pd.WaitContext = captured
 				}
 			}
 		}
 	}
+
 	// Transition OUT of waiting is handled in buildSnapshot, where the
 	// canonical decision lives — DeriveAttention produces the new
 	// WaitStartedTS (0 on exit, with latch-until-visit semantics) and

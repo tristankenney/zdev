@@ -35,6 +35,31 @@ type Spec struct {
 	Launch           string
 }
 
+// Builtin returns the canonical default specs used when sidebar.toml has
+// no [[agent]] entries. Owned by the agents package so the hub goroutine
+// can construct a default registry without depending on the config layer.
+// config.BuiltinAgents() projects these into its TOML-tagged AgentSpec
+// shape for the loader.
+func Builtin() []Spec {
+	return []Spec{
+		{
+			Name:            "claude",
+			Glyph:           "✻",
+			WaitingMarkers:  []string{"● claude", "✳ "},
+			FinishedMarkers: []string{"◆ claude"},
+			SpinnerMarkers:  []string{"⠂ ", "⠐ ", "⠠ ", "⠈ ", "⠁ ", "⠉ ", "⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "},
+			Launch:          "claude --dangerously-skip-permissions --continue",
+		},
+		{
+			Name:            "opencode",
+			Glyph:           "○",
+			WaitingMarkers:  []string{"● opencode"},
+			FinishedMarkers: []string{"◆ opencode"},
+			Launch:          "opencode",
+		},
+	}
+}
+
 // Registry is the immutable index over the agents declared in sidebar.toml
 // (or BuiltinAgents() when no [[agent]] block is present).
 //
