@@ -131,7 +131,7 @@ func DialWithOptions(ctx context.Context, opts DialOptions) (*Conn, error) {
 // This is equivalent to cfmakeraw(3) on Darwin.
 func setPTYRaw(f *os.File) error {
 	fd := int(f.Fd())
-	t, err := unix.IoctlGetTermios(fd, unix.TIOCGETA)
+	t, err := unix.IoctlGetTermios(fd, ioctlReadTermios)
 	if err != nil {
 		return fmt.Errorf("IoctlGetTermios: %w", err)
 	}
@@ -158,7 +158,7 @@ func setPTYRaw(f *os.File) error {
 	// VMIN=1, VTIME=0: return immediately once ≥1 byte is available.
 	t.Cc[unix.VMIN] = 1
 	t.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(fd, unix.TIOCSETA, t); err != nil {
+	if err := unix.IoctlSetTermios(fd, ioctlWriteTermios, t); err != nil {
 		return fmt.Errorf("IoctlSetTermios: %w", err)
 	}
 	return nil
