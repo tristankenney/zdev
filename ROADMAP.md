@@ -115,30 +115,24 @@ first (◆ matches rows; ● vs pulse does not).
 - **Kill:** if the worded footer still gets ignored in dogfood, ship `off` as
   the default — reclaim the row entirely.
 
-### 7. Mark-all-read *(dogfood feedback, 2026-06-06)*
-A single shortcut that acknowledges every current status — waiting, finished,
-dead — like an inbox "read all". After a desk-away stretch the operator often
-wants to start from zero rather than triage stale signals one by one. Shape:
-a `zdev ack --all` control verb on the existing UDS socket (per-project ack
-already exists for triage), bound to a tmux key (e.g. `M-r`). Acking must NOT
-erase the underlying wait/death record — it clears the *demand* (pulse →
-static, triage queue empties, notification bits marked) while `zdev-show`
-still reports the facts. New activity after the ack re-raises normally.
-- **Effort:** days · **Depends:** none
-- **Kill:** if it becomes a reflex that buries true deaths (acked corpse never
-  relaunched), exclude dead from `--all` and require per-project ack there.
+### ✅ 7. Mark-all-read — `56e96bb4` *(shipped 2026-06-06)*
+`zdev ack [--all|<project>]` — rides the notif channel as an `ack` kind
+rather than a socket verb: clears hook waits/deaths and stamps a synthetic
+visit (releases the wait latch, arms the stale-✳ demoter, tier-acks
+notifications); the script side strips ●/◆/✗ titles fleet-wide. Verified
+live: clears title-derived ✳ waits, re-raises on the next real retitle.
+Building it exposed and fixed the **restart pulse wave** (same commit): the
+bootstrap scan's empty→nonempty title population counted as a title change,
+clobbering the persisted demoter stamps — discovery no longer stamps;
+verified by a clean queue across a live daemon restart.
+- **Kill (live):** if ack-all becomes a reflex that buries true deaths,
+  exclude dead from `--all`.
 
-### 8. Shortcut/legend discoverability *(dogfood feedback, 2026-06-06)*
-No way to see what keys and glyphs mean without reading the tmux conf. Ship a
-help popup (`M-?` or `zdev help` → fzf-style overlay) that lists: active zdev
-tmux bindings (parsed from `tmux list-keys`, filtered to zdev commands, so it
-shows what's ACTUALLY bound — including user remaps — not what the sample
-conf suggests), plus the glyph legend (`zdev-show --legend` already exists;
-reuse it). Same surface answers feedback #4's root cause: glyphs are noise
-*because* there's nowhere to look them up.
-- **Effort:** days · **Depends:** none
-- **Kill:** none — discoverability is table stakes; only the surface (popup
-  vs command) is negotiable.
+### ✅ 8. Shortcut/legend discoverability — `c8d458a6` *(shipped 2026-06-06)*
+`zdev-help-popup`: keybindings parsed live from `tmux list-keys` (what's
+ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
+✗ dead marker, age-paced pulse note, and a triage-glyph section. Suggested
+`M-r` (ack) and `M-?` (help) bindings documented in the sample conf.
 
 ---
 
