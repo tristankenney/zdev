@@ -52,6 +52,14 @@ import (
 // debounceDefault is the locked Phase 2 default per D2-01 / ARCH-05.
 const debounceDefault = 16 * time.Millisecond
 
+// statusDwellDefault is the minimum-dwell window applied to each project's
+// displayed status (Attention) to suppress flapping — a status must hold for
+// this long before it replaces what's shown. 250ms comfortably covers the
+// sub-second working→waiting→working blips that aren't worth surfacing while
+// staying imperceptible on genuine transitions. Override with
+// ZDEVD_STATUS_DWELL_MS; set it to 0 to disable the debounce.
+const statusDwellDefault = 250 * time.Millisecond
+
 // version is injected at build time via -ldflags="-X main.version=…".
 // Falls back to "dev" for `go build` / `go install` without ldflags.
 var version = "dev"
@@ -129,6 +137,12 @@ func run() error {
 		return err
 	}
 
+	statusDwell, err := parseStatusDwell(os.Getenv("ZDEVD_STATUS_DWELL_MS"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd: ZDEVD_STATUS_DWELL_MS: %v\n", err)
+		return err
+	}
+
 	tmuxSocket := os.Getenv("ZDEVD_TMUX_SOCKET")
 
 	slog.Info("zdevd starting (Phase 4)",
@@ -137,6 +151,7 @@ func run() error {
 		"state", *stateFlag,
 		"pid", os.Getpid(),
 		"debounce_ms", debounce.Milliseconds(),
+		"status_dwell_ms", statusDwell.Milliseconds(),
 		"schema", proto.SchemaVersion,
 		"tmux_version", tmuxVersion(),
 		"config_path", config.DefaultPath(),
@@ -163,11 +178,12 @@ func run() error {
 	// WithStatePath/WithNotifier fluent chain). Fields are read-only after
 	// Run starts; nil/empty values stay disabled.
 	hubCfg := hub.Config{
-		Debounce:   debounce,
-		SocketPath: *socketFlag,
-		EventLog:   evlog,
-		StatePath:  *stateFlag,
-		Agents:     cfg.AgentRegistry(),
+		Debounce:    debounce,
+		StatusDwell: statusDwell,
+		SocketPath:  *socketFlag,
+		EventLog:    evlog,
+		StatePath:   *stateFlag,
+		Agents:      cfg.AgentRegistry(),
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve
@@ -409,6 +425,24 @@ func parseDebounceWindow(raw string) (time.Duration, error) {
 	}
 	if n <= 0 {
 		return 0, fmt.Errorf("ZDEVD_DEBOUNCE_MS=%d: must be > 0", n)
+	}
+	return time.Duration(n) * time.Millisecond, nil
+}
+
+// parseStatusDwell honors the status-flap debounce knob: empty string →
+// statusDwellDefault; 0 → disabled (no debounce); positive integer → that many
+// ms; negative / non-integer → error. Unlike ZDEVD_DEBOUNCE_MS, 0 is a valid
+// value here (it disables the feature) rather than an error.
+func parseStatusDwell(raw string) (time.Duration, error) {
+	if raw == "" {
+		return statusDwellDefault, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid ZDEVD_STATUS_DWELL_MS=%q: must be a non-negative integer (ms)", raw)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("ZDEVD_STATUS_DWELL_MS=%d: must be >= 0", n)
 	}
 	return time.Duration(n) * time.Millisecond, nil
 }
