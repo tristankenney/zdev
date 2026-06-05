@@ -24,48 +24,52 @@ dogfood.
 
 ---
 
+## SHIPPED (dogfooding — kill criteria still live)
+
+The one-week dogfood started 2026-06-05. Each item below keeps its kill
+criterion until the week is out; "shipped" means deployed to the live fleet,
+not validated.
+
+### ✅ 1. Cross-platform notify backend + exec-hook seam — `f2f6bfbf`
+GOOS-dispatched `ResolveNotifier()`: `ZDEV_NOTIFY_CMD` exec backend (env:
+`ZDEV_NOTIFY_PROJECT/MSG/SOUND/KIND/AGE`, sh -c under the 1.5s ctx+reaper) →
+darwin terminal-notifier → linux notify-send (flat, no sound mapping).
+Structured `Notification{Project,Message,Sound,Kind,AgeSec}` throughout.
+- **Kill (live):** if no Linux user and no operator phone-push wiring
+  materializes within the dogfood week, the exec backend is dead weight.
+
+### ✅ 2. S1 — WaitSummary + answerCost preview/rank — `e2c583f0`
+`zdev-notify --json` reads the hook payload (last non-empty line of
+`.last_assistant_message`, 160-char cap) into `WaitSummary` (wire v10);
+deterministic `AnswerCost(waitContext)` — numbered options / y-n tokens =
+"cheap", anything else sorts as expensive; anti-starvation at the 5m tier.
+`zdev-show triage --json` + `list --json` shipped as the machine substrate.
+Hooks upgraded in place by `zdev-install-hooks` (idempotent --json upgrade).
+- **Kill (live):** if answerCost doesn't change which wait gets answered first
+  vs. plain age-order, drop the cost model, keep age+kind.
+- **Watch:** answerCost misreads observed — a `sl log` pager prompt classified
+  cheap. Tally misclassifications during dogfood before tuning.
+
+### ✅ 3. Agent-death detection v1 — `0b0322a9` + `0b1a8f4e` + `483e4848`
+SessionEnd hook (reason-aware: clear/logout/exit/prompt_input_exit → done,
+else → dead) through the zdev-notify channel; `AttDead` (wire v11); triage
+class 0; presence-bypassing once-only notification leading the digest;
+persisted DeadSinceTS/DeadReason/DeadNotified. Two live-fire fixes: stale-title
+race guard (death cleared only by title change strictly newer than the death)
+and explicit liveness (SessionStart → alive) for respawned panes with
+identical titles.
+- **Kill (live):** if the hook fires on routine clean exits and trains
+  reflex-dismissal, gate behind explicit opt-in.
+- **Watch:** `tmux respawn-pane -k` registers as a death then self-clears on
+  the alive hook — acceptable blip or noise? Decide after the dogfood week.
+
+### ✅ 3b. Age-paced waiting pulse — `8f12e36f` *(dogfood feedback #3)*
+The flat ~0.5s pulse read as alarm from second one. Now paced by wait age on
+the notifier's tiers: ~2.1s cycle < 60s, ~1.1s < 300s, ~0.5s after.
+
+---
+
 ## NOW (~2 weeks)
-
-### 1. Cross-platform notify backend + exec-hook seam
-`notifier.go` hard-codes `terminal-notifier` (macOS), so on Linux the entire
-tier-notification ladder — triage's load-bearing output — is a **confirmed silent
-no-op** despite install.sh/README claiming systemd support. Lift the
-`func(project, msg, sound)` closure into a GOOS-dispatched seam with a
-`notify-send` backend **and** a generic `ZDEV_NOTIFY_CMD` exec backend (env:
-`ZDEV_NOTIFY_PROJECT/MSG/SOUND/KIND/AGE`, fire-and-forget under the existing 1.5s
-ctx+reaper guardrail). The exec backend is the deliberate non-feature: wire your
-own ntfy/Pushover phone push the same day, zero network code in zdev. Dependency
-for all remote/push work. Drop sound→urgency mapping on Linux (DEs ignore it
-inconsistently).
-- **Effort:** days · **Depends:** none
-- **Kill:** if no Linux user and no operator phone-push wiring materializes within
-  the dogfood week, the exec backend is dead weight; revert to macOS-only.
-
-### 2. S1 — WaitSummary + answerCost preview/rank *(converged Read-then-Round)*
-Structured `WaitSummary` (the agent's actual last line, via a `zdev-notify --json`
-stdin mode reading the hook's transcript) and a deterministic
-`answerCost(WaitContext) → {cheap, unknown, expensive}` within-class rank key
-(fail-safe: not-confidently-cheap sorts as expensive; anti-starvation at the 5m
-tier). Rides the existing `triage.go` rank + `zdev-show` TSV + fzf popup. While
-here: `zdev-show triage --json` and `list --json` — the machine-readable substrate
-that makes a tapped phone notification actionable.
-- **Effort:** week · **Depends:** none
-- **Kill:** if dogfood shows answerCost doesn't change which wait gets answered
-  first vs. plain age-order, drop the cost model, keep age+kind.
-
-### 3. Agent-death detection v1 (hook-confirmed path only)
-The most-corroborated table-stakes pain ("agent dies at 3am, nobody knows") and
-the most Anthropic-proof differentiator — a cross-tool, cross-project, local
-signal per-tool agent views structurally cannot give. Ship **only** the
-high-confidence path: Stop/SubagentStop hook emits a died/exited kind through the
-existing zdev-notify channel; `AttDead` joins `proto.Attention`; triage class 0; a
-notify tier that bypasses presence-deferral; at-most-once-per-disappearance bit
-round-tripped through persist.go (the `WaitNotifiedTiers` precedent). **Defer**
-the title/current-command heuristic entirely — it needs the unbuilt DATA-03 second
-format subscription and has no clean discriminator today.
-- **Effort:** week · **Depends:** #1 (so the alert reaches Linux/phone)
-- **Kill:** if the hook fires on routine clean exits and trains reflex-dismissal,
-  gate behind explicit opt-in.
 
 ### 4. S3 — `zdev review` landing-readiness gauge, worktree-grouping built in *(converged, load-bearing)*
 **The** load-bearing bet: replace the sidebar strip with a review-debt gauge —
@@ -78,6 +82,30 @@ defends the gauge from fragmenting the moment worktrees exist.
 - **Effort:** weeks · **Depends:** S1 (shared queue/render model)
 - **Kill:** if dogfood shows the bottleneck is not review-bandwidth (queue stays
   empty, gauge never moves), the gauge solves a non-problem — revert to the strip.
+
+### 5. Inactive-session demotion *(dogfood feedback #2, 2026-06-05)*
+Sessions with no agent and no recent activity sit in the list at full visual
+weight, demanding the same attention as active ones. Add an idle tier: after a
+configurable quiet period (no agent, no title change, no shell command), a
+session either folds below a divider or dims-and-sinks to the bottom of the
+list. Must NOT reorder the active set — spatial memory of active rows is the
+sidebar's core contract; demotion only moves rows *out* of the active block.
+Config: threshold + mode (fold/dim/off).
+- **Effort:** days · **Depends:** none (LastActivityTS already on the wire)
+- **Kill:** if folding hides a session the operator then forgets to resume
+  (the "out of sight, agent rots" failure), default to dim-in-place.
+
+### 6. Footer tally redesign *(dogfood feedback #4, 2026-06-05)*
+The `N● N◎ N◆ N· N·` footer is unmemorable glyph noise — the operator doesn't
+remember what the glyphs signify, so it carries zero signal. Replace with
+worded counts of only the non-zero, decision-relevant buckets (e.g.
+`2 waiting · 1 dead · 3 working`, dim, one line) and make it configurable:
+`footer = full | compact | off`. Glyph-only display earns its place only if
+the glyphs match the row markers the eye already tracks — audit that mapping
+first (◆ matches rows; ● vs pulse does not).
+- **Effort:** days · **Depends:** none
+- **Kill:** if the worded footer still gets ignored in dogfood, ship `off` as
+  the default — reclaim the row entirely.
 
 ---
 
@@ -122,6 +150,12 @@ defends the gauge from fragmenting the moment worktrees exist.
   heavy). Deferred: it is session-*provisioning* (against the ordering
   principle), agent-teams has structural velocity here, and spawn is
   commoditized parity — the durable value is the grouping, already shipped in S3.
+  *Fresh signal (2026-06-06, dogfood):* the operator's agora-a/b/c permanent
+  clones are exactly this pain — "I lose understanding of what I'm doing in
+  each of them; they're permanent rather than existing for the duration of the
+  work." Two distinct needs: (a) ephemeral lifecycle (exists-for-the-task),
+  (b) purpose labeling (what is this workspace FOR). Under discussion —
+  may pull the *labeling* half forward independently of provisioning.
 - **Post-create setup hook + `COMPOSE_PROJECT_NAME` injection** — the loudest
   competitor pain (CS#260 + three patch tools), but only meaningful once `--new`
   exists. `[worktree]` config block: setup cmd, copy-globs for gitignored .env,
