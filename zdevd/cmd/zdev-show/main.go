@@ -101,13 +101,15 @@ func run() int {
 	}
 
 	// `next` is the script-consumption mode behind `zdev next`: print the
-	// top of the daemon-ranked triage queue as a bare project name (no
-	// decoration, no trailing message). An empty queue prints nothing and
-	// exits 0 — the consumer tests for empty output, matching the
-	// "no context cases exit 0" convention above.
+	// full daemon-ranked triage queue, one bare project name per line, in
+	// rank order. Emitting the whole queue (not just the head) lets the
+	// consumer apply caller-side filters the daemon can't know — bin/zdev
+	// skips the session the caller is already in. An empty queue prints
+	// nothing and exits 0 — the consumer tests for empty output, matching
+	// the "no context cases exit 0" convention above.
 	if os.Args[1] == "next" {
-		if len(snap.Triage) > 0 {
-			fmt.Println(snap.Triage[0])
+		for _, name := range snap.Triage {
+			fmt.Println(name)
 		}
 		return 0
 	}

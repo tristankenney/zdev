@@ -366,7 +366,22 @@ case "$1" in
             echo "zdev next: zdev-show not installed (run make -C zdevd install)" >&2
             exit 1
         fi
-        TOP=$(zdev-show next 2>/dev/null || true)
+        # zdev-show next prints the full ranked queue, one name per line.
+        # Skip the session the caller is already attending — "next" means
+        # the thing that needs you ELSEWHERE — and take the best remainder.
+        CURRENT=""
+        if [[ -n "${TMUX:-}" ]]; then
+            CURRENT=$(tmux display-message -p '#{session_name}' 2>/dev/null || echo "")
+        fi
+        TOP=""
+        while IFS= read -r CAND; do
+            [[ -z "$CAND" ]] && continue
+            if [[ -n "$CURRENT" && "$(session_name "$CAND")" == "$CURRENT" ]]; then
+                continue
+            fi
+            TOP="$CAND"
+            break
+        done < <(zdev-show next 2>/dev/null || true)
         if [[ -z "$TOP" ]]; then
             # Nothing needs attention. Inside tmux, surface that quietly in
             # the status line rather than printing into a pane.
