@@ -16,6 +16,10 @@ DIM=$'\033[90m'
 CYAN=$'\033[36m'
 RESET=$'\033[0m'
 
+# The shortcut list + legend is taller than most popups — render the
+# whole document into a function and page it through `less -R` (j/k or
+# wheel to scroll, q to close) instead of printing and hoping it fits.
+render_help() {
 printf '%szdev shortcuts%s\n' "$BOLD" "$RESET"
 printf '%s(live from tmux list-keys — only what is bound on this server)%s\n\n' "$DIM" "$RESET"
 
@@ -51,10 +55,13 @@ if command -v zdev-show >/dev/null 2>&1; then
 else
     printf '%szdev-show not installed (run make -C zdevd install) — legend unavailable%s\n' "$DIM" "$RESET"
 fi
+}
 
-# In a popup, hold until a key so the user can read; plain invocations
-# (piped/captured stdin) just print and exit.
-if [[ -n "${TMUX:-}" && -t 0 ]]; then
-    printf '\n%spress any key to close%s' "$DIM" "$RESET"
-    read -k1 -s || true
+# Interactive (popup or terminal): page so the content scrolls and the
+# popup stays open until q. Piped/captured: plain print.
+if [[ -t 1 ]] && command -v less >/dev/null 2>&1; then
+    # -R pass ANSI colors; -~ hide EOF tildes; custom prompt hints keys.
+    render_help | less -R -~ -P'?eEND — q to close:j/k scroll · q close'
+else
+    render_help
 fi
