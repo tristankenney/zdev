@@ -78,8 +78,8 @@ type GHProbe struct {
 }
 
 type branchCacheEntry struct {
-	branches []string
-	detected bool
+	branches  []string
+	detected  bool
 	expiresAt time.Time
 }
 
@@ -238,8 +238,13 @@ type ghPR struct {
 //     currentBranches slice in this mode means "VCS detected, no PRs in scope"
 //     and yields nil for both name slices (caller renders no row).
 //
-// Counts (Open/Fail/Pend) remain whole-repo regardless — those drive the
-// PR aggregate chip whose semantic is "is anyone's open PR red?".
+// Counts (Open/Fail/Pend) are scoped the same way (260606 dogfood,
+// supersedes 260513-dpr's "counts remain whole-repo" decision): with one
+// repo checked out as several workspaces (agora-a/b/c), whole-repo counts
+// painted the identical ✗N on every clone — per-workspace noise carrying
+// zero per-workspace signal. The chip's semantic is now "is THIS
+// workspace's branch/stack red?". branchesDetected==false keeps the
+// legacy whole-repo aggregation (no VCS → no scope to narrow to).
 //
 // Output slices are sorted ascending for deterministic ordering on the wire.
 // Checks with empty Name are skipped (no useful label to show the user).
@@ -255,14 +260,16 @@ func parseGhJSON(b []byte, currentBranches []string, branchesDetected bool) (ope
 	failSet := make(map[string]struct{})
 	pendSet := make(map[string]struct{})
 	for _, pr := range prs {
+		inScope := true
+		if branchesDetected {
+			_, inScope = branchSet[pr.HeadRefName]
+		}
+		if !inScope {
+			continue
+		}
 		open++
 		var failing, pending bool
-		var collectNames bool
-		if branchesDetected {
-			_, collectNames = branchSet[pr.HeadRefName]
-		} else {
-			collectNames = true
-		}
+		collectNames := true
 		for _, c := range pr.StatusCheckRollup {
 			isFail := c.Conclusion == "FAILURE" || c.State == "FAILURE"
 			isPend := c.Conclusion == "PENDING" || c.State == "PENDING"

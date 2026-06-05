@@ -28,10 +28,18 @@ const branchProbeTimeout = 30 * time.Second
 
 // BranchProbe queries the per-project VCS for branch + dirty count.
 //
+//	.jj repos: `jj log -r 'heads(::@ & bookmarks())'` (nearest stack
+//	           bookmark) + `jj diff --summary` (files changed in @)
 //	.sl repos: `sl bookmark` (current bookmark) + `sl status -q` (dirty count)
 //	.git repos: `git rev-parse --abbrev-ref HEAD` + `git status --porcelain`
 //
-// VCS detection (.sl/ vs .git) is cached per project for the daemon's
+// jj is checked FIRST: a colocated repo (.jj beside .git) belongs to jj —
+// its working copy is a detached-HEAD commit under git, so the git path
+// would report the literal branch "HEAD". All jj invocations pass
+// --ignore-working-copy so the daemon never snapshots the working copy
+// (snapshotting mutates the op log and races the user's own jj commands).
+//
+// VCS detection (.jj/.sl/.git) is cached per project for the daemon's
 // lifetime — projects don't re-init their VCS at runtime.
 //
 // Subsumes bash baseline lines 522-538 plus the per-project sl/git auto-
@@ -44,7 +52,7 @@ type BranchProbe struct {
 	statFunc func(path string) (os.FileInfo, error)
 
 	cacheMu sync.Mutex
-	cache   map[string]string // project → "sl" | "git" | "" (empty = no VCS)
+	cache   map[string]string // project → "jj" | "sl" | "git" | "" (empty = no VCS)
 
 	// sem serializes branch-probe shellouts across projects. Mirrors the
 	// ARCH-08 size-1 semaphore on GHProbe. Without this, a burst of
@@ -102,6 +110,8 @@ func (b *BranchProbe) Refresh(ctx context.Context, project string) error {
 	var dirty int
 	var err error
 	switch vcs {
+	case "jj":
+		branch, dirty, err = b.refreshJJ(ctx, dir)
 	case "sl":
 		branch, dirty, err = b.refreshSapling(ctx, dir)
 	case "git":
@@ -132,7 +142,9 @@ func (b *BranchProbe) detectVCS(dir, project string) string {
 	b.cacheMu.Unlock()
 
 	var v string
-	if _, err := b.statFunc(filepath.Join(dir, ".sl")); err == nil {
+	if _, err := b.statFunc(filepath.Join(dir, ".jj")); err == nil {
+		v = "jj" // before .git: colocated repos belong to jj (see type doc)
+	} else if _, err := b.statFunc(filepath.Join(dir, ".sl")); err == nil {
 		v = "sl"
 	} else if _, err := b.statFunc(filepath.Join(dir, ".git")); err == nil {
 		v = "git"
@@ -142,6 +154,66 @@ func (b *BranchProbe) detectVCS(dir, project string) string {
 	b.cache[project] = v
 	b.cacheMu.Unlock()
 	return v
+}
+
+// refreshJJ derives (branch, dirty) for a Jujutsu working copy.
+//
+// Branch: the nearest bookmark at-or-below @ — `heads(::@ & bookmarks())`
+// — which names the stack the workspace is on even while @ sits in
+// anonymous commits above the bookmark (the normal jj working style).
+// Multiple heads (rare: merge of two bookmarked stacks) take the first
+// line; multiple bookmarks on one commit take the first token.
+//
+// Dirty: file rows in `jj diff --summary` for @ — the working-copy
+// commit's changes against its parent, jj's analog of "uncommitted".
+// --ignore-working-copy means the count reflects the last snapshot jj
+// itself took (the daemon must not snapshot; see type doc) — staleness
+// self-heals on the user's next jj command.
+func (b *BranchProbe) refreshJJ(ctx context.Context, dir string) (string, int, error) {
+	branchOut, err := b.execFunc(ctx, dir, "jj", "log", "--ignore-working-copy", "--no-graph", "--color=never",
+		"-r", "heads(::@ & bookmarks())", "-T", `local_bookmarks ++ "\n"`)
+	if err != nil {
+		return "", 0, fmt.Errorf("jj log: %w", err)
+	}
+	branch := parseJJBookmark(branchOut)
+
+	diffOut, err := b.execFunc(ctx, dir, "jj", "diff", "--ignore-working-copy", "--summary", "--color=never")
+	if err != nil {
+		return branch, 0, fmt.Errorf("jj diff: %w", err)
+	}
+	return branch, countJJDiffDirty(diffOut), nil
+}
+
+// parseJJBookmark extracts the first bookmark token from the first
+// non-empty line of the `jj log -T 'local_bookmarks ++ "\n"'` output.
+// jj renders a commit's bookmark list space-separated; a "*" suffix
+// marks a conflicted bookmark and is stripped.
+func parseJJBookmark(b []byte) string {
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		tok := strings.Fields(line)[0]
+		return strings.TrimSuffix(tok, "*")
+	}
+	return ""
+}
+
+// countJJDiffDirty counts file rows in `jj diff --summary` output.
+// Format is "<char> <path>" with char ∈ {M, A, D, R, C}. All rows are
+// tracked changes (jj auto-tracks; there is no untracked-vs-staged
+// distinction), so every row counts.
+func countJJDiffDirty(b []byte) int {
+	var n int
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		if len(strings.TrimSpace(sc.Text())) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 func (b *BranchProbe) refreshSapling(ctx context.Context, dir string) (string, int, error) {
@@ -166,12 +238,19 @@ func (b *BranchProbe) refreshSapling(ctx context.Context, dir string) (string, i
 //
 // Scope sources (unioned):
 //
-//  1. Sapling stack — local bookmarks on every commit in
+//  1. Jujutsu stack — local bookmarks on every mutable ancestor of @
+//     (`::@ & bookmarks() & mutable()`), jj's analog of "my stack".
+//     Bookmark names map 1:1 to git branch names, hence PR HeadRefNames.
+//     --ignore-working-copy so the daemon never snapshots (see
+//     BranchProbe doc). Tried first: on a colocated repo the git query
+//     below returns nothing (detached HEAD), so jj carries the scope.
+//
+//  2. Sapling stack — local bookmarks on every commit in
 //     `ancestors(.) and not public()`. Each user-placed bookmark
 //     conventionally marks a PR head, so the bookmark name === the git
 //     branch name === the PR's HeadRefName.
 //
-//  2. Git current branch — `git branch --show-current`. Covers the
+//  3. Git current branch — `git branch --show-current`. Covers the
 //     single-branch workflow and sapling-on-git repos where the
 //     underlying git branch is the actual PR head ref.
 //
@@ -188,6 +267,14 @@ func (b *BranchProbe) refreshSapling(ctx context.Context, dir string) (string, i
 func detectLocalBranches(ctx context.Context, execFunc func(ctx context.Context, dir, name string, args ...string) ([]byte, error), dir string) ([]string, bool) {
 	seen := make(map[string]struct{})
 	detected := false
+
+	if out, err := execFunc(ctx, dir, "jj", "log", "--ignore-working-copy", "--no-graph", "--color=never",
+		"-r", "::@ & bookmarks() & mutable()", "-T", `local_bookmarks ++ " "`); err == nil {
+		detected = true
+		for _, tok := range strings.Fields(string(out)) {
+			seen[strings.TrimSuffix(tok, "*")] = struct{}{}
+		}
+	}
 
 	if out, err := execFunc(ctx, dir, "sl", "log", "-r", "ancestors(.) and not public()", "-T", "{bookmarks}\n"); err == nil {
 		detected = true

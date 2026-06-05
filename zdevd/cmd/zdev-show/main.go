@@ -201,10 +201,10 @@ func formatLegend() string {
 	row("feature/foo… ", "current branch (truncated to fit)")
 	row("+3", "commits ahead of base branch")
 
-	section("PR chip (per-repo aggregate)")
-	row(red+"✗ 3/5 PR"+reset, "3 of 5 open PRs are failing")
-	row(orange+"⊙ 2/5 PR"+reset, "2 of 5 open PRs are pending checks")
-	row(green+"✓ 2 PR"+reset, "all open PRs green")
+	section("PR chip (this workspace's branch/stack)")
+	row(red+"✗ 3"+reset, "3 of your stack's PRs are failing")
+	row(orange+"⊙ 2"+reset, "2 of your stack's PRs are pending checks")
+	row(green+"✓ 2"+reset, "all of your stack's PRs green")
 	row(bold+green+"✨ merged"+reset, "PR-close celebration (60-frame window)")
 
 	section("CI chip (per-branch latest run)")

@@ -224,6 +224,8 @@ func chipShellCmd(buf *bytes.Buffer, cmd string) {
 // chipPRAggregate composes the PR tri-state chip per DATA-04 / bash
 // baseline lines 553-567. Tightened in 260511-n4n task 5: the ' PR'
 // suffix and '/N' denominator are dropped for a more compact display.
+// Since 260606 the counts arrive branch/stack-scoped from the gh probe
+// (THIS workspace's PRs, not the whole repo's) — see parseGhJSON.
 //
 // Suppressed when open == 0 OR when celebrating == true (DATA-05
 // celebration chip occupies the PR slot during the window).

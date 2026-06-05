@@ -179,10 +179,82 @@ func TestBranchProbe_VCSCacheStable(t *testing.T) {
 	p.detectVCS(proj, "alpha")
 	p.detectVCS(proj, "alpha")
 	p.detectVCS(proj, "alpha")
-	// First call stats up to 2 paths (.sl checked first, miss, then .git, hit).
+	// First call stats up to 3 paths (.jj first, miss; .sl, miss; .git, hit).
 	// Subsequent calls hit the cache → no new stats.
-	if got := atomic.LoadInt64(&stats); got > 2 {
-		t.Errorf("stats = %d; want <= 2 (cache should suppress repeat stats)", got)
+	if got := atomic.LoadInt64(&stats); got > 3 {
+		t.Errorf("stats = %d; want <= 3 (cache should suppress repeat stats)", got)
+	}
+}
+
+// TestDetectVCS_JJBeatsColocatedGit pins the colocated-repo rule: a .jj
+// directory wins over the .git beside it — under git the jj working copy
+// is a detached HEAD, so the git path would report the branch "HEAD".
+func TestDetectVCS_JJBeatsColocatedGit(t *testing.T) {
+	tmp := t.TempDir()
+	proj := filepath.Join(tmp, "alpha")
+	os.MkdirAll(filepath.Join(proj, ".jj"), 0o755)
+	os.MkdirAll(filepath.Join(proj, ".git"), 0o755)
+
+	p := NewBranchProbe(func(tmuxctl.Event) {}, tmp)
+	if got := p.detectVCS(proj, "alpha"); got != "jj" {
+		t.Errorf("detectVCS(colocated) = %q; want jj", got)
+	}
+}
+
+// TestBranchProbe_RefreshJJ exercises the jj path end-to-end through
+// stubbed shellouts: bookmark from the stack-head revset, dirty count
+// from the @ diff summary, and --ignore-working-copy on every call.
+func TestBranchProbe_RefreshJJ(t *testing.T) {
+	tmp := t.TempDir()
+	proj := filepath.Join(tmp, "alpha")
+	os.MkdirAll(filepath.Join(proj, ".jj"), 0o755)
+
+	var got tmuxctl.DataRefresh
+	p := NewBranchProbe(func(e tmuxctl.Event) { got = e.(tmuxctl.DataRefresh) }, tmp)
+	p.execFunc = func(_ context.Context, _, name string, args ...string) ([]byte, error) {
+		if name != "jj" {
+			t.Errorf("unexpected tool %q (args %v)", name, args)
+		}
+		ignored := false
+		for _, a := range args {
+			if a == "--ignore-working-copy" {
+				ignored = true
+			}
+		}
+		if !ignored {
+			t.Errorf("jj %v missing --ignore-working-copy (daemon must never snapshot)", args)
+		}
+		if args[0] == "log" {
+			return []byte("feature/imp-406-test-seeding\n"), nil
+		}
+		return []byte("M app/Console/Commands/DeliverQaBanners.php\nM database/seeders/OnsiteBannerSeeder.php\n"), nil
+	}
+	if err := p.Refresh(context.Background(), "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Branch != "feature/imp-406-test-seeding" || got.DirtyCount != 2 {
+		t.Errorf("DataRefresh = branch=%q dirty=%d; want feature/imp-406-test-seeding/2", got.Branch, got.DirtyCount)
+	}
+}
+
+func TestParseJJBookmark(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"feature-x\n", "feature-x"},
+		{"\nfeature-x other-mark\n", "feature-x"}, // two bookmarks on one commit → first
+		{"feature-x*\n", "feature-x"},             // conflicted-bookmark suffix stripped
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := parseJJBookmark([]byte(c.in)); got != c.want {
+			t.Errorf("parseJJBookmark(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCountJJDiffDirty(t *testing.T) {
+	in := []byte("M file1\nA file2\nD file3\n\n")
+	if got := countJJDiffDirty(in); got != 3 {
+		t.Errorf("countJJDiffDirty = %d; want 3", got)
 	}
 }
 

@@ -106,10 +106,10 @@ func TestParseGhJSON_CheckNameDedupAndPrecedence(t *testing.T) {
 	}
 }
 
-// TestParseGhJSON_BranchFilter (260512-ckp): when currentBranch is non-empty,
-// FailingChecks/PendingChecks should reflect ONLY the PR whose HeadRefName
-// matches. Whole-repo counts (Open/Fail/Pend) stay unfiltered because those
-// drive the global PR-aggregate chip.
+// TestParseGhJSON_BranchFilter (260512-ckp; counts re-scoped 260606): when
+// the branch scope is detected, counts AND check names reflect ONLY the
+// PRs whose HeadRefName is in scope. branchesDetected=false keeps the
+// whole-repo union.
 func TestParseGhJSON_BranchFilter(t *testing.T) {
 	input := []byte(`[
 		{"number": 1, "headRefName": "feat-a", "statusCheckRollup": [{"name": "lint", "conclusion": "FAILURE", "state": "FAILURE"}]},
@@ -129,13 +129,15 @@ func TestParseGhJSON_BranchFilter(t *testing.T) {
 		t.Errorf("no-branch pending = %v; want [build]", pending)
 	}
 
-	// Detected with [feat-a] → only PR #1's check names surface.
+	// Detected with [feat-a] → only PR #1 surfaces: names AND counts
+	// (260606 — counts are branch-scoped too; one repo as several
+	// workspaces painted identical whole-repo ✗N on every clone).
 	open, fail, pend, failing, pending, err := parseGhJSON(input, []string{"feat-a"}, true)
 	if err != nil {
 		t.Fatalf("parse(feat-a): %v", err)
 	}
-	if open != 3 || fail != 2 || pend != 0 {
-		t.Errorf("feat-a counts = open=%d fail=%d pend=%d; want 3/2/0 (whole-repo)", open, fail, pend)
+	if open != 1 || fail != 1 || pend != 0 {
+		t.Errorf("feat-a counts = open=%d fail=%d pend=%d; want 1/1/0 (branch-scoped)", open, fail, pend)
 	}
 	if !reflect.DeepEqual(failing, []string{"lint"}) {
 		t.Errorf("feat-a failing = %v; want [lint] (only PR #1)", failing)
@@ -322,9 +324,9 @@ func TestGHProbe_BranchFilterEndToEnd(t *testing.T) {
 	if err := p.Refresh(context.Background(), "my-proj"); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	// Counts whole-repo, names scoped to feat-mine only.
-	if got.Open != 2 || got.Fail != 2 {
-		t.Errorf("counts = open=%d fail=%d; want 2/2 (whole-repo)", got.Open, got.Fail)
+	// Counts AND names scoped to feat-mine only (260606).
+	if got.Open != 1 || got.Fail != 1 {
+		t.Errorf("counts = open=%d fail=%d; want 1/1 (branch-scoped)", got.Open, got.Fail)
 	}
 	if !reflect.DeepEqual(got.FailingChecks, []string{"lint"}) {
 		t.Errorf("FailingChecks = %v; want [lint] (only feat-mine PR)", got.FailingChecks)
@@ -354,10 +356,10 @@ func TestGHProbe_BranchCacheReusesWithinTTL(t *testing.T) {
 	if err := p.Refresh(context.Background(), "my-proj"); err != nil {
 		t.Fatalf("Refresh 2: %v", err)
 	}
-	// detectLocalBranches tries both `sl` and `git` per uncached call. First
-	// call → 2 invocations. Second call must be cache-served → still 2 total.
-	if got := atomic.LoadInt64(&branchCalls); got != 2 {
-		t.Errorf("branchExecFunc calls = %d; want 2 (one detect + cache hit)", got)
+	// detectLocalBranches tries `jj`, `sl`, and `git` per uncached call. First
+	// call → 3 invocations. Second call must be cache-served → still 3 total.
+	if got := atomic.LoadInt64(&branchCalls); got != 3 {
+		t.Errorf("branchExecFunc calls = %d; want 3 (one detect + cache hit)", got)
 	}
 }
 
@@ -389,9 +391,9 @@ func TestGHProbe_BranchCacheRefreshesAfterTTL(t *testing.T) {
 	if err := p.Refresh(context.Background(), "my-proj"); err != nil {
 		t.Fatalf("Refresh 2: %v", err)
 	}
-	// Two full detectLocalBranches passes → 4 underlying invocations.
-	if got := atomic.LoadInt64(&branchCalls); got != 4 {
-		t.Errorf("branchExecFunc calls = %d; want 4 (two full re-detects)", got)
+	// Two full detectLocalBranches passes → 6 underlying invocations.
+	if got := atomic.LoadInt64(&branchCalls); got != 6 {
+		t.Errorf("branchExecFunc calls = %d; want 6 (two full re-detects)", got)
 	}
 }
 
