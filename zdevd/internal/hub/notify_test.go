@@ -6,6 +6,8 @@ package hub
 
 import (
 	"testing"
+
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
 // notifRecord captures a single fire() call.
@@ -295,6 +297,145 @@ func TestTierCheck_K(t *testing.T) {
 	}
 	if (*recs)[0].Project != "example-agora" {
 		t.Errorf("Project = %q, want dash-form %q", (*recs)[0].Project, "example-agora")
+	}
+}
+
+// --- fleet router tests (triage slice 3) ---
+
+// TestTierCheck_PresenceDefersLowestTier: while ANY tmux client is
+// attached (to a different session), the 60s tier neither fires nor
+// marks its bit — and fires the moment the client detaches.
+func TestTierCheck_PresenceDefersLowestTier(t *testing.T) {
+	s := stateWithProject("proj-a", projectData{WaitStartedTS: 100})
+	s.clientSessions["c1"] = "somewhere-else"
+	recs, fire := makeRecorder()
+
+	if tierCheck(170, s, fire) { // age = 70 — 60s crossed, but user present
+		t.Error("tierCheck returned true while deferring; nothing mutated")
+	}
+	if len(*recs) != 0 {
+		t.Fatalf("expected 0 records while present, got %d: %v", len(*recs), *recs)
+	}
+	if pd := s.projectData["proj-a"]; pd.WaitNotifiedTiers != 0 {
+		t.Fatalf("deferral must not mark bits; got %08b", pd.WaitNotifiedTiers)
+	}
+
+	// Detach → the deferred 60s tier fires on the next pass.
+	delete(s.clientSessions, "c1")
+	if !tierCheck(180, s, fire) {
+		t.Fatal("expected fire after detach")
+	}
+	if len(*recs) != 1 || (*recs)[0].Msg != "waiting 1m" {
+		t.Errorf("after detach: recs = %v; want one 'waiting 1m'", *recs)
+	}
+}
+
+// TestTierCheck_PresenceDoesNotDeferHigherTiers: a 5m wait notifies even
+// while the user is present — present-but-not-looking is exactly what an
+// unnoticed 5-minute wait means.
+func TestTierCheck_PresenceDoesNotDeferHigherTiers(t *testing.T) {
+	s := stateWithProject("proj-a", projectData{WaitStartedTS: 100})
+	s.clientSessions["c1"] = "somewhere-else"
+	recs, fire := makeRecorder()
+
+	tierCheck(400, s, fire) // age = 300 — 5m tier
+
+	if len(*recs) != 1 {
+		t.Fatalf("expected 1 record (5m fires despite presence), got %d: %v", len(*recs), *recs)
+	}
+	if (*recs)[0].Sound != "Ping" {
+		t.Errorf("Sound = %q, want Ping", (*recs)[0].Sound)
+	}
+	// The deferred-then-absorbed 60s bit is set too (multi-tier collapse).
+	if pd := s.projectData["proj-a"]; pd.WaitNotifiedTiers != 0b011 {
+		t.Errorf("WaitNotifiedTiers = %08b, want 0b011", pd.WaitNotifiedTiers)
+	}
+}
+
+// TestTierCheck_DigestCollapsesBurst: two projects crossing in ONE pass
+// (the wake-from-sleep replay) produce a single banner led by the most
+// urgent crossing — highest tier first, then oldest — with fleet context,
+// while BOTH projects' bitmaps advance so neither re-fires.
+func TestTierCheck_DigestCollapsesBurst(t *testing.T) {
+	s := newState()
+	s.projectData["proj-old"] = projectData{WaitStartedTS: 100} // age 900 → STUCK tier
+	s.projectData["proj-new"] = projectData{WaitStartedTS: 930} // age 70 → 60s tier
+	recs, fire := makeRecorder()
+
+	if !tierCheck(1000, s, fire) {
+		t.Fatal("expected fired=true")
+	}
+	if len(*recs) != 1 {
+		t.Fatalf("expected 1 digest record, got %d: %v", len(*recs), *recs)
+	}
+	r := (*recs)[0]
+	if r.Project != "proj-old" {
+		t.Errorf("digest leader = %q, want proj-old (highest tier)", r.Project)
+	}
+	if r.Msg != "STUCK (15m) · 1 more waiting" {
+		t.Errorf("Msg = %q, want 'STUCK (15m) · 1 more waiting'", r.Msg)
+	}
+	if r.Sound != "Sosumi" {
+		t.Errorf("Sound = %q, want Sosumi (leader's tier)", r.Sound)
+	}
+	// Both bitmaps advanced — the collapsed crossing never re-fires.
+	if pd := s.projectData["proj-old"]; pd.WaitNotifiedTiers != 0b111 {
+		t.Errorf("proj-old bits = %08b, want 0b111", pd.WaitNotifiedTiers)
+	}
+	if pd := s.projectData["proj-new"]; pd.WaitNotifiedTiers != 0b001 {
+		t.Errorf("proj-new bits = %08b, want 0b001 (absorbed into digest)", pd.WaitNotifiedTiers)
+	}
+}
+
+// TestTierCheck_DigestLeaderTieBreaksByAge: equal tiers → oldest wait leads.
+func TestTierCheck_DigestLeaderTieBreaksByAge(t *testing.T) {
+	s := newState()
+	s.projectData["proj-young"] = projectData{WaitStartedTS: 935} // age 65
+	s.projectData["proj-elder"] = projectData{WaitStartedTS: 900} // age 100
+	recs, fire := makeRecorder()
+
+	tierCheck(1000, s, fire) // both cross 60s only
+
+	if len(*recs) != 1 || (*recs)[0].Project != "proj-elder" {
+		t.Errorf("recs = %v; want single record led by proj-elder (oldest)", *recs)
+	}
+}
+
+// TestTierCheck_PermissionKindInMessage: a permission-class wait says so
+// in the banner — that's the "5 seconds of you unblocks an agent" cue.
+func TestTierCheck_PermissionKindInMessage(t *testing.T) {
+	s := stateWithProject("proj-a", projectData{
+		WaitStartedTS: 100,
+		WaitKind:      proto.WaitKindPermission,
+	})
+	recs, fire := makeRecorder()
+
+	tierCheck(160, s, fire) // age = 60
+
+	if len(*recs) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(*recs))
+	}
+	if (*recs)[0].Msg != "waiting 1m (permission)" {
+		t.Errorf("Msg = %q, want 'waiting 1m (permission)'", (*recs)[0].Msg)
+	}
+}
+
+// TestTierCheck_FleetSuffixCountsNonCrossingWaits: the "N more waiting"
+// context counts every notification-worthy wait, not just this pass's
+// crossings — an already-notified wait still demands the user.
+func TestTierCheck_FleetSuffixCountsNonCrossingWaits(t *testing.T) {
+	s := newState()
+	s.projectData["proj-a"] = projectData{WaitStartedTS: 100}                          // crosses 60s now
+	s.projectData["proj-b"] = projectData{WaitStartedTS: 50, WaitNotifiedTiers: 0b001} // fired earlier, still waiting
+	recs, fire := makeRecorder()
+
+	tierCheck(161, s, fire) // proj-a age 61; proj-b age 111 (bit0 done, 5m not crossed)
+
+	if len(*recs) != 1 {
+		t.Fatalf("expected 1 record, got %d: %v", len(*recs), *recs)
+	}
+	if (*recs)[0].Msg != "waiting 1m · 1 more waiting" {
+		t.Errorf("Msg = %q, want 'waiting 1m · 1 more waiting'", (*recs)[0].Msg)
 	}
 }
 
