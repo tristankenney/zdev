@@ -109,8 +109,10 @@ install_claude() {
     # Death detection (NOW#3): SessionEnd reports WHY the session ended;
     # zdev-notify maps clean reasons to "done" and everything else to the
     # daemon's ✗ dead state, which tops the triage queue and fires a
-    # presence-bypassing notification.
+    # presence-bypassing notification. SessionStart declares liveness so
+    # a restarted/resumed agent clears its death record immediately.
     ensure_entry "SessionEnd"       ""                  "session-end"      "json"
+    ensure_entry "SessionStart"     ""                  "alive"
 
     if [[ "$changed" -eq 0 ]]; then
         echo "claude: all hooks present — nothing to do."

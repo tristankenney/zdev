@@ -576,7 +576,8 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// refreshes the kind line, so a wait that escalates from an idle
 		// notification to a permission prompt re-classifies mid-cycle.
 		pd := s.projectData[e.Session]
-		if e.Kind == proto.WaitKindDead {
+		switch {
+		case e.Kind == proto.WaitKindDead:
 			pd.DeadSinceTS = e.Timestamp
 			pd.DeadReason = e.Summary
 			pd.DeadNotified = false
@@ -585,7 +586,19 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.WaitSummary = ""
 			pd.WaitContext = ""
 			pd.WaitNotifiedTiers = 0
-		} else {
+		case e.Kind == proto.WaitKindAlive:
+			// SessionStart liveness declaration: the agent is back —
+			// clear any death record AND any stale wait (a resumed
+			// agent sits at its prompt; nothing is pending yet).
+			pd.DeadSinceTS = 0
+			pd.DeadReason = ""
+			pd.DeadNotified = false
+			pd.WaitStartedTS = 0
+			pd.WaitKind = ""
+			pd.WaitSummary = ""
+			pd.WaitContext = ""
+			pd.WaitNotifiedTiers = 0
+		default:
 			pd.WaitStartedTS = e.Timestamp
 			pd.WaitKind = e.Kind
 			pd.WaitSummary = e.Summary

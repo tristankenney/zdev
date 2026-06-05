@@ -42,6 +42,24 @@ func TestApplyEvent_DeadKind(t *testing.T) {
 	}
 }
 
+// TestApplyEvent_AliveKind: the SessionStart liveness declaration clears
+// a death AND any stale wait without starting a new one — the explicit
+// resurrection path for respawned panes whose identical titles never
+// fire a title-change event.
+func TestApplyEvent_AliveKind(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.NotifSeen{Session: "proj", Timestamp: 200, Kind: proto.WaitKindDead, Summary: "exited: other"}, nil)
+
+	applyEvent(s, tmuxctl.NotifSeen{Session: "proj", Timestamp: 300, Kind: proto.WaitKindAlive}, nil)
+	pd := s.projectData["proj"]
+	if pd.DeadSinceTS != 0 || pd.DeadReason != "" || pd.DeadNotified {
+		t.Errorf("alive must clear death: %+v", pd)
+	}
+	if pd.WaitStartedTS != 0 || pd.WaitKind != "" || pd.WaitSummary != "" {
+		t.Errorf("alive must not start a wait: %+v", pd)
+	}
+}
+
 // TestBuildSnapshot_DeadMasksAttention: an unresolved death overrides
 // the displayed attention and carries death time/reason on the wait
 // wire fields; a title-derived live agent clears it.

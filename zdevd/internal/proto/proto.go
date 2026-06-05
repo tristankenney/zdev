@@ -212,6 +212,14 @@ const (
 // the wait lifecycle, and the wire carries it as Attention == AttDead.
 const WaitKindDead = "dead"
 
+// WaitKindAlive is the notif-channel liveness declaration written by the
+// SessionStart hook: a freshly started/resumed agent clears any death
+// record immediately and starts no wait. Needed because title-based
+// clearing fails when a respawned pane reuses the identical title (no
+// title-change event fires) and an idle resumed agent emits no other
+// hook until its next wait. Never appears on the wire.
+const WaitKindAlive = "alive"
+
 type Project struct {
 	Name             string    `json:"name"`
 	Status           string    `json:"status"`
