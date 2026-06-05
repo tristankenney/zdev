@@ -65,11 +65,35 @@ process_window() {
   count=$(printf '%s\n' "$sidebar_panes" | grep -c . || true)
 
   rebalance() {
-    tmux select-layout -t "$window_id" even-horizontal 2>/dev/null || true
+    # Equalize the NON-sidebar panes. The old shape — even-horizontal
+    # then shrink the sidebar back to WIDTH — handed the sidebar's
+    # surplus to its neighbor only, so the middle pane was permanently
+    # wider than the right one (dogfood 2026-06-06). Instead: pin the
+    # sidebar at WIDTH, then hand every other pane an equal share of
+    # what remains (last pane absorbs the rounding remainder).
     local sb
     sb=$(tmux list-panes -t "$window_id" -F '#{pane_id} #{@is-sidebar}' 2>/dev/null \
       | awk '$2=="1"{print $1; exit}')
-    [ -n "$sb" ] && tmux resize-pane -t "$sb" -x "$WIDTH" 2>/dev/null || true
+    if [ -z "$sb" ]; then
+      tmux select-layout -t "$window_id" even-horizontal 2>/dev/null || true
+      return 0
+    fi
+    tmux resize-pane -t "$sb" -x "$WIDTH" 2>/dev/null || true
+    local win_w others n each
+    win_w=$(tmux display-message -p -t "$window_id" '#{window_width}' 2>/dev/null) || return 0
+    # Left-to-right non-sidebar panes; resizing in that order pushes the
+    # remainder rightward without disturbing already-set widths.
+    others=$(tmux list-panes -t "$window_id" -F '#{pane_left} #{pane_id} #{@is-sidebar}' 2>/dev/null \
+      | sort -n | awk '$3!="1"{print $2}')
+    n=$(printf '%s\n' "$others" | grep -c . || true)
+    [ "$n" -lt 2 ] && return 0
+    # Usable width = window minus sidebar minus one border column per
+    # divider (panes-1 dividers for sidebar + n others).
+    each=$(( (win_w - WIDTH - n) / n ))
+    [ "$each" -lt 10 ] && return 0
+    printf '%s\n' "$others" | sed '$d' | while read -r p; do
+      [ -n "$p" ] && tmux resize-pane -t "$p" -x "$each" 2>/dev/null || true
+    done
   }
 
   if (( effective_width >= THRESHOLD )); then

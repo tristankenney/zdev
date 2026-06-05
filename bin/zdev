@@ -124,7 +124,11 @@ build_layout() {
         launch="zsh -lic $(printf '%q' "$inner")"
         agent_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}' "$launch")
         tmux select-pane -t "$agent_pane" -T "agent"
-        tmux select-layout -t "$session:dev" even-horizontal
+        # No select-layout here: the -h split already halves the shell
+        # pane, which is even whether or not the (async, hook-driven)
+        # sidebar has landed yet. even-horizontal would equalize the
+        # sidebar too — the toggle script's rebalance() owns sidebar-
+        # aware sizing.
     fi
 
     tmux select-pane -t "$shell_pane"
