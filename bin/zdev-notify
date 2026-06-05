@@ -2,7 +2,7 @@
 # Update the current tmux pane title to flag attention state.
 # Called by Claude Code hooks and Codex `notify`.
 #
-# Usage: zdev-notify <tool> [state]
+# Usage: zdev-notify <tool> [state] [--json]
 #   state: "needs-permission" / "permission" → ●  (y/n approval — cheap;
 #          triage ranks these first)
 #          "needs-decision" / "question" / "asking" → ●  (real question)
@@ -10,17 +10,34 @@
 #          "done" / "idle" / "finished" → ◆  (just-finished, no action urgent)
 #          "clear" / "working" → no marker
 #
-# Wire a Claude Code Notification hook with a permission matcher to pass
-# the cost-class through, e.g.:
+#   --json (Read-then-Round S1): read the Claude Code hook payload from
+#   stdin and extract a one-line WaitSummary — the agent's own last line
+#   (.last_assistant_message on Stop hooks, falling back to .message on
+#   Notification hooks) — written as the notif file's third line so the
+#   triage queue shows what the agent actually wants instead of scraped
+#   pane noise. Requires jq; silently degrades to no-summary without it.
+#   Only meaningful when invoked FROM a hook (hooks always pipe JSON).
+#
+# Wire Claude Code hooks to pass the cost-class and summary through
+# (zdev-install-hooks does this automatically), e.g.:
 #   { "Notification": [
-#       {"matcher": "permission_request",
-#        "hooks": [{"type": "command", "command": "zdev-notify claude needs-permission"}]},
-#       {"matcher": "*",
-#        "hooks": [{"type": "command", "command": "zdev-notify claude waiting"}]} ] }
+#       {"matcher": "permission_prompt",
+#        "hooks": [{"type": "command", "command": "zdev-notify claude needs-permission --json"}]},
+#       {"hooks": [{"type": "command", "command": "zdev-notify claude waiting --json"}]} ] }
 set -eu
 
 TOOL="${1:-cli}"
 STATE="${2:-waiting}"
+
+# --json: extract a single-line summary from the hook payload on stdin.
+# Strip tabs/newlines (the notif file is line-delimited; the timeline is
+# tab-delimited) and cap at 160 chars. Any failure → empty summary.
+SUMMARY=""
+if [ "${3:-}" = "--json" ] && command -v jq >/dev/null 2>&1; then
+    SUMMARY=$(jq -r '(.last_assistant_message // .message // "")
+        | split("\n") | map(select(. != "")) | last // ""' 2>/dev/null \
+        | tr '\t' ' ' | cut -c1-160) || SUMMARY=""
+fi
 
 if [ -z "${TMUX_PANE:-}" ]; then
     exit 0
@@ -66,22 +83,35 @@ case "$STATE" in
     *)  # waiting, needs-input, needs-permission, question, …
         TITLE="● $TOOL"
         # File format: line 1 unix-seconds (wait-start), line 2 optional
-        # kind. Preserve the original wait-start time across repeated
-        # Notification fires. A TAGGED re-fire updates the kind line (a
-        # wait can escalate idle→permission mid-cycle); an UNTAGGED
-        # re-fire leaves the file alone — it carries no evidence the
-        # kind changed, so an earlier tag must not be erased.
+        # kind, line 3 optional summary (S1). Merge semantics across
+        # repeated Notification fires within one wait cycle:
+        #   - wait-start time: ALWAYS preserved from the existing file.
+        #   - kind: a tagged fire updates it (a wait can escalate
+        #     idle→permission mid-cycle); an untagged fire carries no
+        #     evidence the kind changed, so the existing tag survives.
+        #   - summary: a fire WITH a summary updates it (newer is
+        #     better); a fire without one keeps the existing summary.
+        # A fire that adds nothing leaves the file untouched (no
+        # spurious fsnotify wake).
         if [ -n "$SESSION" ]; then
-            if [ ! -f "$TS_FILE" ]; then
-                if [ -n "$KIND" ]; then
-                    printf '%s\n%s\n' "$(date +%s)" "$KIND" > "$TS_FILE" 2>/dev/null || true
+            OLD_TS=""; OLD_KIND=""; OLD_SUMMARY=""
+            if [ -f "$TS_FILE" ]; then
+                OLD_TS=$(sed -n '1p' "$TS_FILE" 2>/dev/null || echo "")
+                OLD_KIND=$(sed -n '2p' "$TS_FILE" 2>/dev/null || echo "")
+                OLD_SUMMARY=$(sed -n '3p' "$TS_FILE" 2>/dev/null || echo "")
+            fi
+            TS="$OLD_TS"
+            [ -n "$TS" ] || TS=$(date +%s)
+            NEW_KIND="${KIND:-$OLD_KIND}"
+            NEW_SUMMARY="${SUMMARY:-$OLD_SUMMARY}"
+            if [ ! -f "$TS_FILE" ] || [ "$NEW_KIND" != "$OLD_KIND" ] || [ "$NEW_SUMMARY" != "$OLD_SUMMARY" ]; then
+                if [ -n "$NEW_SUMMARY" ]; then
+                    printf '%s\n%s\n%s\n' "$TS" "$NEW_KIND" "$NEW_SUMMARY" > "$TS_FILE" 2>/dev/null || true
+                elif [ -n "$NEW_KIND" ]; then
+                    printf '%s\n%s\n' "$TS" "$NEW_KIND" > "$TS_FILE" 2>/dev/null || true
                 else
-                    printf '%s\n' "$(date +%s)" > "$TS_FILE" 2>/dev/null || true
+                    printf '%s\n' "$TS" > "$TS_FILE" 2>/dev/null || true
                 fi
-            elif [ -n "$KIND" ]; then
-                TS=$(head -n 1 "$TS_FILE" 2>/dev/null || echo "")
-                [ -n "$TS" ] || TS=$(date +%s)
-                printf '%s\n%s\n' "$TS" "$KIND" > "$TS_FILE" 2>/dev/null || true
             fi
         fi
         ;;

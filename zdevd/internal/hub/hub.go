@@ -44,9 +44,9 @@ type Hub struct {
 	// Populated once by NewHub from the Config argument. Read-only after
 	// Run starts — Config-passed values never mutate during the hub's
 	// lifetime, so no synchronization is needed.
-	socketPath string                           // surfaces in diag.Reply.Socket; "" = unset
-	eventlog   *eventlog.Writer                 // nil-safe everywhere it's used
-	statePath  string                           // path for persisted state JSON; "" = persistence disabled
+	socketPath string             // surfaces in diag.Reply.Socket; "" = unset
+	eventlog   *eventlog.Writer   // nil-safe everywhere it's used
+	statePath  string             // path for persisted state JSON; "" = persistence disabled
 	notifier   func(Notification) // nil-safe; nil = notifications disabled
 
 	// Owned by Run goroutine — NEVER accessed from any other goroutine.
@@ -820,6 +820,7 @@ func projectEquals(a, b proto.Project) bool {
 		a.LastActivityTS != b.LastActivityTS ||
 		a.WaitStartedTS != b.WaitStartedTS ||
 		a.WaitKind != b.WaitKind ||
+		a.WaitSummary != b.WaitSummary ||
 		a.PROpen != b.PROpen ||
 		a.PRFail != b.PRFail ||
 		a.PRPend != b.PRPend ||

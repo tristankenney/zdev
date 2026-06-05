@@ -8,6 +8,13 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
+// rankNow is the fixed clock for the ordering table. All fixtures in
+// TestRankTriage carry empty WaitContext (non-cheap), so the answer-cost
+// bucket is uniform within each test and the pre-S1 orderings hold for
+// any clock value; the answer-cost interactions get their own tests
+// below.
+const rankNow = int64(2000)
+
 // TestRankTriage is the canonical ordering table. Each row is one queue
 // scenario; rankTriage is pure so the table is exhaustive over the
 // class/ack/age decision space.
@@ -134,12 +141,100 @@ func TestRankTriage(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := rankTriage(tc.projects)
+			got := rankTriage(tc.projects, rankNow)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("rankTriage = %v; want %v", got, tc.want)
 			}
 		})
 	}
+}
+
+// cheapContext is a captured wait tail that AnswerCost must classify as
+// cheap — the Claude Code permission-dialog shape.
+const cheapContext = "Bash command: rm -rf ./build\n\nDo you want to proceed?\n❯ 1. Yes\n  2. Yes, and don't ask again\n  3. No\n"
+
+// TestAnswerCost is the classifier table.
+func TestAnswerCost(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  string
+		want string
+	}{
+		{"empty context → unknown", "", ""},
+		{"permission dialog numbered options → cheap", cheapContext, AnswerCostCheap},
+		{"caret-selected option → cheap", "Pick one:\n❯ 1. apples\n  2. oranges\n", AnswerCostCheap},
+		{"paren-numbered menu → cheap", "1) keep\n2) revert\n", AnswerCostCheap},
+		{"explicit y/n token → cheap", "Overwrite existing file? (y/n)\n", AnswerCostCheap},
+		{"bracketed y/n → cheap", "continue? [y/N]", AnswerCostCheap},
+		{"open-ended question → unknown", "Which approach should I take for the cache layer?\nI see three plausible designs but each has tradeoffs.\n", ""},
+		{"wall of diff → unknown", "+ func foo() {\n+   return 1\n+ }\n- func bar() {}\nShould I refactor the rest to match?\n", ""},
+		{"numbered list deep in scrollback is out of scan window", "1. first thing\n2. second thing\na\nb\nc\nd\ne\nf\ng\nh\nlong closing thought without a prompt", ""},
+		{"version number is not an option (no space after dot)", "upgraded to 2.14.0\ndone\n", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AnswerCost(tc.ctx); got != tc.want {
+				t.Errorf("AnswerCost = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRankTriage_AnswerCost covers the S1 within-class interactions:
+// cheap-first, and the 5m anti-starvation override.
+func TestRankTriage_AnswerCost(t *testing.T) {
+	wait := func(name string, since int64, ctx string) proto.Project {
+		return proto.Project{Name: name, Attention: proto.AttWaiting,
+			WaitStartedTS: since, WaitContext: ctx}
+	}
+
+	t.Run("cheap outranks older expensive within the window", func(t *testing.T) {
+		// now=2000: q-old age 200 (<300 → not starved), cheap age 40.
+		got := rankTriage([]proto.Project{
+			wait("q-old", 1800, "Which design should I use?"),
+			wait("cheap-new", 1960, cheapContext),
+		}, 2000)
+		want := []string{"cheap-new", "q-old"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("rankTriage = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("starved expensive (>=5m) jumps ahead of all cheap", func(t *testing.T) {
+		// now=2000: q-starved age 400 (>=300), cheap age 40.
+		got := rankTriage([]proto.Project{
+			wait("cheap-new", 1960, cheapContext),
+			wait("q-starved", 1600, "Which design should I use?"),
+		}, 2000)
+		want := []string{"q-starved", "cheap-new"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("rankTriage = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("cheap waits order by age among themselves", func(t *testing.T) {
+		got := rankTriage([]proto.Project{
+			wait("cheap-b", 1960, cheapContext),
+			wait("cheap-a", 1900, cheapContext),
+		}, 2000)
+		want := []string{"cheap-a", "cheap-b"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("rankTriage = %v; want %v", got, want)
+		}
+	})
+
+	t.Run("class gate still dominates cost: permission before cheap decision", func(t *testing.T) {
+		perm := proto.Project{Name: "perm", Attention: proto.AttWaiting,
+			WaitKind: proto.WaitKindPermission, WaitStartedTS: 1990}
+		got := rankTriage([]proto.Project{
+			wait("cheap-dec", 1500, cheapContext),
+			perm,
+		}, 2000)
+		want := []string{"perm", "cheap-dec"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("rankTriage = %v; want %v", got, want)
+		}
+	})
 }
 
 // TestBuildSnapshot_TriagePopulated proves the queue flows onto the wire

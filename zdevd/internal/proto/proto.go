@@ -83,7 +83,13 @@ import (
 // ranked list of project names needing attention; single source of truth
 // for the sidebar triage section, `zdev next`, and the triage popup).
 // Restart all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v9"
+//
+// phase4-v10 (2026-06-05, Read-then-Round S1): adds Project.WaitSummary —
+// the agent's own last line (hook-sourced via zdev-notify --json from the
+// Stop/Notification payload's last_assistant_message/message), replacing
+// scraped pane noise as the triage gist. Restart all zdev-sidebar-render
+// instances after deploying.
+const SchemaVersion = "phase4-v10"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -200,6 +206,7 @@ type Project struct {
 	WaitStartedTS    int64     `json:"wait_started_ts,omitempty"`   // 0 = not waiting
 	WaitAcknowledged bool      `json:"wait_acknowledged,omitempty"` // true when the user has visited this session past the highest crossed wait-tier; suppresses urgent decoration in the renderer.
 	WaitKind         string    `json:"wait_kind,omitempty"`         // cost-class of the current wait: WaitKindPermission | WaitKindDecision | "" (unknown → treated as decision)
+	WaitSummary      string    `json:"wait_summary,omitempty"`      // the agent's own last line at wait time (hook-sourced, single line, capped) — the triage gist; "" when the hook didn't carry one
 	PROpen           int       `json:"pr_open,omitempty"`
 	PRFail           int       `json:"pr_fail,omitempty"`
 	PRPend           int       `json:"pr_pend,omitempty"`

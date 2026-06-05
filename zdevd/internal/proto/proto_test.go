@@ -96,8 +96,8 @@ func TestSnapshotCompactNoIndent(t *testing.T) {
 // --- Phase 3 tests ---
 
 func TestSchemaVersion_IsPhase4(t *testing.T) {
-	if SchemaVersion != "phase4-v9" {
-		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v9")
+	if SchemaVersion != "phase4-v10" {
+		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v10")
 	}
 }
 

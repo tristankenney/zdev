@@ -10,8 +10,11 @@
 //	zdev-show --legend         # print the sidebar glyph legend (no daemon dial)
 //	zdev-show -l               # alias for --legend
 //	zdev-show agents           # print the agent registry one-per-line (no daemon dial)
-//	zdev-show next             # print the top triage project name (bare, for scripts)
+//	zdev-show next             # print the ranked queue, bare names (for scripts)
 //	zdev-show triage           # print the ranked attention queue, annotated
+//	zdev-show triage --tsv     # machine variant for fzf (name\tdisplay)
+//	zdev-show triage --json    # structured queue (phone Shortcuts, widgets)
+//	zdev-show list --json      # every project row as structured JSON
 //
 // zdev-show dials the daemon's unix socket, reads one snapshot, and exits.
 // It never subscribes to the stream — the connection is closed immediately
@@ -23,6 +26,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -30,6 +34,7 @@ import (
 
 	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/config"
+	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/socket"
@@ -119,12 +124,35 @@ func run() int {
 	// `triage --tsv` is the machine variant for fzf consumption:
 	// <name>\t<colored display> per line, no rank numbers (the picker
 	// shows position), empty output for an empty queue.
+	// `triage --json` (S1) is the structured variant — the substrate for
+	// phone-side Shortcuts/widgets and any consumer that shouldn't parse
+	// ANSI: a JSON array in rank order, [] for an empty queue.
 	if os.Args[1] == "triage" {
-		if len(os.Args) >= 3 && os.Args[2] == "--tsv" {
+		switch {
+		case len(os.Args) >= 3 && os.Args[2] == "--tsv":
 			fmt.Print(formatTriageTSV(snap, time.Now().Unix()))
-		} else {
+		case len(os.Args) >= 3 && os.Args[2] == "--json":
+			out, err := formatTriageJSON(snap, time.Now().Unix())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+				return 1
+			}
+			fmt.Println(out)
+		default:
 			fmt.Print(formatTriage(snap, time.Now().Unix()))
 		}
+		return 0
+	}
+
+	// `list --json` (S1): every project row as structured JSON — the
+	// whole-fleet counterpart to triage --json.
+	if os.Args[1] == "list" && len(os.Args) >= 3 && os.Args[2] == "--json" {
+		out, err := formatListJSON(snap, time.Now().Unix())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+			return 1
+		}
+		fmt.Println(out)
 		return 0
 	}
 
@@ -224,17 +252,26 @@ func findProject(snap *proto.Snapshot, target string) *proto.Project {
 	return nil
 }
 
-// formatShow renders the dim header and verbatim WaitContext for a project.
-// If WaitContext is empty it returns the no-context fallback message.
+// formatShow renders the dim header, the hook-sourced WaitSummary (S1,
+// when present — the agent's own last line, bolded as the headline), and
+// the verbatim WaitContext for a project. If both are empty it returns
+// the no-context fallback message.
 func formatShow(p *proto.Project) string {
-	if p.WaitContext == "" {
+	if p.WaitContext == "" && p.WaitSummary == "" {
 		return fmt.Sprintf("(no waiting context for %s)\n", p.Name)
 	}
-	body := p.WaitContext
-	if !strings.HasSuffix(body, "\n") {
-		body += "\n"
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s─── %s ──%s\n", dim, p.Name, reset)
+	if p.WaitSummary != "" {
+		fmt.Fprintf(&b, "%s%s%s\n", bold, p.WaitSummary, reset)
 	}
-	return fmt.Sprintf("%s─── %s ──%s\n%s", dim, p.Name, reset, body)
+	if p.WaitContext != "" {
+		b.WriteString(p.WaitContext)
+		if !strings.HasSuffix(p.WaitContext, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 // formatList walks all projects and prints one preview line for each project
@@ -311,12 +348,19 @@ func formatTriageTSV(snap *proto.Snapshot, now int64) string {
 }
 
 // triageEntry computes the shared display pieces for one queue entry:
-// cost-class glyph (⚡ needs-permission / ● needs-decision / ◆ finished),
-// wait age (activity age for finished rows), and the first line of the
-// captured wait context.
+// glyph (⚡ cheap-to-answer / ● needs-thought / ◆ finished), wait age
+// (activity age for finished rows), and the gist — the agent's own
+// hook-sourced WaitSummary when present (S1), falling back to the first
+// line of the scraped wait context.
+//
+// ⚡ means "seconds of your time, answer me first": a permission-class
+// wait OR a structured prompt the AnswerCost classifier recognizes
+// (numbered options, y/n). One glyph, one meaning, both fleets — in a
+// bypass-permissions fleet the permission class never occurs but the
+// classifier still lights it up.
 func triageEntry(p *proto.Project, now int64) (glyph, age, gist string) {
 	switch {
-	case p.Attention == proto.AttWaiting && p.WaitKind == proto.WaitKindPermission:
+	case p.Attention == proto.AttWaiting && isCheapWait(p):
 		glyph = orange + "⚡" + reset
 	case p.Attention == proto.AttWaiting:
 		glyph = redPulse + "●" + reset
@@ -331,7 +375,10 @@ func triageEntry(p *proto.Project, now int64) (glyph, age, gist string) {
 	default:
 		age = "-"
 	}
-	gist = firstNonEmptyLine(p.WaitContext)
+	gist = p.WaitSummary
+	if gist == "" {
+		gist = firstNonEmptyLine(p.WaitContext)
+	}
 	if len(gist) > 60 {
 		gist = gist[:57] + "..."
 	}
@@ -343,6 +390,69 @@ func triageEntry(p *proto.Project, now int64) (glyph, age, gist string) {
 		}
 	}
 	return glyph, age, gist
+}
+
+// isCheapWait is the ⚡ predicate: permission-class or classifier-cheap.
+func isCheapWait(p *proto.Project) bool {
+	return p.WaitKind == proto.WaitKindPermission ||
+		hub.AnswerCost(p.WaitContext) == hub.AnswerCostCheap
+}
+
+// triageJSONEntry is the structured form of one queue entry for
+// `triage --json` / `list --json`. Field set is deliberately small and
+// stable — it's a consumer contract, not a dump of proto.Project.
+type triageJSONEntry struct {
+	Name         string `json:"name"`
+	Attention    string `json:"attention"`             // waiting | finished | working | "" (idle)
+	Status       string `json:"status"`                // includes "absent" (list mode)
+	WaitKind     string `json:"wait_kind,omitempty"`   // permission | decision | ""
+	AnswerCost   string `json:"answer_cost,omitempty"` // "cheap" | "" (unknown)
+	WaitAgeSec   int64  `json:"wait_age_sec,omitempty"`
+	Acknowledged bool   `json:"acknowledged,omitempty"`
+	Summary      string `json:"summary,omitempty"` // WaitSummary, falling back to scraped first line
+}
+
+func jsonEntry(p *proto.Project, now int64) triageJSONEntry {
+	e := triageJSONEntry{
+		Name:         p.Name,
+		Attention:    string(p.Attention),
+		Status:       p.Status,
+		WaitKind:     p.WaitKind,
+		AnswerCost:   hub.AnswerCost(p.WaitContext),
+		Acknowledged: p.WaitAcknowledged,
+		Summary:      p.WaitSummary,
+	}
+	if e.Summary == "" {
+		e.Summary = firstNonEmptyLine(p.WaitContext)
+	}
+	if p.WaitStartedTS > 0 {
+		e.WaitAgeSec = now - p.WaitStartedTS
+	}
+	return e
+}
+
+// formatTriageJSON marshals the daemon-ranked queue in rank order.
+func formatTriageJSON(snap *proto.Snapshot, now int64) (string, error) {
+	entries := make([]triageJSONEntry, 0, len(snap.Triage))
+	for _, name := range snap.Triage {
+		p := findProject(snap, normalizeProjectName(name))
+		if p == nil {
+			continue
+		}
+		entries = append(entries, jsonEntry(p, now))
+	}
+	b, err := json.Marshal(entries)
+	return string(b), err
+}
+
+// formatListJSON marshals every project row (snapshot order).
+func formatListJSON(snap *proto.Snapshot, now int64) (string, error) {
+	entries := make([]triageJSONEntry, 0, len(snap.Projects))
+	for i := range snap.Projects {
+		entries = append(entries, jsonEntry(&snap.Projects[i], now))
+	}
+	b, err := json.Marshal(entries)
+	return string(b), err
 }
 
 // formatAge matches the renderer's fmt_age buckets: seconds under a

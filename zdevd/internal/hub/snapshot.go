@@ -157,6 +157,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 				pd.WaitContext = ""
 				pd.WaitNotifiedTiers = 0
 				pd.WaitKind = ""
+				pd.WaitSummary = ""
 			}
 
 			st.projectData[dataKey] = pd
@@ -181,6 +182,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			WaitStartedTS:    pd.WaitStartedTS,
 			WaitAcknowledged: isWaitAcknowledged(st, dataKey, pd.WaitStartedTS, now),
 			WaitKind:         pd.WaitKind,
+			WaitSummary:      pd.WaitSummary,
 			PROpen:           pr.Open,
 			PRFail:           pr.Fail,
 			PRPend:           pr.Pend,
@@ -210,7 +212,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// queue always reflects exactly what the renderer draws —
 		// including the dwell-debounced Attention. Computed here (not
 		// per-subscriber) so every surface shares one ordering.
-		Triage: rankTriage(projects),
+		Triage: rankTriage(projects, now),
 	}
 }
 

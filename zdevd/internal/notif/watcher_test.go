@@ -167,9 +167,9 @@ func TestNotifWatcher_AtomicRename(t *testing.T) {
 	}
 }
 
-// TestReadNotifFile covers both file formats: legacy single-line
-// (timestamp only) and the tagged two-line format (timestamp + kind,
-// triage slice 1).
+// TestReadNotifFile covers all three file formats: legacy single-line
+// (timestamp only), the tagged two-line format (+kind, triage slice 1),
+// and the three-line summary format (+summary, Read-then-Round S1).
 func TestReadNotifFile(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {
@@ -182,36 +182,43 @@ func TestReadNotifFile(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		content  string
-		wantTS   int64
-		wantKind string
+		name        string
+		content     string
+		wantTS      int64
+		wantKind    string
+		wantSummary string
 	}{
-		{"legacy single line", "1714838460", 1714838460, ""},
-		{"legacy with trailing newline", "1714838460\n", 1714838460, ""},
-		{"tagged permission", "1714838460\npermission\n", 1714838460, "permission"},
-		{"tagged decision", "1714838460\ndecision", 1714838460, "decision"},
-		{"unknown kind passes through", "1714838460\nsomething-new\n", 1714838460, "something-new"},
-		{"malformed timestamp drops kind too", "not-a-number\npermission\n", 0, ""},
-		{"empty file", "", 0, ""},
+		{"legacy single line", "1714838460", 1714838460, "", ""},
+		{"legacy with trailing newline", "1714838460\n", 1714838460, "", ""},
+		{"tagged permission", "1714838460\npermission\n", 1714838460, "permission", ""},
+		{"tagged decision", "1714838460\ndecision", 1714838460, "decision", ""},
+		{"unknown kind passes through", "1714838460\nsomething-new\n", 1714838460, "something-new", ""},
+		{"malformed timestamp drops kind too", "not-a-number\npermission\n", 0, "", ""},
+		{"empty file", "", 0, "", ""},
+		{"three-line with kind and summary", "1714838460\npermission\nAllow Bash(rm -rf ./build)?\n", 1714838460, "permission", "Allow Bash(rm -rf ./build)?"},
+		{"empty kind placeholder with summary", "1714838460\n\nWhich approach do you prefer?\n", 1714838460, "", "Which approach do you prefer?"},
+		{"malformed timestamp drops summary too", "garbage\npermission\nsummary here\n", 0, "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			p := write("zdev-notif-x.ts", tc.content)
-			ts, kind := readNotifFile(p)
+			ts, kind, summary := readNotifFile(p)
 			if ts != tc.wantTS {
 				t.Errorf("ts = %d; want %d", ts, tc.wantTS)
 			}
 			if kind != tc.wantKind {
 				t.Errorf("kind = %q; want %q", kind, tc.wantKind)
 			}
+			if summary != tc.wantSummary {
+				t.Errorf("summary = %q; want %q", summary, tc.wantSummary)
+			}
 		})
 	}
 
 	t.Run("missing file", func(t *testing.T) {
-		ts, kind := readNotifFile(filepath.Join(dir, "does-not-exist"))
-		if ts != 0 || kind != "" {
-			t.Errorf("got (%d, %q); want (0, \"\")", ts, kind)
+		ts, kind, summary := readNotifFile(filepath.Join(dir, "does-not-exist"))
+		if ts != 0 || kind != "" || summary != "" {
+			t.Errorf("got (%d, %q, %q); want zeros", ts, kind, summary)
 		}
 	})
 }

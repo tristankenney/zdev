@@ -110,10 +110,15 @@ type PortsRefresh struct {
 // time) or "decision" (a real question — minutes). Empty when the writer
 // predates the two-line format or didn't tag the wait; consumers treat
 // empty as "decision" (the conservative default).
+//
+// Summary (Read-then-Round S1) is the agent's own last line from the
+// notif file's third line — single-line, capped by the writer. Empty for
+// legacy/two-line files or when the hook payload carried no message.
 type NotifSeen struct {
 	Session   string
 	Timestamp int64
 	Kind      string
+	Summary   string
 }
 
 // ProjectListChanged is emitted when the workspace fsnotify watcher (D3-06)

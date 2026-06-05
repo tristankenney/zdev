@@ -198,7 +198,12 @@ type projectData struct {
 	// un-hooked agents — ranked as a decision). Cleared alongside
 	// WaitContext when the wait lifecycle ends; NOT persisted — the next
 	// wait re-tags from the live hook fire.
-	WaitKind     string
+	WaitKind string
+	// WaitSummary (Read-then-Round S1) is the agent's own last line at
+	// wait time, sourced from the hook payload via NotifSeen.Summary —
+	// the triage gist that replaces scraped pane noise. Same lifecycle
+	// as WaitKind: cleared on wait exit, NOT persisted.
+	WaitSummary  string
 	CIStatus     string // last CIRefresh.Status; "" = unknown / no runs
 	CIConclusion string // last CIRefresh.Conclusion; "" = no runs or status != completed
 }
@@ -554,6 +559,7 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		pd := s.projectData[e.Session]
 		pd.WaitStartedTS = e.Timestamp
 		pd.WaitKind = e.Kind
+		pd.WaitSummary = e.Summary
 		s.projectData[e.Session] = pd
 
 	case tmuxctl.PaneCaptureReady:

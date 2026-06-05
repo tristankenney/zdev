@@ -57,34 +57,54 @@ install_claude() {
     local doc
     doc=$(cat "$SETTINGS")
 
-    # ensure_entry EVENT MATCHER STATE
-    # Appends {matcher?, hooks:[{type:command, command:zdev-notify claude STATE}]}
+    # ensure_entry EVENT MATCHER STATE [json]
+    # Appends {matcher?, hooks:[{type:command, command:zdev-notify claude STATE [--json]}]}
     # to .hooks.EVENT unless any existing command under that event already
     # invokes `zdev-notify claude STATE` (hand-rolled variants count — the
-    # needle is the tool+state pair, not the exact path).
+    # needle is the tool+state pair, not the exact path). When the 4th arg
+    # is "json" and a matching command exists WITHOUT --json, it is
+    # upgraded in place (S1: --json carries the WaitSummary payload).
     ensure_entry() {
-        local event="$1" matcher="$2" state="$3"
+        local event="$1" matcher="$2" state="$3" json="${4:-}"
         local needle="zdev-notify claude $state"
         if jq -e --arg ev "$event" --arg needle "$needle" '
             [(.hooks[$ev] // [])[] | .hooks[]? | .command // ""]
             | any(contains($needle))
         ' <<<"$doc" >/dev/null; then
-            echo "claude: $event${matcher:+ ($matcher)} → '$needle' already present"
+            if [ "$json" = "json" ] && ! jq -e --arg ev "$event" --arg needle "$needle" '
+                [(.hooks[$ev] // [])[] | .hooks[]? | .command // ""
+                 | select(contains($needle))]
+                | all(contains("--json"))
+            ' <<<"$doc" >/dev/null; then
+                doc=$(jq --arg ev "$event" --arg needle "$needle" '
+                    .hooks[$ev] = [(.hooks[$ev] // [])[]
+                        | .hooks = [.hooks[]?
+                            | if (.command // "" | contains($needle)) and
+                                 (.command // "" | contains("--json") | not)
+                              then .command += " --json" else . end]]
+                ' <<<"$doc")
+                echo "claude: ~ $event${matcher:+ ($matcher)} → '$needle' upgraded with --json (WaitSummary)"
+                changed=1
+            else
+                echo "claude: $event${matcher:+ ($matcher)} → '$needle' already present"
+            fi
             return 0
         fi
-        doc=$(jq --arg ev "$event" --arg matcher "$matcher" --arg cmd "$NOTIFY claude $state" '
+        local cmd="$NOTIFY claude $state"
+        [ "$json" = "json" ] && cmd="$cmd --json"
+        doc=$(jq --arg ev "$event" --arg matcher "$matcher" --arg cmd "$cmd" '
             .hooks[$ev] = ((.hooks[$ev] // []) + [
                 (if $matcher == "" then {} else {matcher: $matcher} end)
                 + {hooks: [{type: "command", command: $cmd}]}
             ])
         ' <<<"$doc")
-        echo "claude: + $event${matcher:+ ($matcher)} → '$needle'"
+        echo "claude: + $event${matcher:+ ($matcher)} → '$cmd'"
         changed=1
     }
 
-    ensure_entry "Stop"             ""                  "done"
-    ensure_entry "Notification"     "permission_prompt" "needs-permission"
-    ensure_entry "Notification"     ""                  "waiting"
+    ensure_entry "Stop"             ""                  "done"             "json"
+    ensure_entry "Notification"     "permission_prompt" "needs-permission" "json"
+    ensure_entry "Notification"     ""                  "waiting"          "json"
     ensure_entry "UserPromptSubmit" ""                  "clear"
 
     if [[ "$changed" -eq 0 ]]; then
