@@ -1,0 +1,59 @@
+#!/bin/zsh
+# Triage popup — fzf over the daemon-ranked attention queue with the
+# captured wait context as the preview. Enter jumps to the selected
+# session. Bind in tmux:
+#
+#   bind -n M-a display-popup -E -w 80% -h 70% "$HOME/.local/bin/zdev-triage-popup"
+#
+# The list comes verbatim from `zdev-show triage --tsv` (daemon rank
+# order: ⚡ needs-permission first, then oldest ● needs-decision, then ◆
+# finished-for-review); the preview is `zdev-show <project>` — the last
+# ~20 pane lines captured when the agent started waiting, so most
+# questions can be triaged without entering the session at all.
+set -euo pipefail
+
+if ! command -v fzf >/dev/null 2>&1; then
+    echo "fzf not installed. Run: brew install fzf"
+    exit 1
+fi
+if ! command -v zdev-show >/dev/null 2>&1; then
+    echo "zdev-show not installed. Run: make -C zdevd install"
+    exit 1
+fi
+
+QUEUE=$(zdev-show triage --tsv 2>/dev/null || true)
+if [[ -z "$QUEUE" ]]; then
+    # Nothing needs attention — say so where the user is looking.
+    if [[ -n "${TMUX:-}" ]]; then
+        tmux display-message "zdev: nothing needs attention" 2>/dev/null || true
+    else
+        echo "zdev: nothing needs attention"
+    fi
+    exit 0
+fi
+
+# Rose Pine palette — keeps the popup visually consistent with the
+# tmux theme. Appends to any existing FZF_DEFAULT_OPTS so user overrides win.
+export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
+  --color=fg:#908caa,bg:#191724,hl:#ebbcba \
+  --color=fg+:#e0def4,bg+:#26233a,hl+:#ebbcba \
+  --color=border:#c4a7e7,header:#31748f,gutter:#191724 \
+  --color=spinner:#f6c177,info:#9ccfd8 \
+  --color=pointer:#c4a7e7,marker:#eb6f92,prompt:#908caa"
+
+# Field 1 is the bare project name (hidden); fields 2+ are the colored
+# display. j/k navigation comes free with fzf; Enter selects.
+LINE=$(printf '%s\n' "$QUEUE" | fzf \
+    --ansi \
+    --delimiter=$'\t' \
+    --with-nth=2.. \
+    --prompt='triage › ' \
+    --height=100% \
+    --reverse \
+    --preview 'zdev-show {1}' \
+    --preview-window='down,60%,wrap' \
+    ) || exit 0
+[[ -z "$LINE" ]] && exit 0
+
+PROJECT="${LINE%%$'\t'*}"
+exec zdev "$PROJECT"

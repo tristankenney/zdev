@@ -116,8 +116,15 @@ func run() int {
 
 	// `triage` is the human-readable queue: one annotated line per entry
 	// in daemon rank order (the same ordering zdev next consumes).
+	// `triage --tsv` is the machine variant for fzf consumption:
+	// <name>\t<colored display> per line, no rank numbers (the picker
+	// shows position), empty output for an empty queue.
 	if os.Args[1] == "triage" {
-		fmt.Print(formatTriage(snap, time.Now().Unix()))
+		if len(os.Args) >= 3 && os.Args[2] == "--tsv" {
+			fmt.Print(formatTriageTSV(snap, time.Now().Unix()))
+		} else {
+			fmt.Print(formatTriage(snap, time.Now().Unix()))
+		}
 		return 0
 	}
 
@@ -271,43 +278,71 @@ func formatTriage(snap *proto.Snapshot, now int64) string {
 		return "(nothing needs attention)\n"
 	}
 	var b strings.Builder
-	for i, name := range snap.Triage {
+	i := 0
+	for _, name := range snap.Triage {
 		p := findProject(snap, normalizeProjectName(name))
 		if p == nil {
 			continue // queue/projects raced; skip rather than mislead
 		}
-		var glyph, age, gist string
-		switch {
-		case p.Attention == proto.AttWaiting && p.WaitKind == proto.WaitKindPermission:
-			glyph = orange + "⚡" + reset
-		case p.Attention == proto.AttWaiting:
-			glyph = redPulse + "●" + reset
-		default: // finished
-			glyph = yellow + "◆" + reset
-		}
-		switch {
-		case p.WaitStartedTS > 0:
-			age = formatAge(now - p.WaitStartedTS)
-		case p.LastActivityTS > 0:
-			age = formatAge(now - p.LastActivityTS)
-		default:
-			age = "-"
-		}
-		gist = firstNonEmptyLine(p.WaitContext)
-		if len(gist) > 60 {
-			gist = gist[:57] + "..."
-		}
-		if gist == "" {
-			if p.Attention == proto.AttFinished {
-				gist = "(finished — review)"
-			} else {
-				gist = "(no captured context)"
-			}
-		}
+		glyph, age, gist := triageEntry(p, now)
+		i++
 		fmt.Fprintf(&b, "%d. %s %-24s %s%4s%s  %s%s%s\n",
-			i+1, glyph, p.Name, dim, age, reset, dim, gist, reset)
+			i, glyph, p.Name, dim, age, reset, dim, gist, reset)
 	}
 	return b.String()
+}
+
+// formatTriageTSV is the machine variant behind `zdev-show triage --tsv`:
+// one queue entry per line as <name>\t<colored display>. Consumed by
+// bin/zdev-triage-popup, which feeds field 2+ to fzf (--ansi) and acts on
+// field 1. Empty queue → empty output (the consumer short-circuits).
+func formatTriageTSV(snap *proto.Snapshot, now int64) string {
+	var b strings.Builder
+	for _, name := range snap.Triage {
+		p := findProject(snap, normalizeProjectName(name))
+		if p == nil {
+			continue
+		}
+		glyph, age, gist := triageEntry(p, now)
+		fmt.Fprintf(&b, "%s\t%s %-24s %s%4s%s  %s%s%s\n",
+			p.Name, glyph, p.Name, dim, age, reset, dim, gist, reset)
+	}
+	return b.String()
+}
+
+// triageEntry computes the shared display pieces for one queue entry:
+// cost-class glyph (⚡ needs-permission / ● needs-decision / ◆ finished),
+// wait age (activity age for finished rows), and the first line of the
+// captured wait context.
+func triageEntry(p *proto.Project, now int64) (glyph, age, gist string) {
+	switch {
+	case p.Attention == proto.AttWaiting && p.WaitKind == proto.WaitKindPermission:
+		glyph = orange + "⚡" + reset
+	case p.Attention == proto.AttWaiting:
+		glyph = redPulse + "●" + reset
+	default: // finished
+		glyph = yellow + "◆" + reset
+	}
+	switch {
+	case p.WaitStartedTS > 0:
+		age = formatAge(now - p.WaitStartedTS)
+	case p.LastActivityTS > 0:
+		age = formatAge(now - p.LastActivityTS)
+	default:
+		age = "-"
+	}
+	gist = firstNonEmptyLine(p.WaitContext)
+	if len(gist) > 60 {
+		gist = gist[:57] + "..."
+	}
+	if gist == "" {
+		if p.Attention == proto.AttFinished {
+			gist = "(finished — review)"
+		} else {
+			gist = "(no captured context)"
+		}
+	}
+	return glyph, age, gist
 }
 
 // formatAge matches the renderer's fmt_age buckets: seconds under a
