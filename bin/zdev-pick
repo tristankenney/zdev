@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # Fast project switcher — fzf over zdev's project list.
 # Bind in tmux to open as a popup. Switches to (or starts) the session.
 set -euo pipefail

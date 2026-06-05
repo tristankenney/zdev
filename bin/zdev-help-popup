@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # Shortcut + legend popup (roadmap NOW#8) — answers "what can I press,
 # and what do the glyphs mean" without leaving tmux. Bind:
 #

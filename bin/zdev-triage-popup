@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 # Triage popup — fzf over the daemon-ranked attention queue with the
 # captured wait context as the preview. Enter jumps to the selected
 # session. Bind in tmux:

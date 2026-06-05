@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env zsh
 set -euo pipefail
 
 # Gap-fill from the persisted settings file (~/.config/zdev/env, written
@@ -114,25 +114,29 @@ build_layout() {
                 chain+="if command -v $binary >/dev/null 2>&1; then exec $launch; fi;"
             done < <(zdev-show agents 2>/dev/null || true)
         fi
+        # Fall through to the USER's shell, not zsh specifically — on a
+        # bash-only box (stock Ubuntu) a hardcoded zsh kills the pane.
+        local user_shell="${SHELL:-/bin/sh}"
         if [[ -n "$chain" ]]; then
-            inner="$chain exec zsh -i"
+            inner="$chain exec $user_shell -i"
         else
             # zdev-show unavailable (build skew during install) — fall back
-            # to the historical claude-or-zsh path so the popup still works.
-            inner='if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions --continue; fi; exec zsh -i'
+            # to the historical claude-or-shell path so the popup still works.
+            inner="if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions --continue; fi; exec $user_shell -i"
         fi
     elif [[ -n "$agent_cmd" ]]; then
-        inner="$agent_cmd; exec zsh -i"
+        inner="$agent_cmd; exec ${SHELL:-/bin/sh} -i"
     fi
 
     if [[ -n "$inner" ]]; then
         # Pass the command directly to split-window (rather than send-keys
         # after the fact) so the new pane's shell init can't race the
         # keystrokes — that race left the agent command sitting in the
-        # buffer as literal text on lazy-opened sessions. `zsh -lic` makes
-        # .zprofile/.zshrc populate $PATH before the inner script runs.
+        # buffer as literal text on lazy-opened sessions. `-lic` makes the
+        # login shell's rc files populate $PATH before the inner script
+        # runs (bash and zsh both accept -lic).
         local agent_pane launch
-        launch="zsh -lic $(printf '%q' "$inner")"
+        launch="${SHELL:-/bin/sh} -lic $(printf '%q' "$inner")"
         agent_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}' "$launch")
         tmux select-pane -t "$agent_pane" -T "agent"
         # No select-layout here: the -h split already halves the shell

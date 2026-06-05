@@ -37,7 +37,10 @@ symlink() {
 head_ "Checking prerequisites"
 OS="$(uname -s)"
 missing=()
-common_tools=(tmux go make jq)
+# zsh: the zdev / zdev-pick / zdev-triage-popup / zdev-help-popup scripts
+# are zsh (stock macOS shell; one apt install on Ubuntu). Your login
+# shell can stay bash — spawned panes follow $SHELL.
+common_tools=(tmux go make jq zsh)
 case "$OS" in
   Darwin)
     platform_tools=(plutil launchctl)
