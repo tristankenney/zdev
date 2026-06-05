@@ -805,7 +805,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 			// Enter waiting via the event path.
 			recomputeAgents(s, "example-agora")
 			// Bake the wait into the snapshot lifecycle.
-			_ = buildSnapshot(s, 1, time.Now(), time.Now().Unix())
+			_ = buildSnapshot(s, 1, time.Now(), time.Now().Unix(), time.Now().UnixMilli())
 			pd := s.projectData["example-agora"]
 			if pd.WaitContext == "" {
 				t.Fatal("pre-condition: WaitContext should be set after entering waiting")
@@ -819,7 +819,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 			s.panesByID["%1"].Title = "shell"
 			s.lastTitleChangeTS["example-agora"] = time.Now().Unix() + 1
 			recomputeAgents(s, "example-agora")
-			_ = buildSnapshot(s, 2, time.Now(), time.Now().Unix()+1)
+			_ = buildSnapshot(s, 2, time.Now(), time.Now().Unix()+1, time.Now().UnixMilli()+1000)
 			pd = s.projectData["example-agora"]
 
 			if pd.WaitStartedTS != waitStartedAt {
@@ -838,7 +838,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 			}
 
 			recomputeAgents(s, "example-agora")
-			_ = buildSnapshot(s, 1, time.Now(), time.Now().Unix())
+			_ = buildSnapshot(s, 1, time.Now(), time.Now().Unix(), time.Now().UnixMilli())
 			if s.projectData["example-agora"].WaitContext == "" {
 				t.Fatal("pre-condition: WaitContext should be set after entering waiting")
 			}
@@ -854,7 +854,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 			s.panesByID["%1"].Title = "shell"
 			s.lastTitleChangeTS["example-agora"] = s.lastVisitTS["example-agora"] - 1
 			recomputeAgents(s, "example-agora")
-			_ = buildSnapshot(s, 2, time.Now(), time.Now().Unix())
+			_ = buildSnapshot(s, 2, time.Now(), time.Now().Unix(), time.Now().UnixMilli())
 			pd := s.projectData["example-agora"]
 
 			if clearCallCount != 0 {
@@ -963,7 +963,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		pd.WaitContext = "foo\nbar"
 		s.projectData["example-agora"] = pd
 
-		snap := buildSnapshot(s, 1, time.Now(), time.Now().Unix())
+		snap := buildSnapshot(s, 1, time.Now(), time.Now().Unix(), time.Now().UnixMilli())
 		proj := findProject(snap.Projects, "example-agora")
 		if proj == nil {
 			t.Fatal("project 'example-agora' not found in snapshot")
@@ -1024,7 +1024,7 @@ func TestBuildSnapshot_PropagatesCI(t *testing.T) {
 	applyEvent(s, tmuxctl.CIRefresh{
 		Project: "example/backend", Status: "completed", Conclusion: "failure",
 	}, nil)
-	snap := buildSnapshot(s, 1, time.Now(), time.Now().Unix())
+	snap := buildSnapshot(s, 1, time.Now(), time.Now().Unix(), time.Now().UnixMilli())
 	if len(snap.Projects) != 1 {
 		t.Fatalf("len(Projects)=%d; want 1", len(snap.Projects))
 	}
@@ -1100,7 +1100,7 @@ func TestBuildSnapshot_WaitAcknowledged_VisitPostDatesHighestTier(t *testing.T) 
 	s.projectData["foo-bar"] = pd
 	s.lastVisitTS["foo-bar"] = now - 60 // post-dates waitStartedTS+300 (= now-300)
 
-	snap := buildSnapshot(s, 1, time.Now(), now)
+	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 	proj := findProject(snap.Projects, "foo/bar")
 	if proj == nil {
 		t.Fatal("project 'foo/bar' not found in snapshot")
@@ -1122,7 +1122,7 @@ func TestBuildSnapshot_WaitAcknowledged_NoVisit(t *testing.T) {
 	s.projectData["foo-bar"] = pd
 	// no entry in lastVisitTS
 
-	snap := buildSnapshot(s, 1, time.Now(), now)
+	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 	proj := findProject(snap.Projects, "foo/bar")
 	if proj == nil {
 		t.Fatal("project 'foo/bar' not found in snapshot")
@@ -1145,7 +1145,7 @@ func TestBuildSnapshot_FiltersEmptyNameSession(t *testing.T) {
 	s.sessions["$1"] = &session{ID: "$1", Name: "alpha", windows: make(map[string]*window)}
 	s.sessions["$2"] = &session{ID: "$2", Name: "", windows: make(map[string]*window)}
 
-	snap := buildSnapshot(s, 1, time.Now(), time.Now().Unix())
+	snap := buildSnapshot(s, 1, time.Now(), time.Now().Unix(), time.Now().UnixMilli())
 
 	for _, n := range snap.Sessions {
 		if n == "" {
@@ -1179,7 +1179,7 @@ func TestBuildSnapshot_StaleWaitingTitleDemotedAfterVisit(t *testing.T) {
 	t.Run("no_visit_keeps_waiting", func(t *testing.T) {
 		s := build()
 		s.lastTitleChangeTS["example-agora-c"] = now - 60
-		snap := buildSnapshot(s, 1, time.Now(), now)
+		snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 		proj := findProject(snap.Projects, "example/agora-c")
 		if proj == nil {
 			t.Fatal("project missing")
@@ -1193,7 +1193,7 @@ func TestBuildSnapshot_StaleWaitingTitleDemotedAfterVisit(t *testing.T) {
 		s := build()
 		s.lastTitleChangeTS["example-agora-c"] = now - 60
 		s.lastVisitTS["example-agora-c"] = now - 30 // post-dates the title
-		snap := buildSnapshot(s, 1, time.Now(), now)
+		snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 		proj := findProject(snap.Projects, "example/agora-c")
 		if proj == nil {
 			t.Fatal("project missing")
@@ -1207,7 +1207,7 @@ func TestBuildSnapshot_StaleWaitingTitleDemotedAfterVisit(t *testing.T) {
 		s := build()
 		s.lastVisitTS["example-agora-c"] = now - 60
 		s.lastTitleChangeTS["example-agora-c"] = now - 30 // post-dates the visit
-		snap := buildSnapshot(s, 1, time.Now(), now)
+		snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 		proj := findProject(snap.Projects, "example/agora-c")
 		if proj == nil {
 			t.Fatal("project missing")
@@ -1229,7 +1229,7 @@ func TestBuildSnapshot_WaitAcknowledged_NotWaiting(t *testing.T) {
 	// WaitStartedTS is 0 (the zero value — not waiting)
 	s.lastVisitTS["foo-bar"] = now - 30 // has a visit entry, but irrelevant
 
-	snap := buildSnapshot(s, 1, time.Now(), now)
+	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 	proj := findProject(snap.Projects, "foo/bar")
 	if proj == nil {
 		t.Fatal("project 'foo/bar' not found in snapshot")

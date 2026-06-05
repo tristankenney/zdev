@@ -24,7 +24,12 @@ import (
 // now is the current unix-second timestamp, threaded in so callers share a
 // single deterministic value per pass. Used to populate WaitAcknowledged via
 // isWaitAcknowledged (state.go) for each waiting project.
-func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Snapshot {
+//
+// nowMS is the current unix-MILLISECOND timestamp, threaded in for the
+// sub-second status-dwell debounce (applyDwell). It is a separate parameter
+// rather than now*1000 so callers/tests can drive dwell timing precisely
+// without disturbing the second-resolution wait/tier logic.
+func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *proto.Snapshot {
 	nameToSession := make(map[string]*session, len(st.sessions))
 	for _, sess := range st.sessions {
 		if sess.Name == "" {
@@ -102,25 +107,52 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 		// is kept in the wire payload (back-compat for renderers still
 		// reading it) but is now a projection of Attention via
 		// AttentionToStatus — no independent decision logic.
-		var ar AttentionResult
+		//
+		// displayAtt is what the renderer sees: the dwell-debounced
+		// projection of the derived value. For absent sessions it stays the
+		// zero value (AttIdle) and Status is overridden to "absent" below.
+		var displayAtt proto.Attention
 		if !absent {
 			prevWaitStartedTS := pd.WaitStartedTS
-			ar = DeriveAttention(AttentionInputs{
+			ar := DeriveAttention(AttentionInputs{
 				Titles:            sessionTitles(st, sess),
 				LastVisitTS:       st.lastVisitTS[dataKey],
 				LastTitleChangeTS: st.lastTitleChangeTS[dataKey],
 				WaitStartedTS:     pd.WaitStartedTS,
-				PrevAttention:     pd.Attention,
+				// Feed the latch from the raw derived history, NOT the
+				// debounced display value — the DeriveAttention state machine
+				// must continue from its own last output regardless of what
+				// the dwell layer is currently showing.
+				PrevAttention: pd.AttentionDerived,
 			}, now)
-			pd.Attention = ar.Attention
+			pd.AttentionDerived = ar.Attention
 			pd.WaitStartedTS = ar.WaitStartedTS
+
+			// Minimum-dwell debounce (status flap suppression): only promote a
+			// derived transition to the displayed Attention once it has held
+			// for st.statusDwell. A working→waiting→working blip inside the
+			// window never surfaces. With statusDwell == 0 this is a pass-
+			// through and displayAtt == ar.Attention.
+			committed, pendCand, pendSince := applyDwell(
+				pd.Attention, pd.AttentionInit, ar.Attention,
+				pd.PendingAttention, pd.PendingSinceMS,
+				nowMS, st.statusDwell.Milliseconds(),
+			)
+			pd.Attention = committed
+			pd.AttentionInit = true
+			pd.PendingAttention = pendCand
+			pd.PendingSinceMS = pendSince
+			displayAtt = committed
 
 			// Cascade the wait-lifecycle dependents off WaitStartedTS.
 			// When the wait clears (non-zero → 0), drop the captured pane
 			// context so it doesn't go stale and reset the tier bitmap so
 			// the next wait cycle escalates from the lowest tier again.
 			// agents.go used to do this directly; now it's owned here so
-			// "the wait state cleared" has a single point of authority.
+			// "the wait state cleared" has a single point of authority. This
+			// tracks the DERIVED value (ar), not the debounced display — the
+			// wait lifecycle and its notifications must reflect the true
+			// pane state, not the dwell-smoothed view.
 			if prevWaitStartedTS != 0 && ar.WaitStartedTS == 0 {
 				pd.WaitContext = ""
 				pd.WaitNotifiedTiers = 0
@@ -129,7 +161,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 			st.projectData[dataKey] = pd
 		}
 
-		status := AttentionToStatus(ar.Attention)
+		status := AttentionToStatus(displayAtt)
 		if absent {
 			status = tmuxctl.StatusAbsent
 		}
@@ -137,7 +169,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now int64) *proto.Sna
 		proj := proto.Project{
 			Name:           n,
 			Status:         status,
-			Attention:      ar.Attention,
+			Attention:      displayAtt,
 			Branch:         pd.Branch,
 			Ahead:          pd.Ahead,
 			Behind:         pd.Behind,
@@ -210,6 +242,32 @@ func projectAgentStates(src map[string]string) map[string]proto.Attention {
 		return nil
 	}
 	return out
+}
+
+// earliestDwellDeadlineMS returns the soonest unix-millisecond time at which
+// any project's pending dwell candidate will be promoted to its displayed
+// Attention, or 0 if no candidate is pending (or the debounce is disabled).
+//
+// The hub uses this to arm a one-shot timer so a genuine, sustained
+// transition is committed promptly when its window elapses — without it, a
+// pending status would only surface on the next event or the supervisor's
+// 1Hz heartbeat, adding up to a second of latency to every real change.
+func earliestDwellDeadlineMS(st *state) int64 {
+	dwellMS := st.statusDwell.Milliseconds()
+	if dwellMS <= 0 {
+		return 0
+	}
+	var earliest int64
+	for _, pd := range st.projectData {
+		if pd.PendingSinceMS == 0 {
+			continue
+		}
+		deadline := pd.PendingSinceMS + dwellMS
+		if earliest == 0 || deadline < earliest {
+			earliest = deadline
+		}
+	}
+	return earliest
 }
 
 // emitPortDiff fires one eventlog.Event per port that opened (in `now`

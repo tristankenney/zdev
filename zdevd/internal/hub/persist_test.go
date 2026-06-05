@@ -470,24 +470,29 @@ func TestSaveState_WaitNotifiedTiersRoundTrip(t *testing.T) {
 }
 
 // TestSaveState_AttentionAndTitleChangeRoundTrip covers the v2 schema
-// additions: per-project Attention (the PrevAttention input to
+// additions: per-project derived Attention (the PrevAttention input to
 // DeriveAttention's latch path) and per-session LastTitleChangeTS (the
 // stale-✳ demoter's title freshness anchor). Both must survive a
 // daemon restart, otherwise the bootstrap snapshot loses the latch
 // (silently clearing a wait the user hasn't seen) or the demoter
 // (which would then unconditionally fire after restore).
+//
+// Note: the value that persists is AttentionDerived, not the debounced
+// display Attention — AttentionDerived is what feeds the latch as
+// PrevAttention. On restore it lands back in AttentionDerived; the displayed
+// Attention re-derives on the first post-restart pass (AttentionInit false).
 func TestSaveState_AttentionAndTitleChangeRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state-att.json")
 
 	s := newState()
 	pd := s.projectData["proj-x"]
-	pd.Attention = proto.AttWaiting
+	pd.AttentionDerived = proto.AttWaiting
 	pd.WaitStartedTS = 1714000050
 	s.projectData["proj-x"] = pd
 	// Idle is the zero value — should NOT appear in JSON.
 	pd2 := s.projectData["proj-y"]
-	pd2.Attention = proto.AttIdle
+	pd2.AttentionDerived = proto.AttIdle
 	s.projectData["proj-y"] = pd2
 
 	s.lastTitleChangeTS["proj-x"] = 1714000040
@@ -508,11 +513,11 @@ func TestSaveState_AttentionAndTitleChangeRoundTrip(t *testing.T) {
 	s2 := newState()
 	applyPersistedState(s2, ps)
 
-	if got := s2.projectData["proj-x"].Attention; got != proto.AttWaiting {
-		t.Errorf("proj-x Attention after roundtrip = %q, want %q", got, proto.AttWaiting)
+	if got := s2.projectData["proj-x"].AttentionDerived; got != proto.AttWaiting {
+		t.Errorf("proj-x AttentionDerived after roundtrip = %q, want %q", got, proto.AttWaiting)
 	}
-	if got := s2.projectData["proj-y"].Attention; got != proto.AttIdle && got != "" {
-		t.Errorf("proj-y Attention after roundtrip = %q, want idle/empty", got)
+	if got := s2.projectData["proj-y"].AttentionDerived; got != proto.AttIdle && got != "" {
+		t.Errorf("proj-y AttentionDerived after roundtrip = %q, want idle/empty", got)
 	}
 	if got, want := s2.lastTitleChangeTS["proj-x"], int64(1714000040); got != want {
 		t.Errorf("proj-x lastTitleChangeTS = %d, want %d", got, want)

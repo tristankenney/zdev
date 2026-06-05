@@ -121,6 +121,20 @@ type state struct {
 	// tests that build *state directly, newState() seeds the builtin default
 	// so recomputeAgents has a registry to consult.
 	agents *agents.Registry
+
+	// statusDwell is the minimum-dwell window for the per-project displayed
+	// Attention. A derived transition (from DeriveAttention) is only promoted
+	// to the displayed Attention once it has held continuously for this long;
+	// sub-dwell flaps (e.g. working→waiting→working inside 200ms) are never
+	// surfaced. Zero disables the debounce entirely — the displayed Attention
+	// then tracks the derived value pass-for-pass (pre-debounce behavior).
+	//
+	// newState() leaves this at zero (disabled) so the large existing
+	// single-pass test surface keeps its immediate-commit semantics; NewHub
+	// sets it from hub.Config.StatusDwell, and cmd/zdevd defaults it to
+	// statusDwellDefault (overridable via ZDEVD_STATUS_DWELL_MS). See
+	// applyDwell in attention.go.
+	statusDwell time.Duration
 }
 
 // maxConsecutiveCaptureFailures is the eviction threshold. Three attempts
@@ -138,11 +152,33 @@ type projectData struct {
 	Ports          []int
 	LastActivityTS int64
 	WaitStartedTS  int64
-	// Attention is the persisted UX state computed by DeriveAttention in
-	// snapshot.go. Kept on projectData so the next derivation pass can
-	// see the prior value (drives the latch path). Wire representation is
-	// the proto.Attention enum.
-	Attention         proto.Attention
+	// Attention is the DISPLAYED UX state — the value placed on the wire and
+	// drawn by the renderer. It is the dwell-debounced projection of
+	// AttentionDerived: a derived transition only reaches Attention once it
+	// has held for state.statusDwell (see applyDwell). With statusDwell == 0
+	// the two are always equal.
+	Attention proto.Attention
+	// AttentionDerived is the raw, instantaneous output of DeriveAttention
+	// for the most recent pass. It feeds back as the next pass's
+	// PrevAttention input (driving the latch path) and is the value
+	// persisted across restarts — the debounce is a display-only concern, so
+	// the underlying state machine must continue from its own last output,
+	// not from whatever the debounce happened to be showing.
+	AttentionDerived proto.Attention
+	// AttentionInit records whether at least one derivation pass has run for
+	// this project. The first pass commits its derived value to Attention
+	// immediately (there is no established status to debounce against); only
+	// subsequent transitions are subject to the dwell window.
+	AttentionInit bool
+	// PendingAttention / PendingSinceMS track an in-flight dwell candidate: a
+	// derived value that differs from the displayed Attention and is waiting
+	// out the dwell window. PendingSinceMS is the unix-millisecond stamp at
+	// which the candidate was first observed; 0 means no candidate is
+	// pending. A candidate that changes before the window elapses restarts
+	// the clock; one that reverts to the displayed value is dropped (the flap
+	// that motivated the debounce).
+	PendingAttention proto.Attention
+	PendingSinceMS   int64
 	// AgentStates is the per-agent status map keyed by lowercase agent name
 	// (claude, opencode, …) as registered in agents.Registry. Values are the
 	// raw status strings "waiting" / "finished" / "shell-running" / "" (empty

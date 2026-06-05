@@ -122,6 +122,12 @@ type Config struct {
 	EventLog   *eventlog.Writer
 	StatePath  string
 	Notifier   func(project, msg, sound string)
+	// StatusDwell is the minimum-dwell window applied to each project's
+	// displayed Attention to suppress sub-dwell status flaps (see
+	// state.statusDwell / applyDwell). Zero disables the debounce. Optional;
+	// cmd/zdevd supplies statusDwellDefault when ZDEVD_STATUS_DWELL_MS is
+	// unset.
+	StatusDwell time.Duration
 	// Agents is the runtime registry of recognised AI clients. When nil,
 	// NewHub falls back to agents.NewRegistry(agents.Builtin()) — matching
 	// what newState() seeds — so tests building hubs with the zero-value
@@ -146,6 +152,10 @@ func NewHub(cfg Config) *Hub {
 		// after the event loop begins.
 		st.agents = cfg.Agents
 	}
+	// Status-flap debounce window. Zero (the Config zero value) leaves the
+	// debounce disabled — the displayed Attention tracks the derived value
+	// pass-for-pass, matching pre-debounce behavior.
+	st.statusDwell = cfg.StatusDwell
 	return &Hub{
 		debounce:     cfg.Debounce,
 		events:       make(chan tmuxctl.Event, eventsChanCap),
@@ -303,7 +313,106 @@ func (h *Hub) Run(ctx context.Context) error {
 	var (
 		timer         *time.Timer
 		debounceFired <-chan time.Time
+		dwellTimer    *time.Timer
+		dwellFired    <-chan time.Time
 	)
+
+	// armDwell schedules a wake-up at the soonest moment a pending status-
+	// dwell candidate is due to be promoted, so genuine transitions surface
+	// promptly instead of waiting for the next event or the 1Hz heartbeat.
+	// Called after every publish pass; a no-op when nothing is pending.
+	armDwell := func() {
+		if dwellTimer != nil {
+			if !dwellTimer.Stop() {
+				select {
+				case <-dwellTimer.C:
+				default:
+				}
+			}
+			dwellTimer = nil
+			dwellFired = nil
+		}
+		deadline := earliestDwellDeadlineMS(h.state)
+		if deadline == 0 {
+			return
+		}
+		delay := time.Duration(deadline-time.Now().UnixMilli()) * time.Millisecond
+		if delay <= 0 {
+			delay = time.Millisecond // already due — fire on the next tick
+		}
+		dwellTimer = time.NewTimer(delay)
+		dwellFired = dwellTimer.C
+	}
+
+	// publishPass rebuilds the snapshot, persists, and publishes to
+	// subscribers when something the renderer would draw has changed. Shared
+	// by the debounce timer (event-driven) and the dwell timer (time-driven
+	// status-flap commit). Uses early returns rather than loop `continue` so
+	// the caller can still run armDwell afterward.
+	publishPass := func() {
+		// Wait-tier notifications: pure call — no I/O if notifier is nil.
+		// Runs BEFORE saveState so the bitmap update is captured in the
+		// persisted bytes; without this ordering, a daemon kill in the same
+		// tick a tier fires would re-fire on restart.
+		//
+		// Runs unconditionally (not gated on snapshot change) because tier
+		// crossings are wall-clock driven, not state-mutation driven —
+		// suppressing them when the snapshot is unchanged would silence
+		// the "agent has been waiting silently for 5 minutes" notification.
+		// The supervisor's 1Hz poll keeps this loop alive as the heartbeat.
+		tierFired := tierCheck(time.Now().Unix(), h.state, h.notifier)
+		// Build with placeholder Seq/SentAt so equality compares only the
+		// observable shape — Seq/SentAt advance every tick by design and
+		// would defeat the diff if they participated.
+		snap := buildSnapshot(h.state, 0, time.Time{}, time.Now().Unix(), time.Now().UnixMilli())
+		snapshotChanged := h.lastSnap == nil || !snapshotEqualsCore(snap, h.lastSnap)
+		// clientSessions changes don't show in the base snapshot but DO
+		// flip per-subscriber PaneVisible (and chip-suppression). Force a
+		// publish on attendance change so renderers learn visibility
+		// flips promptly. clientSessionsSeq only bumps when content
+		// actually differs, so this doesn't reintroduce the idempotent-
+		// poll storm.
+		clientsChanged := h.state.clientSessionsSeq != h.lastClientSessionsSeq
+		// Skip publish + persist when nothing the renderer would draw has
+		// changed AND no tier mutation needs to be captured. Restores the
+		// project's zero-idle-CPU posture under the supervisor's
+		// idempotent 1Hz polls — without this, every poll cycle triggers
+		// a marshal + socket write per subscriber forever.
+		if !snapshotChanged && !clientsChanged && !tierFired {
+			return
+		}
+		h.lastClientSessionsSeq = h.state.clientSessionsSeq
+		// Persist if EITHER the snapshot changed OR tierCheck fired —
+		// tierFired alone means WaitNotifiedTiers mutated and MUST reach
+		// disk before any potential crash, even though no subscriber will
+		// observe a different snapshot.
+		if h.statePath != "" {
+			if err := saveState(h.statePath, h.state); err != nil {
+				slog.Warn("hub: state persistence failed", "err", err, "path", h.statePath)
+				// Non-fatal — continue publishing snapshot. State will retry on next debounce.
+			}
+		}
+		if !snapshotChanged && !clientsChanged {
+			// Tier fired but observable state unchanged and client
+			// attendance unchanged. Persisted above; no need to publish
+			// a byte-identical snapshot to subscribers.
+			return
+		}
+		h.seq++
+		snap.Seq = h.seq
+		snap.SentAt = time.Now().UTC()
+		h.lastSnap = snap
+		// Drop-oldest publication (D2-03).
+		// SAFETY NOTE: any future "edge-detected" logic (e.g., Phase 3
+		// PR celebration on count drop, Pitfall P2-D) MUST run BEFORE
+		// this point — once the snapshot is published with drop-oldest
+		// semantics, intermediate snapshots may be lost.
+		now := time.Now().Unix()
+		for sub := range h.subs {
+			publishDropOldest(sub.snaps, snapWithCurrentSession(snap, h.state, sub, now))
+		}
+	}
+
 	for {
 		select {
 		case ev := <-h.events:
@@ -333,67 +442,17 @@ func (h *Hub) Run(ctx context.Context) error {
 		case <-debounceFired:
 			timer = nil
 			debounceFired = nil
-			// Wait-tier notifications: pure call — no I/O if notifier is nil.
-			// Runs BEFORE saveState so the bitmap update is captured in the
-			// persisted bytes; without this ordering, a daemon kill in the same
-			// tick a tier fires would re-fire on restart.
-			//
-			// Runs unconditionally (not gated on snapshot change) because tier
-			// crossings are wall-clock driven, not state-mutation driven —
-			// suppressing them when the snapshot is unchanged would silence
-			// the "agent has been waiting silently for 5 minutes" notification.
-			// The supervisor's 1Hz poll keeps this loop alive as the heartbeat.
-			tierFired := tierCheck(time.Now().Unix(), h.state, h.notifier)
-			// Build with placeholder Seq/SentAt so equality compares only the
-			// observable shape — Seq/SentAt advance every tick by design and
-			// would defeat the diff if they participated.
-			snap := buildSnapshot(h.state, 0, time.Time{}, time.Now().Unix())
-			snapshotChanged := h.lastSnap == nil || !snapshotEqualsCore(snap, h.lastSnap)
-			// clientSessions changes don't show in the base snapshot but DO
-			// flip per-subscriber PaneVisible (and chip-suppression). Force a
-			// publish on attendance change so renderers learn visibility
-			// flips promptly. clientSessionsSeq only bumps when content
-			// actually differs, so this doesn't reintroduce the idempotent-
-			// poll storm.
-			clientsChanged := h.state.clientSessionsSeq != h.lastClientSessionsSeq
-			// Skip publish + persist when nothing the renderer would draw has
-			// changed AND no tier mutation needs to be captured. Restores the
-			// project's zero-idle-CPU posture under the supervisor's
-			// idempotent 1Hz polls — without this, every poll cycle triggers
-			// a marshal + socket write per subscriber forever.
-			if !snapshotChanged && !clientsChanged && !tierFired {
-				continue
-			}
-			h.lastClientSessionsSeq = h.state.clientSessionsSeq
-			// Persist if EITHER the snapshot changed OR tierCheck fired —
-			// tierFired alone means WaitNotifiedTiers mutated and MUST reach
-			// disk before any potential crash, even though no subscriber will
-			// observe a different snapshot.
-			if h.statePath != "" {
-				if err := saveState(h.statePath, h.state); err != nil {
-					slog.Warn("hub: state persistence failed", "err", err, "path", h.statePath)
-					// Non-fatal — continue publishing snapshot. State will retry on next debounce.
-				}
-			}
-			if !snapshotChanged && !clientsChanged {
-				// Tier fired but observable state unchanged and client
-				// attendance unchanged. Persisted above; no need to publish
-				// a byte-identical snapshot to subscribers.
-				continue
-			}
-			h.seq++
-			snap.Seq = h.seq
-			snap.SentAt = time.Now().UTC()
-			h.lastSnap = snap
-			// Drop-oldest publication (D2-03).
-			// SAFETY NOTE: any future "edge-detected" logic (e.g., Phase 3
-			// PR celebration on count drop, Pitfall P2-D) MUST run BEFORE
-			// this point — once the snapshot is published with drop-oldest
-			// semantics, intermediate snapshots may be lost.
-			now := time.Now().Unix()
-			for sub := range h.subs {
-				publishDropOldest(sub.snaps, snapWithCurrentSession(snap, h.state, sub, now))
-			}
+			publishPass()
+			armDwell()
+
+		case <-dwellFired:
+			// A pending status-dwell candidate has held for its full window.
+			// Re-run the pass so buildSnapshot promotes it to the displayed
+			// Attention, then re-arm for any still-pending candidates.
+			dwellTimer = nil
+			dwellFired = nil
+			publishPass()
+			armDwell()
 
 		case req := <-h.register:
 			h.subs[req.sub] = struct{}{}
@@ -430,6 +489,9 @@ func (h *Hub) Run(ctx context.Context) error {
 			}
 			if timer != nil {
 				_ = timer.Stop()
+			}
+			if dwellTimer != nil {
+				_ = dwellTimer.Stop()
 			}
 			return nil
 		}

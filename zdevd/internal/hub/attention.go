@@ -114,6 +114,67 @@ func DeriveAttention(in AttentionInputs, now int64) AttentionResult {
 	}
 }
 
+// applyDwell is the minimum-dwell debounce layered on top of DeriveAttention.
+// It decides the DISPLAYED attention from the raw derived value, suppressing
+// transitions that don't hold for at least dwellMS. The motivating case: a
+// title that blips working→waiting→working inside 200ms shouldn't flash the
+// "needs attention" state — nothing actually wanted attention.
+//
+// Inputs:
+//   - committed:    the currently displayed attention.
+//   - init:         whether any prior pass has run for this project. The first
+//                   pass has no established status to protect, so it commits
+//                   immediately (keeps the single-pass behavior tests rely on).
+//   - derived:      this pass's raw DeriveAttention output.
+//   - pendCand:     the candidate from the previous pass that is waiting out
+//                   the dwell window (AttIdle/"" when none — disambiguated by
+//                   pendSinceMS, since AttIdle is itself a valid candidate).
+//   - pendSinceMS:  unix-ms the candidate was first seen; 0 means none pending.
+//   - nowMS:        current unix-millisecond time.
+//   - dwellMS:      the dwell window in milliseconds; <= 0 disables debouncing.
+//
+// Returns the new displayed attention plus the carried-forward pending
+// candidate and its since-stamp (0 when nothing is pending).
+//
+// Behavior table (first match wins):
+//
+//	dwellMS <= 0                         → commit derived          (debounce disabled)
+//	!init                                → commit derived          (cold start — nothing to protect)
+//	derived == committed                 → keep committed, clear pending
+//	derived != pendCand OR pendSinceMS=0 → keep committed, (re)start clock on derived
+//	nowMS - pendSinceMS >= dwellMS        → commit derived          (held long enough)
+//	otherwise                            → keep committed, hold pending
+func applyDwell(
+	committed proto.Attention,
+	init bool,
+	derived proto.Attention,
+	pendCand proto.Attention,
+	pendSinceMS int64,
+	nowMS int64,
+	dwellMS int64,
+) (newCommitted, newPendCand proto.Attention, newPendSinceMS int64) {
+	if dwellMS <= 0 || !init {
+		return derived, proto.AttIdle, 0
+	}
+	if derived == committed {
+		// Derived matches what we're showing — any in-flight candidate was a
+		// flap that reverted. Drop it.
+		return committed, proto.AttIdle, 0
+	}
+	if derived != pendCand || pendSinceMS == 0 {
+		// First divergence from the displayed value, or the candidate changed
+		// to a different target mid-window. (Re)start the dwell clock; keep
+		// showing the established status until the new one proves it will hold.
+		return committed, derived, nowMS
+	}
+	if nowMS-pendSinceMS >= dwellMS {
+		// Candidate held continuously for the full window — promote it.
+		return derived, proto.AttIdle, 0
+	}
+	// Still inside the window — keep showing the established status.
+	return committed, pendCand, pendSinceMS
+}
+
 // classifyTitles reduces the set of pane titles to three booleans matching
 // tmuxctl.ClassifyPaneTitle's four-status mapping (waiting/shell-running/
 // finished/alive, where alive yields all-false).

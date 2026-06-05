@@ -153,15 +153,19 @@ func saveState(path string, s *state) error {
 		}
 	}
 
-	// Flatten Attention out of projectData — only non-idle entries (the
-	// zero value AttIdle is the implicit default on load).
+	// Flatten the derived Attention out of projectData — only non-idle
+	// entries (the zero value AttIdle is the implicit default on load).
+	// AttentionDerived (not the debounced display value) is what feeds the
+	// DeriveAttention latch as PrevAttention, so it is the value that must
+	// survive a restart. The displayed Attention re-derives on the first
+	// post-restart pass.
 	var attMap map[string]proto.Attention
 	for k, pd := range s.projectData {
-		if pd.Attention != "" && pd.Attention != proto.AttIdle {
+		if pd.AttentionDerived != "" && pd.AttentionDerived != proto.AttIdle {
 			if attMap == nil {
 				attMap = make(map[string]proto.Attention)
 			}
-			attMap[k] = pd.Attention
+			attMap[k] = pd.AttentionDerived
 		}
 	}
 
@@ -221,7 +225,12 @@ func applyPersistedState(s *state, ps *persistedState) {
 
 	for k, v := range ps.Attention {
 		pd := s.projectData[k]
-		pd.Attention = v
+		// Restore into AttentionDerived (the latch's PrevAttention source).
+		// The displayed Attention is left at its zero value so the first
+		// post-restart pass commits the freshly derived state immediately
+		// (AttentionInit is false), rather than debouncing against a stale
+		// pre-restart display value.
+		pd.AttentionDerived = v
 		s.projectData[k] = pd
 	}
 
