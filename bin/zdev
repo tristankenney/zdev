@@ -136,6 +136,9 @@ Usage:
   zdev <project> [project...]    Start session(s) and switch to first
   zdev all                       Start all configured projects
   zdev up                        Start projects marked * (favorites)
+  zdev next                      Jump to the session that most needs you
+                                 (tmux: bind-key n run-shell "zdev next")
+  zdev triage                    Show the ranked attention queue
   zdev list                      Show configured vs running sessions
   zdev kill <project>...         Kill named sessions
   zdev kill all                  Kill every session (except currently attached)
@@ -352,6 +355,45 @@ case "$1" in
     reap)
         cmd_reap
         exit 0
+        ;;
+    next)
+        # Jump to the top of the daemon-ranked triage queue — the session
+        # that most needs the user right now (needs-permission first, then
+        # oldest needs-decision, then finished-for-review). One keystroke
+        # when bound in tmux:
+        #   bind-key n run-shell "zdev next"
+        if ! command -v zdev-show >/dev/null 2>&1; then
+            echo "zdev next: zdev-show not installed (run make -C zdevd install)" >&2
+            exit 1
+        fi
+        TOP=$(zdev-show next 2>/dev/null || true)
+        if [[ -z "$TOP" ]]; then
+            # Nothing needs attention. Inside tmux, surface that quietly in
+            # the status line rather than printing into a pane.
+            if [[ -n "${TMUX:-}" ]]; then
+                tmux display-message "zdev: nothing needs attention" 2>/dev/null || true
+            else
+                echo "zdev: nothing needs attention"
+            fi
+            exit 0
+        fi
+        SESSION=$(session_name "$TOP")
+        if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+            # Queue entry without a live session (e.g. finished review on a
+            # project whose session was reaped) — fall through to the normal
+            # start-and-switch path.
+            exec "$0" "$TOP"
+        fi
+        if [[ -n "${TMUX:-}" ]]; then
+            exec tmux switch-client -t "$SESSION"
+        else
+            exec tmux attach -t "$SESSION"
+        fi
+        ;;
+    triage)
+        # Human-readable ranked attention queue (same ordering zdev next
+        # consumes). Pure passthrough to the daemon snapshot.
+        exec zdev-show triage
         ;;
 esac
 

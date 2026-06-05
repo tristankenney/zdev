@@ -10,6 +10,8 @@
 //	zdev-show --legend         # print the sidebar glyph legend (no daemon dial)
 //	zdev-show -l               # alias for --legend
 //	zdev-show agents           # print the agent registry one-per-line (no daemon dial)
+//	zdev-show next             # print the top triage project name (bare, for scripts)
+//	zdev-show triage           # print the ranked attention queue, annotated
 //
 // zdev-show dials the daemon's unix socket, reads one snapshot, and exits.
 // It never subscribes to the stream — the connection is closed immediately
@@ -95,6 +97,25 @@ func run() int {
 
 	if len(os.Args) < 2 {
 		fmt.Print(formatList(snap))
+		return 0
+	}
+
+	// `next` is the script-consumption mode behind `zdev next`: print the
+	// top of the daemon-ranked triage queue as a bare project name (no
+	// decoration, no trailing message). An empty queue prints nothing and
+	// exits 0 — the consumer tests for empty output, matching the
+	// "no context cases exit 0" convention above.
+	if os.Args[1] == "next" {
+		if len(snap.Triage) > 0 {
+			fmt.Println(snap.Triage[0])
+		}
+		return 0
+	}
+
+	// `triage` is the human-readable queue: one annotated line per entry
+	// in daemon rank order (the same ordering zdev next consumes).
+	if os.Args[1] == "triage" {
+		fmt.Print(formatTriage(snap, time.Now().Unix()))
 		return 0
 	}
 
@@ -230,6 +251,78 @@ func formatList(snap *proto.Snapshot) string {
 		b.WriteString("(no projects currently waiting)\n")
 	}
 	return b.String()
+}
+
+// formatTriage renders the daemon-ranked attention queue, one line per
+// entry: rank, cost-class glyph, project name, wait age (or activity age
+// for finished rows), and the first line of the captured wait context.
+//
+//  1. ⚡ example/agora-b    40s   Allow Bash(rm -rf …)?
+//  2. ● example/agora-a    14m   Which approach should I take for…
+//  3. ◆ example/backend    31m   (finished — review)
+//
+// Glyphs: ⚡ needs-permission (cheap — ranked first), ● needs-decision,
+// ◆ finished. The ordering comes verbatim from Snapshot.Triage; this
+// function never re-ranks.
+func formatTriage(snap *proto.Snapshot, now int64) string {
+	if len(snap.Triage) == 0 {
+		return "(nothing needs attention)\n"
+	}
+	var b strings.Builder
+	for i, name := range snap.Triage {
+		p := findProject(snap, normalizeProjectName(name))
+		if p == nil {
+			continue // queue/projects raced; skip rather than mislead
+		}
+		var glyph, age, gist string
+		switch {
+		case p.Attention == proto.AttWaiting && p.WaitKind == proto.WaitKindPermission:
+			glyph = orange + "⚡" + reset
+		case p.Attention == proto.AttWaiting:
+			glyph = redPulse + "●" + reset
+		default: // finished
+			glyph = yellow + "◆" + reset
+		}
+		switch {
+		case p.WaitStartedTS > 0:
+			age = formatAge(now - p.WaitStartedTS)
+		case p.LastActivityTS > 0:
+			age = formatAge(now - p.LastActivityTS)
+		default:
+			age = "-"
+		}
+		gist = firstNonEmptyLine(p.WaitContext)
+		if len(gist) > 60 {
+			gist = gist[:57] + "..."
+		}
+		if gist == "" {
+			if p.Attention == proto.AttFinished {
+				gist = "(finished — review)"
+			} else {
+				gist = "(no captured context)"
+			}
+		}
+		fmt.Fprintf(&b, "%d. %s %-24s %s%4s%s  %s%s%s\n",
+			i+1, glyph, p.Name, dim, age, reset, dim, gist, reset)
+	}
+	return b.String()
+}
+
+// formatAge matches the renderer's fmt_age buckets: seconds under a
+// minute, then minutes, hours, days.
+func formatAge(sec int64) string {
+	switch {
+	case sec < 0:
+		return "0s"
+	case sec < 60:
+		return fmt.Sprintf("%ds", sec)
+	case sec < 3600:
+		return fmt.Sprintf("%dm", sec/60)
+	case sec < 86400:
+		return fmt.Sprintf("%dh", sec/3600)
+	default:
+		return fmt.Sprintf("%dd", sec/86400)
+	}
 }
 
 // firstNonEmptyLine returns the first non-blank line from s, or "" if all
