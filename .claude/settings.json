@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.go) gofmt -w \"$f\";; esac 2>/dev/null || true",
+            "timeout": 15,
+            "statusMessage": "gofmt"
+          },
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in */zdevd/*.go) cd \"$CLAUDE_PROJECT_DIR/zdevd\" && go vet ./...;; esac 2>/dev/null || true",
+            "timeout": 60,
+            "statusMessage": "go vet ./..."
+          }
+        ]
+      }
+    ]
+  }
+}
