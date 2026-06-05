@@ -320,7 +320,7 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	}
 	glyph, color := MarkerFor(pForMarker, animator, nowFn())
 	// VIS-12 stale dim-out: idle + age >= StaleThreshold => Dim
-	if projectAttention(p) == proto.AttIdle && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
+	if isStaleRow(p, nowFn()) {
 		color = Dim
 	}
 	buf.WriteString(color)
@@ -449,7 +449,8 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	// Marker (reuse MarkerFor with stale-dim override, same as renderProjectRow VIS-12).
 	pForMarker := *p
 	glyph, color := MarkerFor(pForMarker, animator, nowFn())
-	if projectAttention(p) == proto.AttIdle && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
+	stale := isStaleRow(p, nowFn())
+	if stale {
 		color = Dim
 	}
 	buf.WriteString(color)
@@ -457,12 +458,22 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
 
-	// Name (truncated to width budget).
+	// Name (truncated to width budget). Stale and absent rows recede
+	// whole-row: a dim `·` next to a palette `·` is indistinguishable at
+	// one cell (dogfood 2026-06-06), and a no-session row should never
+	// read brighter than a stale one. The name carries the dimming where
+	// the eye actually rests.
 	nameCap := width - 14
 	if nameCap < 10 {
 		nameCap = 10
 	}
-	buf.WriteString(truncateRunes(p.Name, nameCap))
+	if stale || p.Status == "absent" {
+		buf.WriteString(Dim)
+		buf.WriteString(truncateRunes(p.Name, nameCap))
+		buf.WriteString(Reset)
+	} else {
+		buf.WriteString(truncateRunes(p.Name, nameCap))
+	}
 
 	// Inline alerts: PR/CI fail, PR pend, dirty count.
 	chipInlineAlerts(buf, p)

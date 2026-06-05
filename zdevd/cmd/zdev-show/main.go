@@ -189,8 +189,8 @@ func formatLegend() string {
 	row(icy+"◎"+reset, "shell-running (cyan)")
 	row(yellow+"◆"+reset, "agent finished")
 	row(redPulse+"✗"+reset, "agent died (unclean exit — static, relaunch it)")
-	row("·", "alive (per-project palette color)")
-	row(dim+"·"+reset, "stale (>1h since activity) or absent")
+	row("·", "alive (palette ·, full-brightness name)")
+	row(dim+"· name"+reset, "stale (>1h) or no session — whole row dims")
 
 	section("Triage queue (zdev triage / next / popup)")
 	row(orange+"⚡"+reset, "cheap wait — y/n or numbered prompt, seconds to answer")

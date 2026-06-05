@@ -38,6 +38,17 @@ func PaletteFor(name string) string {
 	return ProjectPalette[PaletteIndex(name)]
 }
 
+// isStaleRow reports whether the project renders as stale per VIS-12:
+// idle with a known last-activity older than StaleThresholdSec. Single
+// predicate for the marker dim-out and the row-recede treatment —
+// dogfood feedback (2026-06-06): a palette `·` vs a dim `·` is not
+// distinguishable at one cell, so staleness must also recede the name.
+func isStaleRow(p *proto.Project, now int64) bool {
+	return projectAttention(p) == proto.AttIdle &&
+		p.LastActivityTS > 0 &&
+		now-p.LastActivityTS >= int64(StaleThresholdSec)
+}
+
 // MarkerFor returns the (glyph, ansiColor) pair for the given project's
 // current Attention state, per VIS-01 / bash baseline lines 484-517.
 //
