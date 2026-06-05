@@ -161,13 +161,20 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			}
 
 			// Death lifecycle (NOW#3): a title-derived working/waiting
-			// attention is live-agent evidence — the agent restarted, so
-			// the death record clears. Otherwise an unresolved death
-			// MASKS the displayed attention: it is hook-confirmed (no
-			// flapping possible), so it sits outside the dwell debounce
-			// as a final override rather than a dwell candidate.
+			// attention clears the death ONLY when the title moved AFTER
+			// the death was stamped — i.e. a restarted agent. The
+			// strictly-newer guard closes a real race: the SessionEnd
+			// hook fires while the dying pane's stale ✳/⠂ title still
+			// exists (the pane dies milliseconds later), and a snapshot
+			// pass between the two events would otherwise read the
+			// corpse's leftover title as life. Otherwise an unresolved
+			// death MASKS the displayed attention: it is hook-confirmed
+			// (no flapping possible), so it sits outside the dwell
+			// debounce as a final override rather than a dwell candidate.
 			if pd.DeadSinceTS > 0 {
-				if ar.Attention == proto.AttWorking || ar.Attention == proto.AttWaiting {
+				alive := (ar.Attention == proto.AttWorking || ar.Attention == proto.AttWaiting) &&
+					st.lastTitleChangeTS[dataKey] > pd.DeadSinceTS
+				if alive {
 					pd.DeadSinceTS = 0
 					pd.DeadReason = ""
 					pd.DeadNotified = false

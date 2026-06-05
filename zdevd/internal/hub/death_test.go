@@ -73,7 +73,7 @@ func TestBuildSnapshot_DeadMasksAttention(t *testing.T) {
 		}
 	})
 
-	t.Run("live working title clears the death", func(t *testing.T) {
+	t.Run("title newer than death clears it (restarted agent)", func(t *testing.T) {
 		s := buildTestState("proj", []string{"%1"}, []string{"⠂ claude"}) // working
 		s.projectListNames = []string{"proj"}
 		pd := s.projectData["proj"]
@@ -81,15 +81,38 @@ func TestBuildSnapshot_DeadMasksAttention(t *testing.T) {
 		pd.DeadReason = "exited: other"
 		pd.DeadNotified = true
 		s.projectData["proj"] = pd
+		s.lastTitleChangeTS["proj"] = now - 60 // title moved AFTER the death
 
 		snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 		p := findProject(snap.Projects, "proj")
 		if p.Attention != proto.AttWorking {
-			t.Fatalf("Attention = %q; want working (death cleared by live title)", p.Attention)
+			t.Fatalf("Attention = %q; want working (death cleared by newer title)", p.Attention)
 		}
 		pd = s.projectData["proj"]
 		if pd.DeadSinceTS != 0 || pd.DeadReason != "" || pd.DeadNotified {
 			t.Errorf("death record must clear on live evidence: %+v", pd)
+		}
+	})
+
+	t.Run("stale title from the dying pane does NOT clear (hook/pane-close race)", func(t *testing.T) {
+		// The SessionEnd hook fires while the corpse's ✳ title still
+		// exists; the pane dies milliseconds later. A snapshot pass in
+		// that window must keep the death.
+		s := buildTestState("proj", []string{"%1"}, []string{"✳ stale task"}) // waiting-shaped title
+		s.projectListNames = []string{"proj"}
+		pd := s.projectData["proj"]
+		pd.DeadSinceTS = now - 1
+		pd.DeadReason = "exited: other"
+		s.projectData["proj"] = pd
+		s.lastTitleChangeTS["proj"] = now - 300 // title last moved BEFORE the death
+
+		snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
+		p := findProject(snap.Projects, "proj")
+		if p.Attention != proto.AttDead {
+			t.Fatalf("Attention = %q; want dead (stale title must not read as life)", p.Attention)
+		}
+		if s.projectData["proj"].DeadSinceTS == 0 {
+			t.Error("death record wrongly cleared by stale title")
 		}
 	})
 }
