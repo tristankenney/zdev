@@ -139,6 +139,16 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
 
+	// Triage section (phase4-v9): pinned ranked attention strip between
+	// the divider and the stable project list. Renders ZERO rows when the
+	// queue is empty, so the pre-triage row math (project section starts
+	// at click-row 3) is unchanged for quiet sidebars; when non-empty it
+	// adds min(len(Triage), triageSectionMax) entry rows plus one closing
+	// divider row, shifting the project section down by exactly that.
+	// The main list is never reordered — spatial memory of row positions
+	// is preserved; the section is the ranking surface.
+	renderTriageSection(&buf, snap, width, animator, nowFn)
+
 	// Per-project rows.
 	var nWait, nRun, nDone, nAlive, nAbsent int
 	for i := range snap.Projects {
