@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/backoff"
+	"github.com/tristankenney/zdev/zdevd/internal/config"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/render"
@@ -119,6 +120,12 @@ const (
 )
 
 func main() {
+	// Gap-fill ZDEV* env from ~/.config/zdev/env FIRST — renderer panes
+	// are spawned by the tmux SERVER, which never sources rc files, so
+	// this is how ZDEV_SIDEBAR_TRIAGE and friends reach the renderer.
+	// Real env vars win; see config.ApplyUserEnv.
+	config.ApplyUserEnv()
+
 	// Layer 3: restore unconditionally on startup before hiding.
 	fmt.Print(render.RestoreOnExit)
 
