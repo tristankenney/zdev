@@ -159,7 +159,10 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			nAbsent++
 		} else {
 			switch projectAttention(&p) {
-			case proto.AttWaiting:
+			case proto.AttWaiting, proto.AttDead:
+				// Dead counts in the attention bucket (NOW#3): the footer
+				// tally is "how many rows demand me", and a dead agent
+				// demands a relaunch.
 				nWait++
 			case proto.AttWorking:
 				nRun++

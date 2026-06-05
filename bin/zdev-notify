@@ -9,6 +9,11 @@
 #          "waiting" / "needs-input" → ●  (untagged wait; triage treats as decision)
 #          "done" / "idle" / "finished" → ◆  (just-finished, no action urgent)
 #          "clear" / "working" → no marker
+#          "session-end" (with --json) → reads .reason from the SessionEnd
+#          hook payload: clean exits (clear/logout/exit/prompt_input_exit)
+#          behave like "done"; anything else records an unclean death for
+#          the daemon's ✗ dead state (roadmap NOW#3)
+#          "died" → force the death marker (no reason inspection)
 #
 #   --json (Read-then-Round S1): read the Claude Code hook payload from
 #   stdin and extract a one-line WaitSummary — the agent's own last line
@@ -29,14 +34,34 @@ set -eu
 TOOL="${1:-cli}"
 STATE="${2:-waiting}"
 
-# --json: extract a single-line summary from the hook payload on stdin.
-# Strip tabs/newlines (the notif file is line-delimited; the timeline is
-# tab-delimited) and cap at 160 chars. Any failure → empty summary.
+# --json: extract a single-line summary (and, for session-end, the exit
+# reason) from the hook payload on stdin. Strip tabs/newlines (the notif
+# file is line-delimited; the timeline is tab-delimited) and cap at 160
+# chars. Any failure → empty.
 SUMMARY=""
+REASON=""
 if [ "${3:-}" = "--json" ] && command -v jq >/dev/null 2>&1; then
-    SUMMARY=$(jq -r '(.last_assistant_message // .message // "")
+    PAYLOAD=$(cat 2>/dev/null || echo "")
+    SUMMARY=$(printf '%s' "$PAYLOAD" | jq -r '(.last_assistant_message // .message // "")
         | split("\n") | map(select(. != "")) | last // ""' 2>/dev/null \
         | tr '\t' ' ' | cut -c1-160) || SUMMARY=""
+    REASON=$(printf '%s' "$PAYLOAD" | jq -r '.reason // ""' 2>/dev/null \
+        | tr '\t\n' '  ' | sed 's/[[:space:]]*$//') || REASON=""
+fi
+
+# session-end (roadmap NOW#3): the SessionEnd hook reports WHY the
+# session ended. Clean, user-initiated exits behave like `done` — no
+# alarm for closing your own agent. Anything else (or an unparseable
+# payload) is an unclean exit: rewrite the state to `died` so the
+# branch below records it for zdevd's death lifecycle. Conservative
+# direction: an unknown reason reads as death — the daemon clears it
+# the moment the agent shows life again, but a missed 3am death never
+# self-corrects.
+if [ "$STATE" = "session-end" ]; then
+    case "$REASON" in
+        clear|logout|exit|prompt_input_exit) STATE="done" ;;
+        *)                                   STATE="died" ;;
+    esac
 fi
 
 if [ -z "${TMUX_PANE:-}" ]; then
@@ -80,6 +105,17 @@ case "$STATE" in
         TITLE="◆ $TOOL"
         [ -n "$SESSION" ] && rm -f "$TS_FILE" 2>/dev/null
         ;;
+    died|dead)
+        # Unclean exit (NOW#3): record the death marker for zdevd. File
+        # format: ts \n "dead" \n reason. Overwrites any pending wait —
+        # the agent that was waiting is gone. The pane is about to close
+        # (exec'd agent), so no title update matters; write the file and
+        # let the daemon's death lifecycle own it from here.
+        TITLE="✗ $TOOL"
+        if [ -n "$SESSION" ]; then
+            printf '%s\ndead\n%s\n' "$(date +%s)" "${REASON:+exited: $REASON}" > "$TS_FILE" 2>/dev/null || true
+        fi
+        ;;
     *)  # waiting, needs-input, needs-permission, question, …
         TITLE="● $TOOL"
         # File format: line 1 unix-seconds (wait-start), line 2 optional
@@ -99,6 +135,12 @@ case "$STATE" in
                 OLD_TS=$(sed -n '1p' "$TS_FILE" 2>/dev/null || echo "")
                 OLD_KIND=$(sed -n '2p' "$TS_FILE" 2>/dev/null || echo "")
                 OLD_SUMMARY=$(sed -n '3p' "$TS_FILE" 2>/dev/null || echo "")
+            fi
+            # A leftover death marker means the agent restarted and is
+            # now waiting again — a NEW cycle. Don't inherit the corpse's
+            # timestamp, kind, or reason.
+            if [ "$OLD_KIND" = "dead" ]; then
+                OLD_TS=""; OLD_KIND=""; OLD_SUMMARY=""
             fi
             TS="$OLD_TS"
             [ -n "$TS" ] || TS=$(date +%s)

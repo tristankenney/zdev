@@ -160,12 +160,38 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 				pd.WaitSummary = ""
 			}
 
+			// Death lifecycle (NOW#3): a title-derived working/waiting
+			// attention is live-agent evidence — the agent restarted, so
+			// the death record clears. Otherwise an unresolved death
+			// MASKS the displayed attention: it is hook-confirmed (no
+			// flapping possible), so it sits outside the dwell debounce
+			// as a final override rather than a dwell candidate.
+			if pd.DeadSinceTS > 0 {
+				if ar.Attention == proto.AttWorking || ar.Attention == proto.AttWaiting {
+					pd.DeadSinceTS = 0
+					pd.DeadReason = ""
+					pd.DeadNotified = false
+				} else {
+					displayAtt = proto.AttDead
+				}
+			}
+
 			st.projectData[dataKey] = pd
 		}
 
 		status := AttentionToStatus(displayAtt)
 		if absent {
 			status = tmuxctl.StatusAbsent
+		}
+
+		// Dead rows reuse the wait wire fields (phase4-v11): the death
+		// time rides WaitStartedTS so existing age rendering works, and
+		// the exit reason rides WaitSummary as the triage gist.
+		wireWaitStarted := pd.WaitStartedTS
+		wireWaitSummary := pd.WaitSummary
+		if displayAtt == proto.AttDead {
+			wireWaitStarted = pd.DeadSinceTS
+			wireWaitSummary = pd.DeadReason
 		}
 
 		proj := proto.Project{
@@ -179,10 +205,10 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			ShellCmd:         pd.ShellCmd,
 			ListeningPorts:   pd.Ports,
 			LastActivityTS:   pd.LastActivityTS,
-			WaitStartedTS:    pd.WaitStartedTS,
-			WaitAcknowledged: isWaitAcknowledged(st, dataKey, pd.WaitStartedTS, now),
+			WaitStartedTS:    wireWaitStarted,
+			WaitAcknowledged: isWaitAcknowledged(st, dataKey, wireWaitStarted, now),
 			WaitKind:         pd.WaitKind,
-			WaitSummary:      pd.WaitSummary,
+			WaitSummary:      wireWaitSummary,
 			PROpen:           pr.Open,
 			PRFail:           pr.Fail,
 			PRPend:           pr.Pend,

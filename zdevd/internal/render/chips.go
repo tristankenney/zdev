@@ -77,6 +77,11 @@ func MarkerFor(p proto.Project, animator *Animator) (glyph, color string) {
 		return "◎", Icy
 	case proto.AttFinished:
 		return "◆", Yellow
+	case proto.AttDead:
+		// Hook-confirmed unclean exit (NOW#3) — static, no pulse: a dead
+		// agent isn't asking, it's gone. RedPulse color carries the
+		// urgency; the glyph carries the difference.
+		return "✗", RedPulse
 	case proto.AttIdle:
 		if p.Status == "absent" {
 			return "·", Dim
@@ -109,6 +114,11 @@ func MoodFor(snap *proto.Snapshot, nowFn func() int64) string {
 			if p.WaitStartedTS > 0 && now-p.WaitStartedTS >= int64(WaitUrgentSec) {
 				urgent = true
 			}
+		case proto.AttDead:
+			// A dead agent is immediately urgent — nothing escalates it
+			// later (NOW#3), so the mood block must carry it now.
+			nWait++
+			urgent = true
 		case proto.AttFinished:
 			nDone++
 		case proto.AttWorking:
@@ -489,10 +499,10 @@ func renderFailingChecksRow(buf *bytes.Buffer, names []string, width int, nowMs 
 // formatAge formats a duration in seconds as a human-readable string
 // matching the bash baseline fmt_age function.
 //
-//   <60   → "<n>s"
-//   <3600 → "<n>m"
-//   <86400 → "<n>h"
-//   else   → "<n>d"
+//	<60   → "<n>s"
+//	<3600 → "<n>m"
+//	<86400 → "<n>h"
+//	else   → "<n>d"
 func formatAge(seconds int64) string {
 	switch {
 	case seconds < 60:

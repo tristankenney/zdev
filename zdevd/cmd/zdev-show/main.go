@@ -360,6 +360,8 @@ func formatTriageTSV(snap *proto.Snapshot, now int64) string {
 // classifier still lights it up.
 func triageEntry(p *proto.Project, now int64) (glyph, age, gist string) {
 	switch {
+	case p.Attention == proto.AttDead:
+		glyph = redPulse + "✗" + reset
 	case p.Attention == proto.AttWaiting && isCheapWait(p):
 		glyph = orange + "⚡" + reset
 	case p.Attention == proto.AttWaiting:
@@ -383,9 +385,12 @@ func triageEntry(p *proto.Project, now int64) (glyph, age, gist string) {
 		gist = gist[:57] + "..."
 	}
 	if gist == "" {
-		if p.Attention == proto.AttFinished {
+		switch p.Attention {
+		case proto.AttFinished:
 			gist = "(finished — review)"
-		} else {
+		case proto.AttDead:
+			gist = "(agent exited — relaunch)"
+		default:
 			gist = "(no captured context)"
 		}
 	}

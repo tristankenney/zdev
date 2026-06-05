@@ -1028,11 +1028,10 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v10 (bumped 2026-06-05
-	// for Project.WaitSummary — Read-then-Round S1).
-	t.Run("H_schema_version_is_phase4_v10", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v10" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v10")
+	// Test H: proto.SchemaVersion must be phase4-v11 (bumped 2026-06-05	// for the AttDead value — NOW#3).
+	t.Run("H_schema_version_is_phase4_v11", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v11" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v11")
 		}
 	})
 }

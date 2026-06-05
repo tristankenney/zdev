@@ -89,7 +89,14 @@ import (
 // Stop/Notification payload's last_assistant_message/message), replacing
 // scraped pane noise as the triage gist. Restart all zdev-sidebar-render
 // instances after deploying.
-const SchemaVersion = "phase4-v10"
+//
+// phase4-v11 (2026-06-05, roadmap NOW#3): adds the AttDead Attention
+// value for hook-confirmed agent-death detection (SessionEnd with an
+// unclean reason). No new fields — dead rows reuse WaitStartedTS (death
+// time) and WaitSummary (exit reason) — but the new enum value makes a
+// v10 renderer's Attention dispatch incomplete, so forward-only bump.
+// Restart all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v11"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -190,7 +197,20 @@ const (
 	AttWorking  Attention = "working"  // braille spinner / ◎ — claude is busy
 	AttFinished Attention = "finished" // ◆ — just-completed, not blocking
 	AttWaiting  Attention = "waiting"  // ● pulsing — blocking on user
+	// AttDead (phase4-v11, roadmap NOW#3): the agent's session ended
+	// without a clean user-initiated exit — hook-confirmed via the
+	// SessionEnd reason. Tops the triage queue and fires a notification
+	// that bypasses presence-deferral; "agent dies at 3am, nobody knows"
+	// is the verified pain this closes. For dead rows WaitStartedTS
+	// carries the death time and WaitSummary the exit reason.
+	AttDead Attention = "dead" // ✗ — agent exited uncleanly, needs relaunch
 )
+
+// WaitKindDead is the notif-channel marker (file line 2) zdev-notify
+// writes for an unclean SessionEnd. It is NOT a Project.WaitKind value —
+// the hub routes it into the death lifecycle (DeadSinceTS) instead of
+// the wait lifecycle, and the wire carries it as Attention == AttDead.
+const WaitKindDead = "dead"
 
 type Project struct {
 	Name             string    `json:"name"`

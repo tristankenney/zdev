@@ -123,12 +123,12 @@ func DeriveAttention(in AttentionInputs, now int64) AttentionResult {
 // Inputs:
 //   - committed:    the currently displayed attention.
 //   - init:         whether any prior pass has run for this project. The first
-//                   pass has no established status to protect, so it commits
-//                   immediately (keeps the single-pass behavior tests rely on).
+//     pass has no established status to protect, so it commits
+//     immediately (keeps the single-pass behavior tests rely on).
 //   - derived:      this pass's raw DeriveAttention output.
 //   - pendCand:     the candidate from the previous pass that is waiting out
-//                   the dwell window (AttIdle/"" when none — disambiguated by
-//                   pendSinceMS, since AttIdle is itself a valid candidate).
+//     the dwell window (AttIdle/"" when none — disambiguated by
+//     pendSinceMS, since AttIdle is itself a valid candidate).
 //   - pendSinceMS:  unix-ms the candidate was first seen; 0 means none pending.
 //   - nowMS:        current unix-millisecond time.
 //   - dwellMS:      the dwell window in milliseconds; <= 0 disables debouncing.
@@ -206,8 +206,12 @@ func AttentionToStatus(a proto.Attention) string {
 		return tmuxctl.StatusShellRunning
 	case proto.AttFinished:
 		return tmuxctl.StatusFinished
+	case proto.AttDead:
+		// No tmuxctl constant — death never derives from titles; it
+		// enters via the hook channel and masks the displayed attention
+		// in buildSnapshot (NOW#3).
+		return "dead"
 	default:
 		return tmuxctl.StatusAlive
 	}
 }
-

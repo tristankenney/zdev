@@ -72,6 +72,13 @@ type persistedState struct {
 	// the "user has seen the current title" relation across restarts.
 	Attention         map[string]proto.Attention `json:"attention,omitempty"`
 	LastTitleChangeTS map[string]int64           `json:"lastTitleChangeTS,omitempty"`
+	// Death lifecycle (NOW#3, additive — no version bump needed since
+	// absent keys load as zero values): a 3am unclean exit must survive
+	// a daemon restart, and DeadNotified must round-trip so the death
+	// banner never re-fires for the same disappearance.
+	DeadSinceTS  map[string]int64  `json:"deadSinceTS,omitempty"`
+	DeadReason   map[string]string `json:"deadReason,omitempty"`
+	DeadNotified map[string]bool   `json:"deadNotified,omitempty"`
 }
 
 // loadState reads and unmarshals the persisted state from path.
@@ -169,6 +176,28 @@ func saveState(path string, s *state) error {
 		}
 	}
 
+	// Flatten the death lifecycle (NOW#3) — only dead projects appear.
+	var deadTS map[string]int64
+	var deadReason map[string]string
+	var deadNotified map[string]bool
+	for k, pd := range s.projectData {
+		if pd.DeadSinceTS == 0 {
+			continue
+		}
+		if deadTS == nil {
+			deadTS = make(map[string]int64)
+			deadReason = make(map[string]string)
+			deadNotified = make(map[string]bool)
+		}
+		deadTS[k] = pd.DeadSinceTS
+		if pd.DeadReason != "" {
+			deadReason[k] = pd.DeadReason
+		}
+		if pd.DeadNotified {
+			deadNotified[k] = true
+		}
+	}
+
 	ps := persistedState{
 		V:                 stateSchemaV,
 		LastVisitTS:       s.lastVisitTS,
@@ -177,6 +206,9 @@ func saveState(path string, s *state) error {
 		WaitNotifiedTiers: tierMap,
 		Attention:         attMap,
 		LastTitleChangeTS: s.lastTitleChangeTS,
+		DeadSinceTS:       deadTS,
+		DeadReason:        deadReason,
+		DeadNotified:      deadNotified,
 	}
 
 	body, err := json.Marshal(ps)
@@ -236,6 +268,14 @@ func applyPersistedState(s *state, ps *persistedState) {
 
 	for k, v := range ps.LastTitleChangeTS {
 		s.lastTitleChangeTS[k] = v
+	}
+
+	for k, v := range ps.DeadSinceTS {
+		pd := s.projectData[k]
+		pd.DeadSinceTS = v
+		pd.DeadReason = ps.DeadReason[k]
+		pd.DeadNotified = ps.DeadNotified[k]
+		s.projectData[k] = pd
 	}
 
 	now := time.Now().Unix()

@@ -206,6 +206,18 @@ type projectData struct {
 	WaitSummary  string
 	CIStatus     string // last CIRefresh.Status; "" = unknown / no runs
 	CIConclusion string // last CIRefresh.Conclusion; "" = no runs or status != completed
+
+	// Death lifecycle (roadmap NOW#3) — deliberately SEPARATE from the
+	// wait lifecycle: the title-driven wait cascade clears its fields the
+	// moment titles go quiet, which is exactly what happens when an agent
+	// pane dies. Set by a NotifSeen with the WaitKindDead marker (the
+	// SessionEnd hook with an unclean reason); cleared by any evidence of
+	// a live agent — a non-dead NotifSeen fire or a title-derived
+	// working/waiting attention. ALL THREE persist (persist.go) so a 3am
+	// death survives a daemon restart without re-firing its notification.
+	DeadSinceTS  int64  // unix-seconds the unclean exit was reported; 0 = not dead
+	DeadReason   string // exit reason from the hook payload, for the triage gist
+	DeadNotified bool   // at-most-once-per-disappearance notification bit
 }
 
 // prCount holds the last-known PR aggregate counts for a project.
@@ -552,14 +564,35 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// Notif file basenames map verbatim to session names (D3-05). No
 		// "/" → "-" here — zdev-notify writes one notif file per session.
 		//
+		// The WaitKindDead marker routes into the DEATH lifecycle, not the
+		// wait lifecycle: an unclean SessionEnd stamps DeadSinceTS/Reason
+		// and wipes any pending wait (the agent that was waiting is gone —
+		// a stale wait chip under a death banner would double-count one
+		// problem). Any other kind is live-agent evidence and clears a
+		// prior death.
+		//
 		// Kind updates even when the timestamp is unchanged: zdev-notify
 		// preserves the original wait-start time across repeated fires but
 		// refreshes the kind line, so a wait that escalates from an idle
 		// notification to a permission prompt re-classifies mid-cycle.
 		pd := s.projectData[e.Session]
-		pd.WaitStartedTS = e.Timestamp
-		pd.WaitKind = e.Kind
-		pd.WaitSummary = e.Summary
+		if e.Kind == proto.WaitKindDead {
+			pd.DeadSinceTS = e.Timestamp
+			pd.DeadReason = e.Summary
+			pd.DeadNotified = false
+			pd.WaitStartedTS = 0
+			pd.WaitKind = ""
+			pd.WaitSummary = ""
+			pd.WaitContext = ""
+			pd.WaitNotifiedTiers = 0
+		} else {
+			pd.WaitStartedTS = e.Timestamp
+			pd.WaitKind = e.Kind
+			pd.WaitSummary = e.Summary
+			pd.DeadSinceTS = 0
+			pd.DeadReason = ""
+			pd.DeadNotified = false
+		}
 		s.projectData[e.Session] = pd
 
 	case tmuxctl.PaneCaptureReady:

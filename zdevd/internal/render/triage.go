@@ -64,6 +64,8 @@ func renderTriageSection(buf *bytes.Buffer, snap *proto.Snapshot, width int, ani
 
 		var glyph, color string
 		switch {
+		case p.Attention == proto.AttDead:
+			glyph, color = "✗", RedPulse
 		case p.Attention == proto.AttWaiting && p.WaitKind == proto.WaitKindPermission:
 			glyph, color = "⚡", Orange
 		case p.Attention == proto.AttWaiting:

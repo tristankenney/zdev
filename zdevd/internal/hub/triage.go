@@ -6,16 +6,19 @@
 // once per snapshot in buildSnapshot and shipped as Snapshot.Triage so
 // all consumers agree on the same ordering; none re-derive it.
 //
-// The ranking model (triage slice 1):
+// The ranking model (triage slice 1; dead class added in NOW#3):
 //
-//	class 0  needs-permission   waiting + WaitKind=="permission" — a y/n
+//	class 0  dead               the agent exited uncleanly (hook-
+//	                            confirmed SessionEnd) — nothing happens
+//	                            on that project until the user
+//	                            relaunches, so it outranks every wait.
+//	class 1  needs-permission   waiting + WaitKind=="permission" — a y/n
 //	                            approval costs the user seconds and
-//	                            unblocks an agent-hour, so it outranks
-//	                            everything regardless of age.
-//	class 1  needs-decision     waiting + WaitKind=="decision" or ""
+//	                            unblocks an agent-hour.
+//	class 2  needs-decision     waiting + WaitKind=="decision" or ""
 //	                            (untagged waits rank as decisions — the
 //	                            conservative default).
-//	class 2  finished           reviewable output; batchable, never
+//	class 3  finished           reviewable output; batchable, never
 //	                            urgent, but surfaced so it doesn't rot.
 //
 //	excluded                    working / idle / absent — nothing for
@@ -45,13 +48,15 @@ func triageClass(p *proto.Project) (int, bool) {
 		return 0, false
 	}
 	switch p.Attention {
+	case proto.AttDead:
+		return 0, true
 	case proto.AttWaiting:
 		if p.WaitKind == proto.WaitKindPermission {
-			return 0, true
+			return 1, true
 		}
-		return 1, true
-	case proto.AttFinished:
 		return 2, true
+	case proto.AttFinished:
+		return 3, true
 	default:
 		return 0, false
 	}
@@ -159,7 +164,9 @@ func rankTriage(projects []proto.Project, now int64) []string {
 		}
 		c := cand{name: p.Name, class: class, acked: p.WaitAcknowledged}
 		switch class {
-		case 0, 1:
+		case 0: // dead — oldest death first (wire WaitStartedTS = death time)
+			c.order = p.WaitStartedTS
+		case 1, 2:
 			c.order = p.WaitStartedTS
 			cheap := AnswerCost(p.WaitContext) == AnswerCostCheap
 			starved := !cheap && p.WaitStartedTS > 0 && now-p.WaitStartedTS >= tiers[1].AgeSec
@@ -171,7 +178,7 @@ func rankTriage(projects []proto.Project, now int64) []string {
 			default:
 				c.cost = 2
 			}
-		case 2:
+		case 3:
 			// 0 means "no activity sample yet" — unknown age sorts last,
 			// not first, so a freshly-discovered project doesn't jump the
 			// queue ahead of work that has demonstrably been waiting.

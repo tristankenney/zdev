@@ -14,12 +14,12 @@
 // bits as suppressed-after-the-fact. This avoids three stacked banners
 // for one delayed wakeup. Iteration is from largest threshold down.
 //
-// EXCEPTIONAL WRITE NOTE: tierCheck writes pd.WaitNotifiedTiers — this
-// is the ONLY hub-goroutine write to projectData OUTSIDE applyEvent
-// (buildSnapshot's attention/dwell writes excepted, which own their own
-// fields). It is safe because the hub goroutine is the sole owner of
-// state, but any future refactor that splits state ownership must audit
-// this site.
+// EXCEPTIONAL WRITE NOTE: tierCheck writes pd.WaitNotifiedTiers and
+// pd.DeadNotified — these are the ONLY hub-goroutine writes to
+// projectData OUTSIDE applyEvent (buildSnapshot's attention/dwell/death
+// writes excepted, which own their own fields). Safe because the hub
+// goroutine is the sole owner of state, but any future refactor that
+// splits state ownership must audit this site.
 package hub
 
 import (
@@ -100,6 +100,24 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 	}
 	present := len(s.clientSessions) > 0
 
+	// Death crossings (NOW#3): hook-confirmed unclean exits fire exactly
+	// once per disappearance (DeadNotified, persisted) and are NOT
+	// deferred by presence — a dead agent stays dead whether or not the
+	// user is at the screen, and nothing else will ever escalate it.
+	// Being attached to the dead session itself still suppresses (the
+	// user is looking at the corpse); the bit is left unset so the
+	// banner fires if they detach without relaunching.
+	var deaths []string // project names, unsorted here
+	for name, pd := range s.projectData {
+		if pd.DeadSinceTS == 0 || pd.DeadNotified {
+			continue
+		}
+		if isClientAttended(s, name) {
+			continue
+		}
+		deaths = append(deaths, name)
+	}
+
 	var crossings []tierCrossing
 	eligibleWaits := 0 // notification-worthy waits, crossing or not — fleet-context denominator
 	for name, pd := range s.projectData {
@@ -145,6 +163,44 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 			break
 		}
 	}
+	// A death leads any digest: mark every unnotified death's bit (all
+	// are "covered" by this banner), lead with the oldest, and fold the
+	// wait context into the message. Tier bits for wait crossings were
+	// already marked above, so they don't re-fire next pass either.
+	if len(deaths) > 0 {
+		sort.Slice(deaths, func(i, j int) bool {
+			a, b := s.projectData[deaths[i]], s.projectData[deaths[j]]
+			if a.DeadSinceTS != b.DeadSinceTS {
+				return a.DeadSinceTS < b.DeadSinceTS // oldest death leads
+			}
+			return deaths[i] < deaths[j]
+		})
+		for _, name := range deaths {
+			pd := s.projectData[name]
+			pd.DeadNotified = true
+			s.projectData[name] = pd
+		}
+		lead := s.projectData[deaths[0]]
+		msg := "agent died"
+		if lead.DeadReason != "" {
+			msg += " (" + lead.DeadReason + ")"
+		}
+		if extra := len(deaths) - 1; extra > 0 {
+			msg += fmt.Sprintf(" · %d more dead", extra)
+		}
+		if eligibleWaits > 0 {
+			msg += fmt.Sprintf(" · %d waiting", eligibleWaits)
+		}
+		fire(Notification{
+			Project: deaths[0],
+			Message: msg,
+			Sound:   "Sosumi", // the STUCK-tier sound — death is never routine
+			Kind:    proto.WaitKindDead,
+			AgeSec:  now - lead.DeadSinceTS,
+		})
+		return true
+	}
+
 	if len(crossings) == 0 {
 		return false
 	}
