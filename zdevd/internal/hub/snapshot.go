@@ -206,6 +206,11 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		Sessions:       names,
 		Projects:       projects,
 		CurrentSession: "", // resolved per-connection in Plan 02-04 from hello.TmuxPane
+		// Triage (phase4-v9) ranks the rows just assembled above, so the
+		// queue always reflects exactly what the renderer draws —
+		// including the dwell-debounced Attention. Computed here (not
+		// per-subscriber) so every surface shares one ordering.
+		Triage: rankTriage(projects),
 	}
 }
 
