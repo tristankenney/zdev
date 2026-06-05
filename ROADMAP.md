@@ -67,6 +67,14 @@ identical titles.
 The flat ~0.5s pulse read as alarm from second one. Now paced by wait age on
 the notifier's tiers: ~2.1s cycle < 60s, ~1.1s < 300s, ~0.5s after.
 
+### ⚰️ 3c. Sidebar triage strip — demoted to opt-in *(dogfood verdict, 2026-06-06)*
+The strip's kill criterion fired in two days: at ~10 concurrent sessions it
+only duplicates rows that remain in the main list — a second list, not a
+ranking. Now `ZDEV_SIDEBAR_TRIAGE=1` opt-in, default off. The ranked queue
+keeps its other three surfaces (`zdev next`, fzf popup, notifications), and
+the freed slot is reserved for S3's review gauge — which must clear the bar
+the strip failed: show information NOT already visible in the list.
+
 ---
 
 ## NOW (~2 weeks)

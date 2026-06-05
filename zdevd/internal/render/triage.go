@@ -30,12 +30,21 @@ import (
 // full queue lives in `zdev triage`.
 const triageSectionMax = 3
 
+// TriageStripEnabled gates the strip. Default OFF per dogfood feedback
+// (2026-06-06): at ~10 concurrent sessions the strip only duplicates rows
+// that remain in the main list, so it reads as a second list rather than
+// a ranking. The ranked queue stays reachable through `zdev next`, the
+// fzf popup, and notifications. cmd/zdev-sidebar sets this from
+// ZDEV_SIDEBAR_TRIAGE=1 for operators who want the strip back; S3's
+// review gauge is the planned permanent occupant of this slot.
+var TriageStripEnabled = false
+
 // renderTriageSection writes the triage strip to buf. Writes NOTHING
-// (zero rows) when the queue is empty — quiet sidebars are byte-identical
-// to the pre-triage layout. Returns the number of rows written so callers
-// can account for click-row offsets.
+// (zero rows) when disabled or when the queue is empty — quiet sidebars
+// are byte-identical to the pre-triage layout. Returns the number of rows
+// written so callers can account for click-row offsets.
 func renderTriageSection(buf *bytes.Buffer, snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64) int {
-	if len(snap.Triage) == 0 {
+	if !TriageStripEnabled || len(snap.Triage) == 0 {
 		return 0
 	}
 	now := nowFn()

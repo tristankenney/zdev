@@ -172,6 +172,10 @@ func run() error {
 	// disconnects use the outage state machine below.)
 	socketPath := defaultSocketPath()
 	tmuxPane := os.Getenv("TMUX_PANE")
+
+	// Triage strip opt-in (default off — dogfood 2026-06-06: at fleet
+	// scale the strip duplicates main-list rows without adding signal).
+	render.TriageStripEnabled = os.Getenv("ZDEV_SIDEBAR_TRIAGE") == "1"
 	snap, conn, err := initialSubscribe(ctx, func(ctx context.Context) (*proto.Snapshot, net.Conn, error) {
 		return socket.Subscribe(ctx, socketPath, tmuxPane, tmuxSession)
 	}, width)
@@ -565,4 +569,3 @@ func setupSlog() {
 	})
 	slog.SetDefault(slog.New(handler))
 }
-

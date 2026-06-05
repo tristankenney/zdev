@@ -10,8 +10,26 @@ import (
 
 const triageRefNow = int64(1714838460)
 
+// The strip is opt-in (default off since dogfood 2026-06-06); these tests
+// cover the enabled path, so flip the gate for the package's test run.
+func init() { TriageStripEnabled = true }
+
 func triageSnap(triage []string, projects ...proto.Project) *proto.Snapshot {
 	return &proto.Snapshot{Projects: projects, Triage: triage}
+}
+
+// TestRenderTriageSection_DisabledIsZeroRows pins the default-off
+// behavior: a populated queue renders nothing when the gate is off.
+func TestRenderTriageSection_DisabledIsZeroRows(t *testing.T) {
+	TriageStripEnabled = false
+	defer func() { TriageStripEnabled = true }()
+	snap := triageSnap([]string{"alpha"},
+		proto.Project{Name: "alpha", Attention: proto.AttWaiting, WaitStartedTS: triageRefNow - 40})
+	var buf bytes.Buffer
+	rows := renderTriageSection(&buf, snap, 50, NewAnimator(), func() int64 { return triageRefNow })
+	if rows != 0 || buf.Len() != 0 {
+		t.Errorf("disabled strip: rows=%d bufLen=%d; want 0/0", rows, buf.Len())
+	}
 }
 
 // TestRenderTriageSection_EmptyQueueIsZeroRows pins the click-row
