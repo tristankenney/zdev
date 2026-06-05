@@ -178,9 +178,30 @@ reuse it). Same surface answers feedback #4's root cause: glyphs are noise
   *Fresh signal (2026-06-06, dogfood):* the operator's agora-a/b/c permanent
   clones are exactly this pain — "I lose understanding of what I'm doing in
   each of them; they're permanent rather than existing for the duration of the
-  work." Two distinct needs: (a) ephemeral lifecycle (exists-for-the-task),
-  (b) purpose labeling (what is this workspace FOR). Under discussion —
-  may pull the *labeling* half forward independently of provisioning.
+  work." Discussion surfaced THREE separable concerns conflated in "use sl":
+  (a) **stacking mechanism** — sl is only this; operator is not wedded to it
+  if git-compatible stacking exists; (b) **ephemeral parallel instances** —
+  access to a codebase for the duration of execution, possibly many at once;
+  (c) **purpose labeling** — what is this workspace FOR (may pull forward
+  independently as a `zdev intent` note).
+
+  Direction: a backend-agnostic **lease/release** verb (`zdev lease <project>
+  "<intent>"` → pick/provision a workspace, stamp intent; release on land →
+  reset + free). The backend determines pool elasticity:
+
+  | backend | provisioning | pool model |
+  |---|---|---|
+  | sl clones (today) | heavy | fixed pool (a/b/c), lease/release only |
+  | git worktrees | cheap | elastic; but branch-lock footguns (one branch = one worktree, "two on main" disallowed) |
+  | jj workspaces | cheap | elastic; no branch locks (bookmarks aren't checked out) |
+
+  jj (Jujutsu) potentially answers (a) AND (b) in one git-compatible tool —
+  sl-grade stacking + native workspaces. **Trial running:** jj 0.42 colocated
+  into the operator's `backend` repo 2026-06-06 (`jj git init --colocate`;
+  trunk()=develop). If a week of stacking feels as good as sl, agora migrates
+  and the a/b/c clones collapse into one repo + elastic workspaces fronted by
+  lease. zdev implication either way: Lister learns to read jj state (bookmark,
+  dirty, workspace name) — contained, not architectural.
 - **Post-create setup hook + `COMPOSE_PROJECT_NAME` injection** — the loudest
   competitor pain (CS#260 + three patch tools), but only meaningful once `--new`
   exists. `[worktree]` config block: setup cmd, copy-globs for gitignored .env,
