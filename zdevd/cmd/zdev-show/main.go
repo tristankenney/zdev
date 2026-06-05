@@ -185,11 +185,17 @@ func formatLegend() string {
 	fmt.Fprintf(&b, "%seach row: marker + project, then a metadata row of chips.%s\n", dim, reset)
 
 	section("Row marker (left of project name)")
-	row(redPulse+"●"+reset, "agent waiting (pulsing red)")
+	row(redPulse+"●"+reset, "agent waiting (pulses faster as the wait ages)")
 	row(icy+"◎"+reset, "shell-running (cyan)")
 	row(yellow+"◆"+reset, "agent finished")
+	row(redPulse+"✗"+reset, "agent died (unclean exit — static, relaunch it)")
 	row("·", "alive (per-project palette color)")
 	row(dim+"·"+reset, "stale (>1h since activity) or absent")
+
+	section("Triage queue (zdev triage / next / popup)")
+	row(orange+"⚡"+reset, "cheap wait — y/n or numbered prompt, seconds to answer")
+	row(redPulse+"✗"+reset, "dead — tops the queue")
+	row(redPulse+"●"+reset+" / "+yellow+"◆"+reset, "decision wait / finished-for-review")
 
 	section("Branch chip")
 	row("feature/foo… ", "current branch (truncated to fit)")

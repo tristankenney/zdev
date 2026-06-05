@@ -1,0 +1,60 @@
+#!/bin/zsh
+# Shortcut + legend popup (roadmap NOW#8) — answers "what can I press,
+# and what do the glyphs mean" without leaving tmux. Bind:
+#
+#   bind -n 'M-?' display-popup -E -w 70% -h 80% "$HOME/.local/bin/zdev-help-popup"
+#
+# The keybinding section is parsed from `tmux list-keys`, NOT from the
+# sample conf — it shows what is ACTUALLY bound on this server, including
+# user remaps, and silently omits bindings the user never enabled. The
+# glyph legend is `zdev-show --legend` (single source of truth, mirrors
+# internal/render). Works as a plain command outside tmux too.
+set -euo pipefail
+
+BOLD=$'\033[1m'
+DIM=$'\033[90m'
+CYAN=$'\033[36m'
+RESET=$'\033[0m'
+
+printf '%szdev shortcuts%s\n' "$BOLD" "$RESET"
+printf '%s(live from tmux list-keys — only what is bound on this server)%s\n\n' "$DIM" "$RESET"
+
+FOUND=0
+while IFS= read -r line; do
+    [[ "$line" != *zdev* ]] && continue
+    # `tmux list-keys` rows: bind-key -T <table> <key> <command...>
+    # Reduce the command to its zdev intent: strip bind plumbing, popup
+    # geometry flags, quoting, and absolute paths — "M-t  zdev-timeline-popup"
+    # reads better than the full display-popup invocation.
+    key="${${(z)line}[4]}"
+    cmd=$(printf '%s' "$line" \
+        | sed -E 's/^bind-key +-T +[^ ]+ +[^ ]+ +//' \
+        | sed -E 's/(run-shell|display-popup|tmux) +//g; s/-[EbA-Z] +//g; s/-[wh] +"?[0-9]+%"? +//g' \
+        | sed -E "s/'//g" | sed -E 's/^[" ]+//; s/[" ]+$//' \
+        | sed -E 's|[^ "'\'']*/bin/||g')
+    printf '  %s%-8s%s %s\n' "$CYAN" "$key" "$RESET" "$cmd"
+    FOUND=1
+done < <(tmux list-keys 2>/dev/null || true)
+if [[ "$FOUND" -eq 0 ]]; then
+    printf '  %sno zdev keys bound — see config/zdev.tmux.conf for suggested bindings%s\n' "$DIM" "$RESET"
+fi
+
+printf '\n%szdev commands%s %s(no binding required)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s%-8s%s %s\n' "$CYAN" "next" "$RESET" "jump to the session that most needs you"
+printf '  %s%-8s%s %s\n' "$CYAN" "triage" "$RESET" "ranked attention queue"
+printf '  %s%-8s%s %s\n' "$CYAN" "ack" "$RESET" "zdev ack --all — clear every status (read all)"
+printf '\n'
+
+# Glyph legend — the single source of truth lives in zdev-show.
+if command -v zdev-show >/dev/null 2>&1; then
+    zdev-show --legend
+else
+    printf '%szdev-show not installed (run make -C zdevd install) — legend unavailable%s\n' "$DIM" "$RESET"
+fi
+
+# In a popup, hold until a key so the user can read; plain invocations
+# (piped/captured stdin) just print and exit.
+if [[ -n "${TMUX:-}" && -t 0 ]]; then
+    printf '\n%spress any key to close%s' "$DIM" "$RESET"
+    read -k1 -s || true
+fi
