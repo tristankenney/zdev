@@ -39,7 +39,7 @@ func (a *Animator) Tick() {
 	a.pulseTickCount++
 	if a.pulseTickCount >= PulseHold {
 		a.pulseTickCount = 0
-		a.pulseFrame = (a.pulseFrame + 1) % len(PulseFrames)
+		a.pulseFrame = (a.pulseFrame + 1) % pulseWrap
 	}
 	a.breathTickCount++
 	if a.breathTickCount >= BreathHold {
@@ -47,6 +47,11 @@ func (a *Animator) Tick() {
 		a.breathState = (a.breathState + 1) % len(BreathBrightness)
 	}
 }
+
+// pulseWrap is the pulse counter's modulus: len(PulseFrames) × 12 so
+// every age divisor in PulseGlyphAt (1, 2, 4) divides it evenly and the
+// cycle stays seamless across the wrap.
+const pulseWrap = len(PulseFrames) * 12
 
 // OnSnapshot stores the snapshot for later Render() calls. The animation
 // counters are NOT reset — the pulse and breath cycles continue advancing
@@ -89,9 +94,33 @@ func (a *Animator) CadenceFor(snap *proto.Snapshot) time.Duration {
 	return time.Duration(IdleSleepMS) * time.Millisecond
 }
 
-// PulseGlyph returns the current pulse-frame glyph (a single rune from
-// the 8-frame cycle).
+// PulseGlyph returns the current pulse-frame glyph at the fastest pace
+// (a single rune from the 8-frame cycle). Prefer PulseGlyphAt, which
+// paces the pulse by wait age.
 func (a *Animator) PulseGlyph() string { return PulseFrames[a.pulseFrame%len(PulseFrames)] }
+
+// PulseGlyphAt returns the pulse glyph paced by wait age (dogfood
+// feedback: a flat ~0.5s pulse reads as alarm from second one). The
+// pulse starts as a calm ~2s blink and accelerates as the wait crosses
+// the same tiers the notifier uses:
+//
+//	age < WaitWarnSec (60s)    → ÷4  (~2.1s cycle — present, not loud)
+//	age < WaitUrgentSec (300s) → ÷2  (~1.1s cycle)
+//	age ≥ WaitUrgentSec        → ÷1  (~0.5s cycle — the classic urgent pulse)
+//
+// The divisor slows frame advance rather than dropping frames, so the
+// cycle shape is identical at every pace; pulseWrap guarantees a
+// seamless wrap for every divisor.
+func (a *Animator) PulseGlyphAt(ageSec int64) string {
+	div := 4
+	switch {
+	case ageSec >= int64(WaitUrgentSec):
+		div = 1
+	case ageSec >= int64(WaitWarnSec):
+		div = 2
+	}
+	return PulseFrames[(a.pulseFrame/div)%len(PulseFrames)]
+}
 
 // BreathFrame returns the current breath cycle index (0..3) for
 // use with render.BreathColorForProject.

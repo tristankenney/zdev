@@ -28,7 +28,10 @@ var fixtureCases = []struct {
 	breathState int
 }{
 	{"VIS-01-markers", "vis-01", 0, 0},
-	{"VIS-02-pulse-cycle", "vis-02", 4, 0},
+	// vis-02 pins tick 16: its waiting project has no WaitStartedTS, so
+	// MarkerFor sees age 0 → the calm ÷4 pace of PulseGlyphAt, and tick
+	// 16 lands on visual frame 4 (●) — the frame the golden was cut at.
+	{"VIS-02-pulse-cycle", "vis-02", 16, 0},
 	{"VIS-03-breath-bar", "vis-03", 0, 0},
 	{"VIS-04-mood-glyph", "vis-04", 0, 0},
 	{"VIS-05-hue-palette", "vis-05", 0, 0},

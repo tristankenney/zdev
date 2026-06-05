@@ -318,7 +318,7 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 		pForMarker.Attention = proto.AttIdle
 		pForMarker.Status = "alive"
 	}
-	glyph, color := MarkerFor(pForMarker, animator)
+	glyph, color := MarkerFor(pForMarker, animator, nowFn())
 	// VIS-12 stale dim-out: idle + age >= StaleThreshold => Dim
 	if projectAttention(p) == proto.AttIdle && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
 		color = Dim
@@ -448,7 +448,7 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 
 	// Marker (reuse MarkerFor with stale-dim override, same as renderProjectRow VIS-12).
 	pForMarker := *p
-	glyph, color := MarkerFor(pForMarker, animator)
+	glyph, color := MarkerFor(pForMarker, animator, nowFn())
 	if projectAttention(p) == proto.AttIdle && p.LastActivityTS > 0 && nowFn()-p.LastActivityTS >= int64(StaleThresholdSec) {
 		color = Dim
 	}

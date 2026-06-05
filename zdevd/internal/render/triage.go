@@ -69,7 +69,11 @@ func renderTriageSection(buf *bytes.Buffer, snap *proto.Snapshot, width int, ani
 		case p.Attention == proto.AttWaiting && p.WaitKind == proto.WaitKindPermission:
 			glyph, color = "⚡", Orange
 		case p.Attention == proto.AttWaiting:
-			glyph, color = animator.PulseGlyph(), RedPulse
+			var ageSec int64
+			if p.WaitStartedTS > 0 {
+				ageSec = now - p.WaitStartedTS
+			}
+			glyph, color = animator.PulseGlyphAt(ageSec), RedPulse
 		default: // finished
 			glyph, color = "◆", Yellow
 		}

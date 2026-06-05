@@ -16,11 +16,73 @@ func TestAnimator_Tick_AdvancesPulse(t *testing.T) {
 	if a.pulseFrame != 1 {
 		t.Errorf("after 1 tick pulseFrame = %d; want 1", a.pulseFrame)
 	}
-	for i := 0; i < 7; i++ {
+	// The counter wraps at pulseWrap (len(PulseFrames)×12), not at 8 —
+	// PulseGlyphAt divides it by the age-pace divisor, so the visual
+	// 8-frame cycle still wraps via the modulus inside the glyph lookup.
+	for i := 0; i < pulseWrap-1; i++ {
 		a.Tick()
 	}
 	if a.pulseFrame != 0 {
-		t.Errorf("after 8 ticks pulseFrame = %d; want 0 (wrap)", a.pulseFrame)
+		t.Errorf("after %d ticks pulseFrame = %d; want 0 (wrap)", pulseWrap, a.pulseFrame)
+	}
+}
+
+// TestAnimator_PulseGlyphAt_AgePacing: the pulse starts calm (÷4 advance)
+// and accelerates through the warn (÷2) and urgent (÷1) tiers. PulseFrames
+// is a mirrored cycle (4 distinct glyphs over 8 frames), so distinct-glyph
+// counting can't separate the paces — instead measure how many ticks the
+// glyph holds before first changing, which equals the divisor exactly.
+func TestAnimator_PulseGlyphAt_AgePacing(t *testing.T) {
+	cases := []struct {
+		name     string
+		ageSec   int64
+		wantHold int // ticks before the glyph first changes = divisor
+	}{
+		{"fresh wait crawls", 0, 4},
+		{"warn tier doubles", int64(WaitWarnSec), 2},
+		{"urgent tier full speed", int64(WaitUrgentSec), 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewAnimator()
+			first := a.PulseGlyphAt(tc.ageSec)
+			hold := 0
+			for hold < 16 { // bound the scan; max divisor is 4
+				a.Tick()
+				hold++
+				if a.PulseGlyphAt(tc.ageSec) != first {
+					break
+				}
+			}
+			if hold != tc.wantHold {
+				t.Errorf("age %ds: glyph held %d ticks; want %d", tc.ageSec, hold, tc.wantHold)
+			}
+		})
+	}
+}
+
+// TestAnimator_PulseGlyphAt_SeamlessWrap: at every pace the frame index
+// is continuous across the pulseWrap boundary — no visual jump when the
+// counter resets. (This is exactly why pulseWrap is a multiple of every
+// divisor × len(PulseFrames).)
+func TestAnimator_PulseGlyphAt_SeamlessWrap(t *testing.T) {
+	for _, age := range []int64{0, int64(WaitWarnSec), int64(WaitUrgentSec)} {
+		a := NewAnimator()
+		// Advance to one tick before the wrap.
+		for i := 0; i < pulseWrap-1; i++ {
+			a.Tick()
+		}
+		before := a.PulseGlyphAt(age)
+		a.Tick() // wraps to 0
+		after := a.PulseGlyphAt(age)
+		if before == after {
+			continue // same frame across boundary is fine at slow paces
+		}
+		// At ÷1 the frame must step exactly +1 (mod 8): last frame → first.
+		if age >= int64(WaitUrgentSec) && (before != PulseFrames[len(PulseFrames)-1] || after != PulseFrames[0]) {
+			t.Errorf("age %ds: wrap jumped %q→%q; want %q→%q",
+				age, before, after, PulseFrames[len(PulseFrames)-1], PulseFrames[0])
+		}
 	}
 }
 

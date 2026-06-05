@@ -339,12 +339,15 @@ func TestPaletteFor_KnownNames(t *testing.T) {
 
 func TestMarkerFor_StatusCoverage(t *testing.T) {
 	anim := NewAnimator()
+	now := int64(1000)
 	tests := []struct {
 		status    string
 		wantGlyph string
 		wantColor string
 	}{
-		{"waiting", anim.PulseGlyph(), RedPulse},
+		// Status-only fixture has no WaitStartedTS, so MarkerFor sees
+		// age 0 — the calm ÷4 pace tier of PulseGlyphAt.
+		{"waiting", anim.PulseGlyphAt(0), RedPulse},
 		{"shell-running", "◎", Icy},
 		{"finished", "◆", Yellow},
 		{"absent", "·", Dim},
@@ -352,7 +355,7 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 	}
 	for _, tc := range tests {
 		p := proto.Project{Name: "test", Status: tc.status}
-		glyph, color := MarkerFor(p, anim)
+		glyph, color := MarkerFor(p, anim, now)
 		if glyph != tc.wantGlyph {
 			t.Errorf("MarkerFor status=%q glyph: want %q, got %q", tc.status, tc.wantGlyph, glyph)
 		}
@@ -365,7 +368,7 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 func TestMarkerFor_Alive_UsesPalette(t *testing.T) {
 	anim := NewAnimator()
 	p := proto.Project{Name: "myproject", Status: "alive"}
-	_, color := MarkerFor(p, anim)
+	_, color := MarkerFor(p, anim, 1000)
 	expected := PaletteFor("myproject")
 	if color != expected {
 		t.Errorf("MarkerFor alive: want PaletteFor result %q, got %q", expected, color)

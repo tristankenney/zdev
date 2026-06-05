@@ -50,7 +50,7 @@ func PaletteFor(name string) string {
 // Falls back to the legacy Status string when Attention is empty — the
 // daemon may be running a binary built before the Attention field was
 // added, or a test fixture may not have populated it.
-func MarkerFor(p proto.Project, animator *Animator) (glyph, color string) {
+func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color string) {
 	att := p.Attention
 	if att == "" {
 		// Back-compat path. Step-1 commit fb2667b made Status a
@@ -72,7 +72,13 @@ func MarkerFor(p proto.Project, animator *Animator) (glyph, color string) {
 	}
 	switch att {
 	case proto.AttWaiting:
-		return animator.PulseGlyph(), RedPulse
+		// Age-paced pulse (dogfood #3): calm blink for fresh waits,
+		// accelerating through the warn and urgent tiers.
+		var age int64
+		if p.WaitStartedTS > 0 {
+			age = now - p.WaitStartedTS
+		}
+		return animator.PulseGlyphAt(age), RedPulse
 	case proto.AttWorking:
 		return "◎", Icy
 	case proto.AttFinished:
