@@ -406,9 +406,21 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			}
 		}
 	case tmuxctl.PaneTitleChanged:
-		titleActuallyChanged := true
+		// Discovery is not a change: the FIRST title observed for a pane
+		// (pane unknown, or known from WindowPaneChanged with its title
+		// still empty — the bootstrap scan emits exactly that pair) is
+		// the daemon reading EXISTING state, and at restart that's every
+		// pane in the fleet. Stamping lastTitleChangeTS=now for those
+		// would clobber the persisted stamps and disable the stale-✳
+		// demoter (LastVisitTS >= LastTitleChangeTS goes false for every
+		// visited session), re-elevating every leftover "✳ <task>" title
+		// into a fleet-wide pulse wave on each restart. A genuinely new
+		// wait is a nonempty→different retitle on a known pane (a fresh
+		// pane's first title is its default — shell/host — never an
+		// agent marker), so it stamps via the established-title path.
+		titleActuallyChanged := false
 		if p, ok := s.panesByID[e.PaneID]; ok {
-			titleActuallyChanged = p.Title != e.Title
+			titleActuallyChanged = p.Title != "" && p.Title != e.Title
 			p.Title = e.Title
 		} else {
 			s.panesByID[e.PaneID] = &pane{ID: e.PaneID, Title: e.Title}
@@ -586,10 +598,13 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.WaitSummary = ""
 			pd.WaitContext = ""
 			pd.WaitNotifiedTiers = 0
-		case e.Kind == proto.WaitKindAlive:
-			// SessionStart liveness declaration: the agent is back —
-			// clear any death record AND any stale wait (a resumed
+		case e.Kind == proto.WaitKindAlive, e.Kind == proto.WaitKindAck:
+			// Alive: SessionStart liveness declaration — the agent is
+			// back; clear any death record AND any stale wait (a resumed
 			// agent sits at its prompt; nothing is pending yet).
+			// Ack (`zdev ack`, NOW#7): operator mark-all-read — same
+			// clears, PLUS a synthetic visit below so the title-derived
+			// wait machinery releases too.
 			pd.DeadSinceTS = 0
 			pd.DeadReason = ""
 			pd.DeadNotified = false
@@ -598,6 +613,17 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.WaitSummary = ""
 			pd.WaitContext = ""
 			pd.WaitNotifiedTiers = 0
+			if e.Kind == proto.WaitKindAck {
+				// Synthetic visit at the ack's own timestamp: releases the
+				// AttWaiting latch (visitedSinceWait), arms the stale-✳
+				// demoter (visit >= titleChange — a leftover "✳ <task>"
+				// title demotes to idle on the next derivation pass), and
+				// tier-acks pending notifications. A wait that starts
+				// AFTER this stamp re-raises normally.
+				if e.Timestamp > s.lastVisitTS[e.Session] {
+					s.lastVisitTS[e.Session] = e.Timestamp
+				}
+			}
 		default:
 			pd.WaitStartedTS = e.Timestamp
 			pd.WaitKind = e.Kind

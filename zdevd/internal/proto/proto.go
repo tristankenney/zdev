@@ -220,6 +220,16 @@ const WaitKindDead = "dead"
 // hook until its next wait. Never appears on the wire.
 const WaitKindAlive = "alive"
 
+// WaitKindAck is the notif-channel mark-all-read declaration written by
+// `zdev ack` (roadmap NOW#7): the user has SEEN this session's current
+// status and wants the demand cleared. The hub treats it as a synthetic
+// visit (stamps lastVisitTS — releases the wait latch, arms the stale-✳
+// demoter, tier-acks notifications) and clears any hook-recorded wait or
+// death. Unlike Alive it is an operator statement, not an agent one; new
+// agent activity after the ack re-raises attention normally. Never
+// appears on the wire.
+const WaitKindAck = "ack"
+
 type Project struct {
 	Name             string    `json:"name"`
 	Status           string    `json:"status"`
