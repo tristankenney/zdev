@@ -21,10 +21,10 @@ type recordingNotifier struct {
 	recs []notifRecord
 }
 
-func (rn *recordingNotifier) fire(project, msg, sound string) {
+func (rn *recordingNotifier) fire(n Notification) {
 	rn.mu.Lock()
 	defer rn.mu.Unlock()
-	rn.recs = append(rn.recs, notifRecord{project, msg, sound})
+	rn.recs = append(rn.recs, notifRecord{n.Project, n.Message, n.Sound})
 }
 
 func (rn *recordingNotifier) snapshot() []notifRecord {

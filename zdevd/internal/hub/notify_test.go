@@ -17,11 +17,14 @@ type notifRecord struct {
 	Sound   string
 }
 
-// makeRecorder returns a fire func and a pointer to the slice it appends to.
-func makeRecorder() (*[]notifRecord, func(project, msg, sound string)) {
+// makeRecorder returns a fire func and a pointer to the slice it appends
+// to. The recorder flattens the structured Notification back to the
+// (project, msg, sound) triple the assertion tables predate — Kind/AgeSec
+// are covered by dedicated structured-payload tests below.
+func makeRecorder() (*[]notifRecord, func(Notification)) {
 	recs := &[]notifRecord{}
-	fire := func(p, m, s string) {
-		*recs = append(*recs, notifRecord{p, m, s})
+	fire := func(n Notification) {
+		*recs = append(*recs, notifRecord{n.Project, n.Message, n.Sound})
 	}
 	return recs, fire
 }

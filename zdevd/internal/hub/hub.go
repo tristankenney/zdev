@@ -47,7 +47,7 @@ type Hub struct {
 	socketPath string                           // surfaces in diag.Reply.Socket; "" = unset
 	eventlog   *eventlog.Writer                 // nil-safe everywhere it's used
 	statePath  string                           // path for persisted state JSON; "" = persistence disabled
-	notifier   func(project, msg, sound string) // nil-safe; nil = notifications disabled
+	notifier   func(Notification) // nil-safe; nil = notifications disabled
 
 	// Owned by Run goroutine — NEVER accessed from any other goroutine.
 	state                 *state
@@ -121,7 +121,7 @@ type Config struct {
 	SocketPath string
 	EventLog   *eventlog.Writer
 	StatePath  string
-	Notifier   func(project, msg, sound string)
+	Notifier   func(Notification)
 	// StatusDwell is the minimum-dwell window applied to each project's
 	// displayed Attention to suppress sub-dwell status flaps (see
 	// state.statusDwell / applyDwell). Zero disables the debounce. Optional;

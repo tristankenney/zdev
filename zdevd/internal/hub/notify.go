@@ -89,11 +89,12 @@ type tierCrossing struct {
 // restart. Deferral mutates nothing and returns false.
 //
 // fire is the dispatch function — nil-safe (entire call is a no-op).
-// Production wires fire to RealNotifier(path); tests inject a recorder.
-// fire's project argument is the digest leader; this is also the seam a
-// future remote-push router plugs into (same leader + fleet-context
-// message, different transport).
-func tierCheck(now int64, s *state, fire func(project, msg, sound string)) bool {
+// Production wires fire through ResolveNotifier (terminal-notifier /
+// notify-send / ZDEV_NOTIFY_CMD); tests inject a recorder. The
+// Notification payload carries the digest leader plus its cost-class and
+// age in structured form so transports don't re-parse the message; this
+// is also the seam the remote push fan-out plugs into.
+func tierCheck(now int64, s *state, fire func(Notification)) bool {
 	if fire == nil {
 		return false
 	}
@@ -168,6 +169,12 @@ func tierCheck(now int64, s *state, fire func(project, msg, sound string)) bool 
 	if others := eligibleWaits - 1; others > 0 {
 		msg += fmt.Sprintf(" · %d more waiting", others)
 	}
-	fire(top.project, msg, tiers[top.tierIdx].Sound)
+	fire(Notification{
+		Project: top.project,
+		Message: msg,
+		Sound:   tiers[top.tierIdx].Sound,
+		Kind:    top.kind,
+		AgeSec:  top.age,
+	})
 	return true
 }

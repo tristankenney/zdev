@@ -187,14 +187,15 @@ func run() error {
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve
-	// terminal-notifier on PATH and wire it. If terminal-notifier is missing,
-	// log Info and continue with Notifier == nil (tierCheck no-ops).
+	// the platform backend (ZDEV_NOTIFY_CMD exec hook → terminal-notifier on
+	// darwin → notify-send on linux). When no backend resolves, log Info and
+	// continue with Notifier == nil (tierCheck no-ops).
 	if os.Getenv("ZDEV_NOTIFY") != "0" {
-		if path, err := exec.LookPath("terminal-notifier"); err == nil {
-			hubCfg.Notifier = hub.RealNotifier(path)
-			slog.Info("tier notifications enabled", "binary", path)
+		if fire, desc, ok := hub.ResolveNotifier(); ok {
+			hubCfg.Notifier = fire
+			slog.Info("tier notifications enabled", "backend", desc)
 		} else {
-			slog.Info("terminal-notifier not found; tier notifications disabled")
+			slog.Info("tier notifications disabled", "reason", desc)
 		}
 	} else {
 		slog.Info("tier notifications disabled by ZDEV_NOTIFY=0")
