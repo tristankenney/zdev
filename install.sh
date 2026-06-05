@@ -115,5 +115,12 @@ else
 fi
 make -C "$REPO/zdevd" install
 
+echo "==> Agent attention hooks (zdev-notify channel)"
+# Idempotent: only appends missing entries, backs up before writing,
+# skips machines without the agent's config dir. Powers the sidebar
+# waiting/finished states, the ⚡ permission triage class, and the
+# wait-tier notifications.
+"$HOME/.local/bin/zdev-install-hooks" || echo "  hook install skipped (see above) — re-run later: zdev-install-hooks"
+
 echo ""
 echo "Done. Toggle a sidebar pane to verify: zdev-sidebar-toggle"

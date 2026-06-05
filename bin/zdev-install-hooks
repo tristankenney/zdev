@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Install zdev attention hooks into AI agent configs — the writer side of
+# the zdev-notify channel that feeds the sidebar, triage queue, and
+# wait-tier notifications. Idempotent: safe to re-run on every install
+# and on machines where the entries (or hand-rolled variants) already
+# exist; only missing entries are appended, nothing is rewritten.
+#
+# Usage:
+#   zdev-install-hooks            # install / upgrade
+#   zdev-install-hooks --dry-run  # show what would change, write nothing
+#
+# Claude Code (automated): merges four entries into ~/.claude/settings.json:
+#
+#   Stop                              → zdev-notify claude done
+#   Notification  permission_prompt   → zdev-notify claude needs-permission
+#   Notification  (catch-all)         → zdev-notify claude waiting
+#   UserPromptSubmit                  → zdev-notify claude clear
+#
+# The permission_prompt matcher is what powers the ⚡ triage class —
+# permission waits rank first regardless of age. Both Notification
+# entries fire on permission prompts; that's by design (zdev-notify's
+# untagged-never-erases-a-tag rule makes the pair converge to tagged).
+# Hook config is read at session start: running agents keep their old
+# hooks until restarted.
+#
+# Other agents (guidance only — their hook formats are their own):
+# printed at the end for any agent config dirs detected on this machine.
+set -euo pipefail
+
+DRY_RUN=0
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+
+NOTIFY="$HOME/.local/bin/zdev-notify"
+SETTINGS="${ZDEV_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "zdev-install-hooks: jq is required (brew install jq)" >&2
+    exit 1
+fi
+
+# ---------- Claude Code ----------
+
+install_claude() {
+    if [[ ! -d "$(dirname "$SETTINGS")" ]]; then
+        echo "claude: no $(dirname "$SETTINGS") directory — Claude Code not set up on this machine; skipping."
+        return 0
+    fi
+    if [[ ! -f "$SETTINGS" ]]; then
+        echo '{}' > "$SETTINGS"
+    fi
+    if ! jq empty "$SETTINGS" 2>/dev/null; then
+        echo "claude: $SETTINGS is not valid JSON — fix it first; skipping." >&2
+        return 1
+    fi
+
+    local changed=0
+    local doc
+    doc=$(cat "$SETTINGS")
+
+    # ensure_entry EVENT MATCHER STATE
+    # Appends {matcher?, hooks:[{type:command, command:zdev-notify claude STATE}]}
+    # to .hooks.EVENT unless any existing command under that event already
+    # invokes `zdev-notify claude STATE` (hand-rolled variants count — the
+    # needle is the tool+state pair, not the exact path).
+    ensure_entry() {
+        local event="$1" matcher="$2" state="$3"
+        local needle="zdev-notify claude $state"
+        if jq -e --arg ev "$event" --arg needle "$needle" '
+            [(.hooks[$ev] // [])[] | .hooks[]? | .command // ""]
+            | any(contains($needle))
+        ' <<<"$doc" >/dev/null; then
+            echo "claude: $event${matcher:+ ($matcher)} → '$needle' already present"
+            return 0
+        fi
+        doc=$(jq --arg ev "$event" --arg matcher "$matcher" --arg cmd "$NOTIFY claude $state" '
+            .hooks[$ev] = ((.hooks[$ev] // []) + [
+                (if $matcher == "" then {} else {matcher: $matcher} end)
+                + {hooks: [{type: "command", command: $cmd}]}
+            ])
+        ' <<<"$doc")
+        echo "claude: + $event${matcher:+ ($matcher)} → '$needle'"
+        changed=1
+    }
+
+    ensure_entry "Stop"             ""                  "done"
+    ensure_entry "Notification"     "permission_prompt" "needs-permission"
+    ensure_entry "Notification"     ""                  "waiting"
+    ensure_entry "UserPromptSubmit" ""                  "clear"
+
+    if [[ "$changed" -eq 0 ]]; then
+        echo "claude: all hooks present — nothing to do."
+        return 0
+    fi
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        echo "claude: dry-run — $SETTINGS NOT modified."
+        return 0
+    fi
+    cp "$SETTINGS" "$SETTINGS.bak-zdev"
+    printf '%s\n' "$doc" > "$SETTINGS"
+    echo "claude: wrote $SETTINGS (backup at $SETTINGS.bak-zdev)."
+    echo "claude: note — running Claude sessions keep their old hooks until restarted."
+}
+
+# ---------- other agents: detection + guidance ----------
+
+guidance_others() {
+    # Codex's `notify` program receives a JSON payload as argv[1], so it
+    # needs a thin adapter rather than zdev-notify directly.
+    if [[ -d "$HOME/.codex" ]]; then
+        cat <<'EOF'
+
+codex detected (~/.codex): add to ~/.codex/config.toml a notify adapter
+that maps the JSON payload to zdev-notify states, e.g.
+
+  notify = ["zdev-codex-notify"]   # write a 3-line wrapper calling:
+                                   #   zdev-notify codex waiting|done|clear
+EOF
+    fi
+    if [[ -d "$HOME/.config/opencode" || -d "$HOME/.opencode" ]]; then
+        cat <<'EOF'
+
+opencode detected: wire its session-event hooks (or a plugin) to call
+  zdev-notify opencode waiting|done|clear
+EOF
+    fi
+}
+
+install_claude
+guidance_others
