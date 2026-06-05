@@ -348,7 +348,7 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 		// Status-only fixture has no WaitStartedTS, so MarkerFor sees
 		// age 0 — the calm ÷4 pace tier of PulseGlyphAt.
 		{"waiting", anim.PulseGlyphAt(0), RedPulse},
-		{"shell-running", "◎", Icy},
+		{"shell-running", anim.WorkGlyph(), Icy},
 		{"finished", "◆", Yellow},
 		{"absent", "·", Dim},
 		{"unknown", "·", Dim},

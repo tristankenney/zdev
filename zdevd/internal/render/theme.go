@@ -34,6 +34,13 @@ import (
 // holds for two frames per the bash baseline.
 var PulseFrames = [8]string{"·", "∙", "•", "●", "●", "•", "∙", "·"}
 
+// WorkFrames is the 4-frame working-marker spinner (dogfood 2026-06-06:
+// a static ◎ doesn't read as "in motion" — an animated glyph is the
+// convention for running work). The quarter-circle family keeps the
+// marker in the same visual register as the rest of the circle glyphs
+// (● ◎ ◆ ·). Advanced by Animator.WorkGlyph at workHold ticks/frame.
+var WorkFrames = [4]string{"◐", "◓", "◑", "◒"}
+
 // BreathBrightness is the 4-slot brightness-param cycle for the current-session
 // breath bar. Each slot is an SGR brightness PARAM ONLY — no "\x1b[" prefix,
 // no "m" suffix, no color code. The color is provided separately by

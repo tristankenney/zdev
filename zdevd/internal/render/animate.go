@@ -49,9 +49,17 @@ func (a *Animator) Tick() {
 }
 
 // pulseWrap is the pulse counter's modulus: len(PulseFrames) × 12 so
-// every age divisor in PulseGlyphAt (1, 2, 4) divides it evenly and the
-// cycle stays seamless across the wrap.
+// every age divisor in PulseGlyphAt (1, 2, 4) divides it evenly, the
+// work spinner's workHold (2) divides it evenly (96/2 = 48 ≡ 0 mod
+// len(WorkFrames)), and both cycles stay seamless across the wrap.
 const pulseWrap = len(PulseFrames) * 12
+
+// workHold is how many renderer ticks each WorkFrames glyph holds. At
+// the idle 5fps cadence (the usual rate for a working-but-nothing-
+// waiting fleet) that's a glyph change every ~0.4s — a calm ~1.6s full
+// rotation; at the waiting 15fps cadence it spins ~3× faster, which
+// reads as urgency-adjacent liveliness rather than alarm.
+const workHold = 2
 
 // OnSnapshot stores the snapshot for later Render() calls. The animation
 // counters are NOT reset — the pulse and breath cycles continue advancing
@@ -120,6 +128,14 @@ func (a *Animator) PulseGlyphAt(ageSec int64) string {
 		div = 2
 	}
 	return PulseFrames[(a.pulseFrame/div)%len(PulseFrames)]
+}
+
+// WorkGlyph returns the current working-marker spinner frame. Driven by
+// the same tick counter as the pulse so the two animations stay phase-
+// stable relative to each other; pulseWrap is a multiple of
+// workHold×len(WorkFrames), so the rotation is seamless across the wrap.
+func (a *Animator) WorkGlyph() string {
+	return WorkFrames[(a.pulseFrame/workHold)%len(WorkFrames)]
 }
 
 // BreathFrame returns the current breath cycle index (0..3) for

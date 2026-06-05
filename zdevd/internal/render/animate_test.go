@@ -206,6 +206,31 @@ func TestAnimator_PulseFrame_Glyph(t *testing.T) {
 	}
 }
 
+// TestAnimator_WorkGlyph_RotatesAndWraps: the working spinner advances
+// every workHold ticks through all four frames and is seamless across
+// the pulseWrap boundary (no frame jump when the counter resets).
+func TestAnimator_WorkGlyph_RotatesAndWraps(t *testing.T) {
+	a := NewAnimator()
+	for i, want := range []string{"◐", "◐", "◓", "◓", "◑", "◑", "◒", "◒", "◐"} {
+		if got := a.WorkGlyph(); got != want {
+			t.Errorf("tick %d: WorkGlyph = %q; want %q", i, got, want)
+		}
+		a.Tick()
+	}
+	// Wrap seam: last frame before the wrap must precede frame 0.
+	a = NewAnimator()
+	for i := 0; i < pulseWrap-1; i++ {
+		a.Tick()
+	}
+	if before := a.WorkGlyph(); before != WorkFrames[len(WorkFrames)-1] {
+		t.Errorf("frame before wrap = %q; want %q", before, WorkFrames[len(WorkFrames)-1])
+	}
+	a.Tick()
+	if after := a.WorkGlyph(); after != WorkFrames[0] {
+		t.Errorf("frame after wrap = %q; want %q (seamless rotation)", after, WorkFrames[0])
+	}
+}
+
 func TestAnimator_BreathFrame(t *testing.T) {
 	a := NewAnimator()
 	// At init: frame 0.

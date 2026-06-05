@@ -186,7 +186,7 @@ func formatLegend() string {
 
 	section("Row marker (left of project name)")
 	row(redPulse+"●"+reset, "agent waiting (pulses faster as the wait ages)")
-	row(icy+"◎"+reset, "shell-running (cyan)")
+	row(icy+"◐◓◑◒"+reset, "working / shell-running (cyan spinner)")
 	row(yellow+"◆"+reset, "agent finished")
 	row(redPulse+"✗"+reset, "agent died (unclean exit — static, relaunch it)")
 	row("·", "alive (palette ·, full-brightness name)")

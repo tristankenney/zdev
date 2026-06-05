@@ -26,7 +26,12 @@ const (
 	Yellow   = "\x1b[33m"
 	Green    = "\x1b[32m"
 	RedPulse = "\x1b[1;91m"
-	Icy      = "\x1b[96m"
+	// Icy follows the Orange precedent below (260511-h2): the previous
+	// \x1b[96m was the THEME-MAPPED bright-cyan slot — terminal palettes
+	// remap it freely (dogfood 2026-06-06: rendered orange on the
+	// operator's theme, directly contradicting the legend's "cyan").
+	// xterm-256 SGR 117 is a real sky cyan no 16-color theme touches.
+	Icy = "\x1b[38;5;117m"
 	// 260511-h2: Orange un-aliased from Yellow. Now xterm-256 SGR 208 — a real
 	// orange clearly distinguishable from the finished-agent yellow marker.
 	// Previously both Yellow and Orange were \x1b[33m, collapsing the

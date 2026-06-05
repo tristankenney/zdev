@@ -53,7 +53,7 @@ func isStaleRow(p *proto.Project, now int64) bool {
 // current Attention state, per VIS-01 / bash baseline lines 484-517.
 //
 //   - Waiting   → animator.PulseGlyph() + RedPulse
-//   - Working   → "◎" + Icy
+//   - Working   → animator.WorkGlyph() spinner + Icy
 //   - Finished  → "◆" + Yellow
 //   - Idle      → "·" + PaletteFor(p.Name) (when session exists)
 //   - absent or unknown → "·" + Dim
@@ -91,7 +91,10 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 		}
 		return animator.PulseGlyphAt(age), RedPulse
 	case proto.AttWorking:
-		return "◎", Icy
+		// Animated spinner (dogfood 2026-06-06): running work is the
+		// convention for motion, not a static ring. The footer tally
+		// keeps the static ◎ as the bucket's label.
+		return animator.WorkGlyph(), Icy
 	case proto.AttFinished:
 		return "◆", Yellow
 	case proto.AttDead:
