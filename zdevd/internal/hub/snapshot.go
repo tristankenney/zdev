@@ -156,6 +156,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			if prevWaitStartedTS != 0 && ar.WaitStartedTS == 0 {
 				pd.WaitContext = ""
 				pd.WaitNotifiedTiers = 0
+				pd.WaitKind = ""
 			}
 
 			st.projectData[dataKey] = pd
@@ -167,30 +168,31 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		}
 
 		proj := proto.Project{
-			Name:           n,
-			Status:         status,
-			Attention:      displayAtt,
-			Branch:         pd.Branch,
-			Ahead:          pd.Ahead,
-			Behind:         pd.Behind,
-			DirtyCount:     pd.DirtyCount,
-			ShellCmd:       pd.ShellCmd,
-			ListeningPorts: pd.Ports,
-			LastActivityTS: pd.LastActivityTS,
+			Name:             n,
+			Status:           status,
+			Attention:        displayAtt,
+			Branch:           pd.Branch,
+			Ahead:            pd.Ahead,
+			Behind:           pd.Behind,
+			DirtyCount:       pd.DirtyCount,
+			ShellCmd:         pd.ShellCmd,
+			ListeningPorts:   pd.Ports,
+			LastActivityTS:   pd.LastActivityTS,
 			WaitStartedTS:    pd.WaitStartedTS,
 			WaitAcknowledged: isWaitAcknowledged(st, dataKey, pd.WaitStartedTS, now),
+			WaitKind:         pd.WaitKind,
 			PROpen:           pr.Open,
-			PRFail:         pr.Fail,
-			PRPend:         pr.Pend,
-			FailingChecks:  pr.FailingChecks,
-			PendingChecks:  pr.PendingChecks,
-			CelebrateUntil: st.celebrateUntil[dataKey],
-			AgentStates:    projectAgentStates(pd.AgentStates),
-			AgentClaude:    pd.AgentClaude,
-			AgentPi:        pd.AgentPi,
-			WaitContext:    pd.WaitContext,
-			CIStatus:       pd.CIStatus,
-			CIConclusion:   pd.CIConclusion,
+			PRFail:           pr.Fail,
+			PRPend:           pr.Pend,
+			FailingChecks:    pr.FailingChecks,
+			PendingChecks:    pr.PendingChecks,
+			CelebrateUntil:   st.celebrateUntil[dataKey],
+			AgentStates:      projectAgentStates(pd.AgentStates),
+			AgentClaude:      pd.AgentClaude,
+			AgentPi:          pd.AgentPi,
+			WaitContext:      pd.WaitContext,
+			CIStatus:         pd.CIStatus,
+			CIConclusion:     pd.CIConclusion,
 		}
 		projects = append(projects, proj)
 	}

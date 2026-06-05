@@ -171,6 +171,61 @@ func TestApplyNotifSeen(t *testing.T) {
 	}
 }
 
+// TestApplyNotifSeen_Kind verifies the wait cost-class flows from
+// NotifSeen.Kind onto the wire (Project.WaitKind), and that the
+// buildSnapshot wait-clear cascade wipes it alongside WaitContext /
+// WaitNotifiedTiers when the wait lifecycle ends.
+func TestApplyNotifSeen_Kind(t *testing.T) {
+	t.Run("kind_reaches_wire", func(t *testing.T) {
+		h, cleanup := startHub(t)
+		defer cleanup()
+		sub, unsub := mustSubscribe(t, h, "%notifkind")
+		defer unsub()
+
+		mustSubmit(t, h, tmuxctl.SessionChanged{ID: "$1", Name: "alpha"})
+		mustSubmit(t, h, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 1714838460, Kind: proto.WaitKindPermission})
+		snap := drainUntil(t, sub, 200*time.Millisecond, func(s *proto.Snapshot) bool {
+			p := findProject(s.Projects, "alpha")
+			return p != nil && p.WaitKind == proto.WaitKindPermission
+		})
+		if p := findProject(snap.Projects, "alpha"); p.WaitKind != proto.WaitKindPermission {
+			t.Errorf("WaitKind = %q; want %q", p.WaitKind, proto.WaitKindPermission)
+		}
+	})
+
+	t.Run("cleared_on_wait_exit", func(t *testing.T) {
+		// Direct-state variant (no socket round-trip): enter waiting with a
+		// tagged kind, visit so the latch releases, leave waiting, and
+		// verify the cascade wiped the kind.
+		s := buildTestState("proj", []string{"%1"}, []string{"● claude"})
+		s.projectListNames = []string{"proj"}
+		now := time.Now().Unix()
+
+		pd := s.projectData["proj"]
+		pd.WaitKind = proto.WaitKindDecision
+		s.projectData["proj"] = pd
+
+		_ = buildSnapshot(s, 1, time.Now(), now, now*1000)
+		if got := s.projectData["proj"].WaitKind; got != proto.WaitKindDecision {
+			t.Fatalf("pre-condition: WaitKind = %q; want decision while waiting", got)
+		}
+
+		// Visit (releases the no-visit latch), then the title leaves waiting.
+		s.lastVisitTS["proj"] = s.projectData["proj"].WaitStartedTS + 1
+		s.lastTitleChangeTS["proj"] = s.lastVisitTS["proj"] - 1
+		s.panesByID["%1"].Title = "shell"
+		_ = buildSnapshot(s, 2, time.Now(), now+2, (now+2)*1000)
+
+		pd = s.projectData["proj"]
+		if pd.WaitStartedTS != 0 {
+			t.Fatalf("WaitStartedTS = %d after wait exit; want 0", pd.WaitStartedTS)
+		}
+		if pd.WaitKind != "" {
+			t.Errorf("WaitKind = %q after wait exit; want cleared", pd.WaitKind)
+		}
+	})
+}
+
 // TestApplyProjectListChanged verifies that projects without tmux sessions
 // still appear in the snapshot after ProjectListChanged.
 func TestApplyProjectListChanged(t *testing.T) {
@@ -973,11 +1028,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v8 (bumped 2026-05-31
-	// for Project.AgentStates addition).
-	t.Run("H_schema_version_is_phase4_v8", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v8" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v8")
+	// Test H: proto.SchemaVersion must be phase4-v9 (bumped 2026-06-05
+	// for Project.WaitKind + Snapshot.Triage — triage slice 1).
+	t.Run("H_schema_version_is_phase4_v9", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v9" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v9")
 		}
 	})
 }

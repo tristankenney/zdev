@@ -27,7 +27,7 @@ type ClientSessionChanged struct{ Client, SessionName string } // %client-sessio
 type ClientListRefresh struct {                                // polled list-clients response
 	ClientSessions map[string]string // client_name → session_name (dash-form); zdevd-watcher excluded
 }
-type Exit struct{ Reason string }                              // %exit; supervisor uses this as a reconnect signal
+type Exit struct{ Reason string } // %exit; supervisor uses this as a reconnect signal
 type ParseError struct {
 	Line  []byte
 	Cause string
@@ -104,9 +104,16 @@ type PortsRefresh struct {
 // NotifSeen is emitted by the fsnotify watcher on $TMPDIR/zdev-notif-*.ts
 // (D3-05). Timestamp is the unix-second the user wrote into the file
 // (per zdev-notify line 36-38), not the file's mtime — assumption A6.
+//
+// Kind (triage slice 1) is the optional wait cost-class from the notif
+// file's second line: "permission" (y/n prompt — seconds of the user's
+// time) or "decision" (a real question — minutes). Empty when the writer
+// predates the two-line format or didn't tag the wait; consumers treat
+// empty as "decision" (the conservative default).
 type NotifSeen struct {
 	Session   string
 	Timestamp int64
+	Kind      string
 }
 
 // ProjectListChanged is emitted when the workspace fsnotify watcher (D3-06)

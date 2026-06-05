@@ -96,8 +96,8 @@ func TestSnapshotCompactNoIndent(t *testing.T) {
 // --- Phase 3 tests ---
 
 func TestSchemaVersion_IsPhase4(t *testing.T) {
-	if SchemaVersion != "phase4-v8" {
-		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v8")
+	if SchemaVersion != "phase4-v9" {
+		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v9")
 	}
 }
 
@@ -124,9 +124,9 @@ func TestProject_RoundTrip(t *testing.T) {
 		ListeningPorts: []int{3000, 8080},
 		LastActivityTS: 1714838400,
 		WaitStartedTS:  1714838460,
-		PROpen: 1, PRFail: 0, PRPend: 1,
+		PROpen:         1, PRFail: 0, PRPend: 1,
 		CelebrateUntil: 1714838500,
-		AgentClaude: "waiting", AgentPi: "",
+		AgentClaude:    "waiting", AgentPi: "",
 	}
 	out, err := json.Marshal(&in)
 	if err != nil {
@@ -181,11 +181,11 @@ func equalProject(a, b Project) bool {
 // (or that they're shipping a wire-format break without bumping).
 func TestSchemaGolden(t *testing.T) {
 	fixture := Snapshot{
-		V:      CurrentProtocolVersion,
-		Type:   "snapshot",
-		Schema: SchemaVersion,
-		Seq:    42,
-		SentAt: time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC),
+		V:        CurrentProtocolVersion,
+		Type:     "snapshot",
+		Schema:   SchemaVersion,
+		Seq:      42,
+		SentAt:   time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC),
 		Sessions: []string{"alpha", "beta"},
 		Projects: []Project{{
 			Name: "alpha", Status: "waiting",
@@ -194,9 +194,9 @@ func TestSchemaGolden(t *testing.T) {
 			ListeningPorts: []int{3000, 8080},
 			LastActivityTS: 1714838400,
 			WaitStartedTS:  1714838460,
-			PROpen: 1, PRFail: 0, PRPend: 1,
+			PROpen:         1, PRFail: 0, PRPend: 1,
 			CelebrateUntil: 1714838500,
-			AgentClaude: "waiting", AgentPi: "",
+			AgentClaude:    "waiting", AgentPi: "",
 		}},
 		CurrentSession: "alpha",
 	}

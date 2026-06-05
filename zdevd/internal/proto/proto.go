@@ -76,7 +76,24 @@ import (
 // AgentClaude / AgentPi shape (those fields remain on the wire for one
 // release as a back-compat projection from AgentStates so a v7 renderer
 // still works). Restart all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v8"
+//
+// phase4-v9 (2026-06-05, triage slice 1): adds Project.WaitKind (the wait
+// cost-class — "permission" vs "decision" — sourced from the extended
+// zdev-notify hook channel) and Snapshot.Triage (the daemon-computed,
+// ranked list of project names needing attention; single source of truth
+// for the sidebar triage section, `zdev next`, and the triage popup).
+// Restart all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v9"
+
+// Wait cost-classes for Project.WaitKind. The distinction drives triage
+// ranking: clearing a permission prompt costs the user seconds and
+// unblocks an agent, so it outranks an open-ended question regardless of
+// age. Empty means unknown — ranked as a decision (the conservative
+// default).
+const (
+	WaitKindPermission = "permission" // y/n approval — cheap, rank first
+	WaitKindDecision   = "decision"   // real question — costs thought
+)
 
 // MaxHelloBytes caps the hello frame size on the daemon side. Hello frames
 // are tiny (~80 bytes) so 64 KB is a generous safety bound. Frames larger
@@ -127,6 +144,16 @@ type Snapshot struct {
 	// snapshot arrival regardless, so the frame is fresh the moment the user
 	// switches back to the session.
 	PaneVisible bool `json:"pane_visible,omitempty"`
+	// Triage (phase4-v9) is the daemon-computed attention queue: project
+	// names (canonical slash-form, matching Projects[].Name) ordered by
+	// "what should the user handle next". Class order is
+	// needs-permission → needs-decision → finished; within a class,
+	// highest crossed wait-tier first, then oldest wait. Acknowledged
+	// waits demote to the bottom of their class. Computed once per
+	// snapshot by hub.rankTriage so every surface (sidebar section,
+	// `zdev next`, triage popup) agrees on the same ordering. Empty when
+	// nothing needs attention.
+	Triage []string `json:"triage,omitempty"`
 }
 
 // Project is the per-row metadata in a Snapshot.
@@ -160,32 +187,33 @@ const (
 )
 
 type Project struct {
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	Attention      Attention `json:"attention,omitempty"`
-	Branch         string `json:"branch,omitempty"`
-	Ahead          int    `json:"ahead,omitempty"`
-	Behind         int    `json:"behind,omitempty"`
-	DirtyCount     int    `json:"dirty_count,omitempty"`
-	ShellCmd       string `json:"shell_cmd,omitempty"`
-	ListeningPorts []int  `json:"ports,omitempty"`
-	LastActivityTS int64  `json:"last_activity_ts,omitempty"` // unix seconds; 0 = unknown
-	WaitStartedTS    int64  `json:"wait_started_ts,omitempty"`   // 0 = not waiting
-	WaitAcknowledged bool   `json:"wait_acknowledged,omitempty"` // true when the user has visited this session past the highest crossed wait-tier; suppresses urgent decoration in the renderer.
-	PROpen           int    `json:"pr_open,omitempty"`
-	PRFail         int    `json:"pr_fail,omitempty"`
-	PRPend         int    `json:"pr_pend,omitempty"`
-	CelebrateUntil int64  `json:"celebrate_until,omitempty"`
-	AgentClaude    string `json:"agent_claude,omitempty"` // DEPRECATED in v8; projection of AgentStates["claude"]
-	AgentPi        string `json:"agent_pi,omitempty"`     // DEPRECATED in v8; projection of AgentStates["pi"]
+	Name             string    `json:"name"`
+	Status           string    `json:"status"`
+	Attention        Attention `json:"attention,omitempty"`
+	Branch           string    `json:"branch,omitempty"`
+	Ahead            int       `json:"ahead,omitempty"`
+	Behind           int       `json:"behind,omitempty"`
+	DirtyCount       int       `json:"dirty_count,omitempty"`
+	ShellCmd         string    `json:"shell_cmd,omitempty"`
+	ListeningPorts   []int     `json:"ports,omitempty"`
+	LastActivityTS   int64     `json:"last_activity_ts,omitempty"`  // unix seconds; 0 = unknown
+	WaitStartedTS    int64     `json:"wait_started_ts,omitempty"`   // 0 = not waiting
+	WaitAcknowledged bool      `json:"wait_acknowledged,omitempty"` // true when the user has visited this session past the highest crossed wait-tier; suppresses urgent decoration in the renderer.
+	WaitKind         string    `json:"wait_kind,omitempty"`         // cost-class of the current wait: WaitKindPermission | WaitKindDecision | "" (unknown → treated as decision)
+	PROpen           int       `json:"pr_open,omitempty"`
+	PRFail           int       `json:"pr_fail,omitempty"`
+	PRPend           int       `json:"pr_pend,omitempty"`
+	CelebrateUntil   int64     `json:"celebrate_until,omitempty"`
+	AgentClaude      string    `json:"agent_claude,omitempty"` // DEPRECATED in v8; projection of AgentStates["claude"]
+	AgentPi          string    `json:"agent_pi,omitempty"`     // DEPRECATED in v8; projection of AgentStates["pi"]
 	// AgentStates is the per-agent attention map keyed by lowercase agent
 	// name (from the registry's [[agent]].name). Replaces the static
 	// AgentClaude/AgentPi pair as of phase4-v8 — the legacy fields remain
 	// on the wire for one release, populated from this map.
-	AgentStates map[string]Attention `json:"agent_states,omitempty"`
-	WaitContext string               `json:"wait_context,omitempty"` // verbatim last ~20 lines of agent pane at wait-start
-	CIStatus       string `json:"ci_status,omitempty"`    // "queued"|"in_progress"|"completed"|""
-	CIConclusion   string `json:"ci_conclusion,omitempty"` // "success"|"failure"|"cancelled"|... or ""
+	AgentStates  map[string]Attention `json:"agent_states,omitempty"`
+	WaitContext  string               `json:"wait_context,omitempty"`  // verbatim last ~20 lines of agent pane at wait-start
+	CIStatus     string               `json:"ci_status,omitempty"`     // "queued"|"in_progress"|"completed"|""
+	CIConclusion string               `json:"ci_conclusion,omitempty"` // "success"|"failure"|"cancelled"|... or ""
 	// FailingChecks / PendingChecks (phase4-v5, 260512-abi) carry deduped, sorted
 	// check-run names from gh pr list statusCheckRollup aggregated across all open
 	// PRs. The renderer surfaces failing names on the current project's git row

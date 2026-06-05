@@ -191,8 +191,16 @@ type projectData struct {
 	AgentPi           string
 	WaitContext       string // verbatim capture from tmux at wait-start; cleared on exit; NOT persisted
 	WaitNotifiedTiers uint8  // bit0=60s, bit1=5m, bit2=15m; reset on transition edges; persisted
-	CIStatus          string // last CIRefresh.Status; "" = unknown / no runs
-	CIConclusion      string // last CIRefresh.Conclusion; "" = no runs or status != completed
+	// WaitKind is the cost-class of the current wait, sourced from the
+	// zdev-notify hook channel (NotifSeen.Kind): proto.WaitKindPermission
+	// for a y/n approval prompt, proto.WaitKindDecision for a real
+	// question, "" when the wait was never tagged (legacy notif files or
+	// un-hooked agents — ranked as a decision). Cleared alongside
+	// WaitContext when the wait lifecycle ends; NOT persisted — the next
+	// wait re-tags from the live hook fire.
+	WaitKind     string
+	CIStatus     string // last CIRefresh.Status; "" = unknown / no runs
+	CIConclusion string // last CIRefresh.Conclusion; "" = no runs or status != completed
 }
 
 // prCount holds the last-known PR aggregate counts for a project.
@@ -538,8 +546,14 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 	case tmuxctl.NotifSeen:
 		// Notif file basenames map verbatim to session names (D3-05). No
 		// "/" → "-" here — zdev-notify writes one notif file per session.
+		//
+		// Kind updates even when the timestamp is unchanged: zdev-notify
+		// preserves the original wait-start time across repeated fires but
+		// refreshes the kind line, so a wait that escalates from an idle
+		// notification to a permission prompt re-classifies mid-cycle.
 		pd := s.projectData[e.Session]
 		pd.WaitStartedTS = e.Timestamp
+		pd.WaitKind = e.Kind
 		s.projectData[e.Session] = pd
 
 	case tmuxctl.PaneCaptureReady:

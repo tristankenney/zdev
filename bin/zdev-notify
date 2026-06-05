@@ -3,9 +3,20 @@
 # Called by Claude Code hooks and Codex `notify`.
 #
 # Usage: zdev-notify <tool> [state]
-#   state: "waiting" / "needs-input" → ●  (urgent: question, permission, etc.)
+#   state: "needs-permission" / "permission" → ●  (y/n approval — cheap;
+#          triage ranks these first)
+#          "needs-decision" / "question" / "asking" → ●  (real question)
+#          "waiting" / "needs-input" → ●  (untagged wait; triage treats as decision)
 #          "done" / "idle" / "finished" → ◆  (just-finished, no action urgent)
 #          "clear" / "working" → no marker
+#
+# Wire a Claude Code Notification hook with a permission matcher to pass
+# the cost-class through, e.g.:
+#   { "Notification": [
+#       {"matcher": "permission_request",
+#        "hooks": [{"type": "command", "command": "zdev-notify claude needs-permission"}]},
+#       {"matcher": "*",
+#        "hooks": [{"type": "command", "command": "zdev-notify claude waiting"}]} ] }
 set -eu
 
 TOOL="${1:-cli}"
@@ -33,6 +44,16 @@ TS_DIR="${TMP_PARENT}zdevd-notif"
 TS_FILE="${TS_DIR}/zdev-notif-${SESSION}.ts"
 mkdir -p "$TS_DIR" 2>/dev/null || true
 
+# Map the state to a wait cost-class (triage slice 1). The kind is the
+# notif file's optional second line; zdevd ranks "permission" waits first
+# (seconds of the user's time unblocks an agent) and treats untagged
+# waits as "decision". Must stay in sync with proto.WaitKind* constants.
+case "$STATE" in
+    needs-permission|permission|approve|approval) KIND="permission" ;;
+    needs-decision|question|asking)               KIND="decision" ;;
+    *)                                            KIND="" ;;
+esac
+
 case "$STATE" in
     clear|working)
         TITLE="$TOOL"
@@ -42,12 +63,26 @@ case "$STATE" in
         TITLE="◆ $TOOL"
         [ -n "$SESSION" ] && rm -f "$TS_FILE" 2>/dev/null
         ;;
-    *)  # waiting, needs-input, asking, …
+    *)  # waiting, needs-input, needs-permission, question, …
         TITLE="● $TOOL"
-        # Only write timestamp on first entry to waiting; preserve the
-        # original wait-start time across repeated Notification fires.
-        if [ -n "$SESSION" ] && [ ! -f "$TS_FILE" ]; then
-            date +%s > "$TS_FILE" 2>/dev/null
+        # File format: line 1 unix-seconds (wait-start), line 2 optional
+        # kind. Preserve the original wait-start time across repeated
+        # Notification fires. A TAGGED re-fire updates the kind line (a
+        # wait can escalate idle→permission mid-cycle); an UNTAGGED
+        # re-fire leaves the file alone — it carries no evidence the
+        # kind changed, so an earlier tag must not be erased.
+        if [ -n "$SESSION" ]; then
+            if [ ! -f "$TS_FILE" ]; then
+                if [ -n "$KIND" ]; then
+                    printf '%s\n%s\n' "$(date +%s)" "$KIND" > "$TS_FILE" 2>/dev/null || true
+                else
+                    printf '%s\n' "$(date +%s)" > "$TS_FILE" 2>/dev/null || true
+                fi
+            elif [ -n "$KIND" ]; then
+                TS=$(head -n 1 "$TS_FILE" 2>/dev/null || echo "")
+                [ -n "$TS" ] || TS=$(date +%s)
+                printf '%s\n%s\n' "$TS" "$KIND" > "$TS_FILE" 2>/dev/null || true
+            fi
         fi
         ;;
 esac

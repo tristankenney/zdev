@@ -167,6 +167,77 @@ func TestNotifWatcher_AtomicRename(t *testing.T) {
 	}
 }
 
+// TestReadNotifFile covers both file formats: legacy single-line
+// (timestamp only) and the tagged two-line format (timestamp + kind,
+// triage slice 1).
+func TestReadNotifFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	tests := []struct {
+		name     string
+		content  string
+		wantTS   int64
+		wantKind string
+	}{
+		{"legacy single line", "1714838460", 1714838460, ""},
+		{"legacy with trailing newline", "1714838460\n", 1714838460, ""},
+		{"tagged permission", "1714838460\npermission\n", 1714838460, "permission"},
+		{"tagged decision", "1714838460\ndecision", 1714838460, "decision"},
+		{"unknown kind passes through", "1714838460\nsomething-new\n", 1714838460, "something-new"},
+		{"malformed timestamp drops kind too", "not-a-number\npermission\n", 0, ""},
+		{"empty file", "", 0, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := write("zdev-notif-x.ts", tc.content)
+			ts, kind := readNotifFile(p)
+			if ts != tc.wantTS {
+				t.Errorf("ts = %d; want %d", ts, tc.wantTS)
+			}
+			if kind != tc.wantKind {
+				t.Errorf("kind = %q; want %q", kind, tc.wantKind)
+			}
+		})
+	}
+
+	t.Run("missing file", func(t *testing.T) {
+		ts, kind := readNotifFile(filepath.Join(dir, "does-not-exist"))
+		if ts != 0 || kind != "" {
+			t.Errorf("got (%d, %q); want (0, \"\")", ts, kind)
+		}
+	})
+}
+
+// TestNotifWatcher_TaggedKindEmits proves the two-line format flows
+// end-to-end through the fsnotify path into NotifSeen.Kind.
+func TestNotifWatcher_TaggedKindEmits(t *testing.T) {
+	dir := t.TempDir()
+	events, _ := runWatcher(t, dir)
+	p := filepath.Join(dir, "zdev-notif-epsilon.ts")
+	if err := os.WriteFile(p, []byte("1714838460\npermission\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ev := waitEvent(t, events, 200*time.Millisecond)
+	n, ok := ev.(tmuxctl.NotifSeen)
+	if !ok {
+		t.Fatalf("got = %T; want NotifSeen", ev)
+	}
+	if n.Timestamp != 1714838460 {
+		t.Errorf("Timestamp = %d; want 1714838460", n.Timestamp)
+	}
+	if n.Kind != "permission" {
+		t.Errorf("Kind = %q; want permission", n.Kind)
+	}
+}
+
 func TestNotifWatcher_CtxCancel(t *testing.T) {
 	dir := t.TempDir()
 	submit := func(tmuxctl.Event) {}

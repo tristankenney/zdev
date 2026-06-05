@@ -105,8 +105,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			}
 			session := strings.TrimSuffix(strings.TrimPrefix(base, notifPrefix), notifSuffix)
-			ts := readTimestampFile(ev.Name)
-			w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts})
+			ts, kind := readNotifFile(ev.Name)
+			w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind})
 		case err, ok := <-fsw.Errors:
 			if !ok {
 				return nil
@@ -118,18 +118,29 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
-// readTimestampFile reads the unix-second integer that zdev-notify wrote
-// (per ~/.local/bin/zdev-notify line 36-38: `date +%s > "$TS_FILE"`).
-// Returns 0 on read or parse failure — the consumer treats 0 as "no signal".
-func readTimestampFile(path string) int64 {
+// readNotifFile reads the notif file zdev-notify wrote. Two formats:
+//
+//	legacy (one line):   <unix-seconds>
+//	tagged (two lines):  <unix-seconds>\n<kind>
+//
+// where kind is the wait cost-class ("permission" / "decision"). Returns
+// (0, "") on read failure and (0, "") on a malformed first line — the
+// consumer treats ts==0 as "no signal", so a kind without a valid
+// timestamp is meaningless and dropped with it. An unrecognized kind is
+// passed through verbatim; the hub-side classifier normalizes unknowns
+// to the conservative "decision" class.
+func readNotifFile(path string) (ts int64, kind string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return 0
+		return 0, ""
 	}
-	s := strings.TrimSpace(string(b))
-	n, err := strconv.ParseInt(s, 10, 64)
+	lines := strings.SplitN(strings.TrimSpace(string(b)), "\n", 2)
+	n, err := strconv.ParseInt(strings.TrimSpace(lines[0]), 10, 64)
 	if err != nil {
-		return 0
+		return 0, ""
 	}
-	return n
+	if len(lines) > 1 {
+		kind = strings.TrimSpace(lines[1])
+	}
+	return n, kind
 }

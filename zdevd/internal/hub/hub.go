@@ -44,26 +44,26 @@ type Hub struct {
 	// Populated once by NewHub from the Config argument. Read-only after
 	// Run starts — Config-passed values never mutate during the hub's
 	// lifetime, so no synchronization is needed.
-	socketPath string                          // surfaces in diag.Reply.Socket; "" = unset
-	eventlog   *eventlog.Writer                // nil-safe everywhere it's used
-	statePath  string                          // path for persisted state JSON; "" = persistence disabled
+	socketPath string                           // surfaces in diag.Reply.Socket; "" = unset
+	eventlog   *eventlog.Writer                 // nil-safe everywhere it's used
+	statePath  string                           // path for persisted state JSON; "" = persistence disabled
 	notifier   func(project, msg, sound string) // nil-safe; nil = notifications disabled
 
 	// Owned by Run goroutine — NEVER accessed from any other goroutine.
-	state                  *state
-	seq                    int64
-	lastSnap               *proto.Snapshot
-	lastClientSessionsSeq  int64 // tracked across debounce ticks; force publish on change
-	subs                   map[*Subscriber]struct{}
-	startedAt              time.Time          // captured in NewHub; constant for daemon lifetime
-	lastEventAt            time.Time          // updated on each accepted event in Run
-	errCounter             *diag.ErrorCounter // 1h rolling counter; Run-owned
+	state                 *state
+	seq                   int64
+	lastSnap              *proto.Snapshot
+	lastClientSessionsSeq int64 // tracked across debounce ticks; force publish on change
+	subs                  map[*Subscriber]struct{}
+	startedAt             time.Time          // captured in NewHub; constant for daemon lifetime
+	lastEventAt           time.Time          // updated on each accepted event in Run
+	errCounter            *diag.ErrorCounter // 1h rolling counter; Run-owned
 }
 
 // Subscriber is the per-connection registration handle.
 type Subscriber struct {
 	TmuxPane    string
-	TmuxSession string // session name from Hello.TmuxSession; "" if not provided
+	TmuxSession string               // session name from Hello.TmuxSession; "" if not provided
 	snaps       chan *proto.Snapshot // capacity 1; drop-oldest (D2-03)
 	done        chan struct{}        // closed by hub when subscription is torn down
 }
@@ -175,7 +175,6 @@ func NewHub(cfg Config) *Hub {
 		notifier:     cfg.Notifier,
 	}
 }
-
 
 // LoadPersistedState restores the three persisted fields (lastVisitTS,
 // projectData[*].WaitStartedTS, celebrateUntil) from the state file set by
@@ -796,6 +795,14 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 			return false
 		}
 	}
+	if len(a.Triage) != len(b.Triage) {
+		return false
+	}
+	for i := range a.Triage {
+		if a.Triage[i] != b.Triage[i] {
+			return false
+		}
+	}
 	return true
 }
 
@@ -812,6 +819,7 @@ func projectEquals(a, b proto.Project) bool {
 		a.ShellCmd != b.ShellCmd ||
 		a.LastActivityTS != b.LastActivityTS ||
 		a.WaitStartedTS != b.WaitStartedTS ||
+		a.WaitKind != b.WaitKind ||
 		a.PROpen != b.PROpen ||
 		a.PRFail != b.PRFail ||
 		a.PRPend != b.PRPend ||
