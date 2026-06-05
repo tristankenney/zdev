@@ -1,4 +1,4 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # Shortcut + legend popup (roadmap NOW#8) — answers "what can I press,
 # and what do the glyphs mean" without leaving tmux. Bind:
 #
@@ -30,7 +30,7 @@ while IFS= read -r line; do
     # Reduce the command to its zdev intent: strip bind plumbing, popup
     # geometry flags, quoting, and absolute paths — "M-t  zdev-timeline-popup"
     # reads better than the full display-popup invocation.
-    key="${${(z)line}[4]}"
+    key=$(awk '{print $4}' <<<"$line")
     cmd=$(printf '%s' "$line" \
         | sed -E 's/^bind-key +-T +[^ ]+ +[^ ]+ +//' \
         | sed -E 's/(run-shell|display-popup|tmux) +//g; s/-[EbA-Z] +//g; s/-[wh] +"?[0-9]+%"? +//g' \
