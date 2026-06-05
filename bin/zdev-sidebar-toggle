@@ -9,6 +9,18 @@
 # window — useful for hot-paths where we know exactly what changed.
 set -euo pipefail
 
+# Gap-fill from ~/.config/zdev/env (install.sh's prompt answers). Real
+# environment variables win; only unset keys are taken from the file —
+# this is how ZDEV_SIDEBAR_THRESHOLD etc. reach hook-spawned shells that
+# never source the user's rc files.
+_zdev_env="${XDG_CONFIG_HOME:-$HOME/.config}/zdev/env"
+if [[ -f "$_zdev_env" ]]; then
+  while IFS='=' read -r _k _v; do
+    [[ -z "$_k" || "$_k" == \#* ]] && continue
+    [[ -z "${!_k:-}" ]] && export "$_k=$_v"
+  done < "$_zdev_env"
+fi
+
 THRESHOLD="${ZDEV_SIDEBAR_THRESHOLD:-200}"
 WIDTH="${ZDEV_SIDEBAR_WIDTH:-50}"
 HYSTERESIS="${ZDEV_SIDEBAR_HYSTERESIS:-30}"

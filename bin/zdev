@@ -1,6 +1,17 @@
 #!/bin/zsh
 set -euo pipefail
 
+# Gap-fill from the persisted settings file (~/.config/zdev/env, written
+# by install.sh's prompts). Real environment variables win — only unset
+# keys are taken from the file.
+_zdev_env="${XDG_CONFIG_HOME:-$HOME/.config}/zdev/env"
+if [[ -f "$_zdev_env" ]]; then
+    while IFS='=' read -r _k _v; do
+        [[ -z "$_k" || "$_k" == \#* ]] && continue
+        [[ -z "${(P)_k:-}" ]] && export "$_k=$_v"
+    done < "$_zdev_env"
+fi
+
 WORKSPACE="${ZDEV_WORKSPACE:-$HOME/workspace}"
 PROJECTS_FILE="${ZDEV_PROJECTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zdev/projects}"
 REAP_AFTER_HOURS="${ZDEV_REAP_AFTER_HOURS:-8}"

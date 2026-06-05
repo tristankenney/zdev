@@ -262,10 +262,16 @@ func run() error {
 		_ = h.Submit(ev)
 	}
 
-	// Workspace dir resolution: ZDEV_WORKSPACE env var or ~/workspace default.
-	// Resolved before NewLister so per-project repo resolution can run during
-	// the initial Refresh.
+	// Workspace dir resolution: ZDEV_WORKSPACE env var, then the persisted
+	// ~/.config/zdev/env setting (install.sh's prompt answer — launchd and
+	// systemd jobs never inherit the user's shell env, so an export in
+	// .zshrc alone cannot reach this process), then ~/workspace. Resolved
+	// before NewLister so per-project repo resolution can run during the
+	// initial Refresh.
 	workspaceDir := os.Getenv("ZDEV_WORKSPACE")
+	if workspaceDir == "" {
+		workspaceDir = userEnvSetting("ZDEV_WORKSPACE")
+	}
 	if workspaceDir == "" {
 		workspaceDir = filepath.Join(os.Getenv("HOME"), "workspace")
 	}
@@ -474,6 +480,34 @@ func defaultLogPath() string    { return platform.LogPath("zdevd") }
 // setupSlog is unchanged from Phase 1: opens (or creates) the JSON log file,
 // mkdir-ing the parent dir at 0700 if missing (Pitfall E). The slog default
 // handler is set to write JSON lines at LevelInfo with source attribution.
+// userEnvSetting reads one KEY=value entry from ~/.config/zdev/env — the
+// settings file install.sh writes from its prompts. Sourced as a FALLBACK
+// only: callers check the real environment first, so a live env var
+// always wins. Lines starting with '#' and malformed lines are skipped;
+// a missing file returns "". Values are used verbatim (no quoting or
+// expansion — install.sh writes absolute paths).
+func userEnvSetting(key string) string {
+	cfgDir := os.Getenv("XDG_CONFIG_HOME")
+	if cfgDir == "" {
+		cfgDir = filepath.Join(os.Getenv("HOME"), ".config")
+	}
+	b, err := os.ReadFile(filepath.Join(cfgDir, "zdev", "env"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 func setupSlog(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("mkdir log dir: %w", err)
