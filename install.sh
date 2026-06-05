@@ -122,5 +122,34 @@ echo "==> Agent attention hooks (zdev-notify channel)"
 # wait-tier notifications.
 "$HOME/.local/bin/zdev-install-hooks" || echo "  hook install skipped (see above) — re-run later: zdev-install-hooks"
 
+echo "==> tmux integration (~/.tmux.conf)"
+# Idempotent: source config/zdev.tmux.conf (sidebar hooks, pane-title
+# settings, and the core bindings M-n next / M-a triage / M-r ack-all /
+# M-? help) from the user's tmux conf. Three cases:
+#   1. conf already sources zdev.tmux.conf        → nothing to do
+#   2. conf wires zdev by hand (copied hooks)     → leave it alone; the
+#      user owns their integration — just point at what's new
+#   3. no zdev integration                        → append the source line
+TMUX_CONF="$HOME/.tmux.conf"
+if grep -q "zdev.tmux.conf" "$TMUX_CONF" 2>/dev/null; then
+  echo "  ~/.tmux.conf already sources zdev.tmux.conf — nothing to do"
+elif grep -q "zdev-sidebar-toggle" "$TMUX_CONF" 2>/dev/null; then
+  echo "  ~/.tmux.conf integrates zdev manually — leaving it alone."
+  echo "  Compare against config/zdev.tmux.conf for additions"
+  echo "  (current core bindings: M-n next, M-a triage, M-r ack-all, M-? help)."
+else
+  {
+    printf '\n# zdev — sidebar hooks + triage bindings (added by zdev install.sh)\n'
+    printf 'source-file %s\n' "$REPO/config/zdev.tmux.conf"
+  } >> "$TMUX_CONF"
+  echo "  appended 'source-file $REPO/config/zdev.tmux.conf' to ~/.tmux.conf"
+fi
+# Reload the live server so the integration lands without a restart.
+if tmux info >/dev/null 2>&1; then
+  tmux source-file "$TMUX_CONF" 2>/dev/null \
+    && echo "  reloaded running tmux server" \
+    || echo "  WARNING: 'tmux source-file ~/.tmux.conf' failed — fix the conf and reload manually"
+fi
+
 echo ""
 echo "Done. Toggle a sidebar pane to verify: zdev-sidebar-toggle"
