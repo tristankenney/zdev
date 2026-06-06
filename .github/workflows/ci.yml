@@ -102,37 +102,37 @@ jobs:
       - name: claude lifecycle (hook JSON → triage → clear → death → ack)
         run: |
           pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
+          # Poll-with-timeout, NOT fixed sleeps: attention derives from
+          # pane titles, which reach the daemon via its 5s cross-session
+          # poll — a 3s sleep races it (first smoke run failed exactly
+          # there).
+          wait_in()  { for i in $(seq 1 20); do zdev-show triage | grep -q proj-a && return 0; sleep 1; done
+                       echo "FAIL: $1"; zdev-show triage; return 1; }
+          wait_out() { for i in $(seq 1 20); do zdev-show triage | grep -q proj-a || return 0; sleep 1; done
+                       echo "FAIL: $1"; zdev-show triage; return 1; }
           # Agent asks a question → enters the triage queue.
           printf '%s' '{"message":"Which database should I use?"}' \
             | TMUX_PANE="$pane" zdev-notify claude waiting --json
-          sleep 3
-          zdev-show triage | grep -q proj-a \
-            || { echo "FAIL: waiting state never reached triage"; exit 1; }
+          wait_in "waiting state never reached triage"
           # User answers → queue empties.
           TMUX_PANE="$pane" zdev-notify claude clear
-          sleep 3
-          ! zdev-show triage | grep -q proj-a \
-            || { echo "FAIL: clear did not remove the wait"; exit 1; }
+          wait_out "clear did not remove the wait"
           # Unclean SessionEnd → death tops the queue; ack clears it.
           printf '%s' '{"reason":"other"}' \
             | TMUX_PANE="$pane" zdev-notify claude session-end --json
-          sleep 3
-          zdev-show triage | grep -q proj-a \
-            || { echo "FAIL: death never reached triage"; exit 1; }
+          wait_in "death never reached triage"
           zdev ack --all
-          sleep 3
-          ! zdev-show triage | grep -q proj-a \
-            || { echo "FAIL: ack did not clear the death"; exit 1; }
+          wait_out "ack did not clear the death"
       - name: opencode lifecycle (adapter states → triage)
         run: |
           pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
+          wait_in()  { for i in $(seq 1 20); do zdev-show triage | grep -q proj-a && return 0; sleep 1; done
+                       echo "FAIL: $1"; zdev-show triage; return 1; }
           # The exact argv the plugin produces (its event→state mapping
           # is covered by scripts/test-opencode-plugin.mjs; this leg
           # covers the daemon side of the contract).
           TMUX_PANE="$pane" zdev-notify opencode done
-          sleep 3
-          zdev-show triage | grep -q proj-a \
-            || { echo "FAIL: opencode done state never reached triage"; exit 1; }
+          wait_in "opencode done state never reached triage"
           zdev ack --all
       - name: daemon log on failure
         if: failure()
