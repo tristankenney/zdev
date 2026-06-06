@@ -141,6 +141,24 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
 
 ## NEXT (~6 weeks)
 
+- **Gas Town integration** *(trial live 2026-06-07)* — Gas Town (Yegge's
+  multi-agent orchestrator: Mayor/polecats/beads) is a natural upstream:
+  it spawns fleets, zdev supervises them. Trial wiring proved the seam in
+  one session: `GT_TMUX_SOCKET=default` puts its agents on the daemon's
+  server (it otherwise isolates onto a per-town hashed socket); Claude
+  hooks are additive so polecats feed the notify channel for free; the
+  Mayor renders as a first-class project via a symlink + projects entry
+  (`hq/mayor *`); the reaper now excludes `hq-*`/`gt-*` and measures
+  idle by activity (it would have killed never-attached polecats at 8h).
+  Open gaps → candidate features: (1) UNMANAGED-SESSION ADOPTION — show
+  sessions without a projects-file entry in the sidebar (polecat sessions
+  are dynamic; per-polecat symlinks don't scale; the daemon could resolve
+  dirs from pane cwd); (2) multi-socket supervision as the
+  no-cooperation-needed alternative; (3) triage ↔ beads cross-linking.
+  Kill: if the Mayor's own Witness/Deacon supervision makes zdev's
+  attention layer redundant for gt-managed agents, the integration is a
+  reaper-exclusion and nothing more.
+
 - **S2 cadence-capped fleet nudge + S4 Round burn-down popup** *(converged)* —
   one nudge per cadence window (count + ETA + "M-a to start a round"; 15m STUCK
   still pierces); the popup becomes a stateful jump→re-poll→advance loop with
