@@ -436,20 +436,23 @@ func TestServeWriteDeadlineReclaimsStuckRenderer(t *testing.T) {
 		})
 	}
 
-	// Wait for the deadline + slack. Worst case: one publish cycle
-	// of buffer absorption + one deadline fire.
-	time.Sleep(snapshotWriteTimeout + 800*time.Millisecond)
-
-	// Assert the subscriber was unregistered (the deadline path closed
-	// the conn, defer Unregister fired, hub goroutine processed it).
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	reply, err := h.DiagSnapshot(ctx)
-	if err != nil {
-		t.Fatalf("DiagSnapshot after stuck-client cleanup: %v", err)
+	// Poll until the subscriber is unregistered (the deadline path closed
+	// the conn, defer Unregister fired, hub goroutine processed it) — a
+	// fixed sleep flakes under -race on a loaded box: marshaling and
+	// publishing the ~1MB snapshot can exceed any constant slack.
+	deadline = time.Now().Add(8 * time.Second)
+	var last int
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		reply, err := h.DiagSnapshot(ctx)
+		cancel()
+		if err == nil {
+			last = reply.Subscribers
+			if last == 0 {
+				return // reclaimed — test passes
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	if reply.Subscribers != 0 {
-		t.Errorf("subscriber count after deadline fire = %d, want 0 (stuck client should have been reclaimed)",
-			reply.Subscribers)
-	}
+	t.Errorf("subscriber count after deadline fire = %d, want 0 (stuck client should have been reclaimed)", last)
 }
