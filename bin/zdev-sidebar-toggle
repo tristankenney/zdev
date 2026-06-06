@@ -57,6 +57,15 @@ process_window() {
   local window_id="$1"
   [ -z "$window_id" ] && return 0
 
+  # NEVER decorate zdevd-watcher: it is the daemon's control-mode
+  # anchor, not a workspace. Giving it a sidebar made it look like a
+  # legitimate place to work, which is how a user's panes ended up
+  # squatting in the keepalive window after a plain `tmux attach`
+  # landed there (third occurrence, 2026-06-07).
+  local owner
+  owner=$(tmux display-message -p -t "$window_id" '#{session_name}' 2>/dev/null || true)
+  [ "$owner" = "zdevd-watcher" ] && return 0
+
   # Use the WINDOW's own width rather than the client's — covers the
   # case where the hook fires from a session with no current client
   # but the window itself is sized for a recent wide client.

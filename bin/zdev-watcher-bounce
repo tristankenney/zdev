@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Bounce human clients off zdevd-watcher — the daemon's control-mode
+# anchor session, which exists only so `tmux -CC` has somewhere to
+# attach. A plain `tmux attach` happily lands there (it's often the
+# most-recent or only session, e.g. right after the reaper has culled
+# an idle fleet), and work done inside it is invisible to the daemon:
+# the session is snapshot-filtered and attendance-excluded by design.
+# That trap has caught the operator three times.
+#
+# Hooked on client-attached + client-session-changed (zdev.tmux.conf).
+# Rules:
+#   - control-mode clients (the daemon itself) are never touched;
+#   - if any OTHER session exists, switch the client to the most
+#     recently active one;
+#   - if the watcher is genuinely the only session, leave the client
+#     but say so loudly in the status line.
+set -euo pipefail
+
+watcher="zdevd-watcher"
+
+client=$(tmux display-message -p '#{client_name}' 2>/dev/null || true)
+[ -z "$client" ] && exit 0
+session=$(tmux display-message -p -t "$client" '#{client_session}' 2>/dev/null || true)
+[ "$session" = "$watcher" ] || exit 0
+control=$(tmux display-message -p -t "$client" '#{client_control_mode}' 2>/dev/null || echo 0)
+[ "$control" = "1" ] && exit 0
+
+# Most recently active non-watcher session.
+target=$(tmux list-sessions -F '#{session_activity} #{session_name}' 2>/dev/null \
+  | sort -rn | awk -v w="$watcher" '$2 != w {print $2; exit}')
+
+if [ -n "$target" ]; then
+  tmux switch-client -c "$client" -t "=$target" 2>/dev/null || exit 0
+  tmux display-message -c "$client" \
+    "zdev: zdevd-watcher is the daemon's internal session — moved you to $target" 2>/dev/null || true
+else
+  tmux display-message -c "$client" \
+    "zdev: you are in zdevd-watcher (daemon-internal — work here is invisible). Start a project: zdev <name>" 2>/dev/null || true
+fi

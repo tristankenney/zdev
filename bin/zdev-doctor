@@ -114,6 +114,14 @@ else
     warn "no zdev key bindings — M-p/M-n/M-a/M-r/M-? won't work"
     fix "tmux source-file ~/.tmux.conf"
   fi
+  squatters=$(tmux list-clients -F '#{client_session} #{client_control_mode} #{client_name}' 2>/dev/null \
+    | awk '$1=="zdevd-watcher" && $2!="1" {print $3}')
+  if [[ -n "$squatters" ]]; then
+    bad "human client attached to zdevd-watcher ($squatters) — work there is INVISIBLE to zdev"
+    fix "switch to a real session (M-p), or: zdev <project>"
+  else
+    ok "no human clients in zdevd-watcher"
+  fi
   width=$(tmux display-message -p '#{client_width}' 2>/dev/null || echo "")
   threshold="${ZDEV_SIDEBAR_THRESHOLD:-160}"
   if [[ -n "$width" ]]; then
