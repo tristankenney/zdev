@@ -90,23 +90,29 @@ jobs:
           test -L "$HOME/.config/opencode/plugin/zdev-notify.js"
       - name: boot daemon + fleet
         run: |
-          tmux new-session -d -s proj-a -c "$HOME/workspace/proj-a"
-          # CI runners have no user session bus; run the daemon directly.
-          systemctl --user stop zdevd 2>/dev/null || true
+          # ONE daemon, ONE tmux server, in a deterministic order.
+          # Runners DO have a systemd user bus, so make install genuinely
+          # started the unit — left alive it races the nohup'd daemon
+          # below (singleton handoff churned the tmux server and took the
+          # proj-a session with it; first smoke runs failed exactly there).
+          systemctl --user disable --now zdevd.service zdev-reaper.timer 2>/dev/null || true
+          tmux kill-server 2>/dev/null || true
+          sleep 1
           nohup "$HOME/.local/bin/zdevd" >/tmp/zdevd.log 2>&1 &
           for i in $(seq 1 30); do
             zdev-show triage >/dev/null 2>&1 && break
             sleep 1
           done
-          # The daemon answers on its socket; give its tmux control
-          # client a beat to finish the bootstrap scan, then prove the
-          # session registered (zdev-show with no args lists projects).
+          # Fleet AFTER the daemon owns the tmux server.
+          tmux new-session -d -s proj-a -c "$HOME/workspace/proj-a"
           sleep 2
           zdevd diag || true
-          zdev-show triage
+          tmux ls
+          tmux has-session -t =proj-a
       - name: claude lifecycle (hook JSON → triage → clear → death → ack)
         run: |
           pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
+          test -n "$pane" || { echo "FAIL: proj-a session vanished"; tmux ls; exit 1; }
           # Poll-with-timeout, NOT fixed sleeps: attention derives from
           # pane titles, which reach the daemon via its 5s cross-session
           # poll — a 3s sleep races it (first smoke run failed exactly
