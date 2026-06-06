@@ -125,9 +125,18 @@ jobs:
           printf '%s' '{"message":"Which database should I use?"}' \
             | TMUX_PANE="$pane" zdev-notify claude waiting --json
           wait_in "waiting state never reached triage"
-          # User answers → queue empties.
+          # User answers (clear): the agent's wait ends, but nobody has
+          # VISITED the session — the latch deliberately keeps the queue
+          # entry so an unseen wait can't vanish silently. Headless CI
+          # never attends, so assert the latch HOLDS, then release it
+          # with ack (the synthetic visit) — this exercises the latch
+          # contract and ack-as-visit in one pass.
           TMUX_PANE="$pane" zdev-notify claude clear
-          wait_out "clear did not remove the wait"
+          sleep 2
+          zdev-show triage | grep -q proj-a \
+            || { echo "FAIL: latch dropped a cleared-but-unseen wait"; exit 1; }
+          zdev ack proj-a
+          wait_out "ack did not release the latched wait"
           # Unclean SessionEnd → death tops the queue; ack clears it.
           printf '%s' '{"reason":"other"}' \
             | TMUX_PANE="$pane" zdev-notify claude session-end --json
