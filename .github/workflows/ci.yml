@@ -101,7 +101,7 @@ jobs:
           zdev-show list
       - name: claude lifecycle (hook JSON → triage → clear → death → ack)
         run: |
-          pane=$(tmux list-panes -t proj-a -F '#{pane_id}' | head -1)
+          pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
           # Agent asks a question → enters the triage queue.
           printf '%s' '{"message":"Which database should I use?"}' \
             | TMUX_PANE="$pane" zdev-notify claude waiting --json
@@ -125,7 +125,7 @@ jobs:
             || { echo "FAIL: ack did not clear the death"; exit 1; }
       - name: opencode lifecycle (adapter states → triage)
         run: |
-          pane=$(tmux list-panes -t proj-a -F '#{pane_id}' | head -1)
+          pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
           # The exact argv the plugin produces (its event→state mapping
           # is covered by scripts/test-opencode-plugin.mjs; this leg
           # covers the daemon side of the contract).

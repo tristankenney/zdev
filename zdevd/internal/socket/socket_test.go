@@ -422,12 +422,14 @@ func TestServeWriteDeadlineReclaimsStuckRenderer(t *testing.T) {
 	}
 
 	// Grow the hub's state until the resulting snapshot exceeds the kernel
-	// UDS sndbuf (default ~8KB on macOS). 500 SessionChanged events with
-	// distinct IDs add 500 sessions, producing a snapshot well past 25KB.
-	// All 500 submits arrive inside one debounce window, so they coalesce
-	// into a single (large) publish — exactly what a stuck client cannot
-	// drain before the deadline fires.
-	for i := 0; i < 500; i++ {
+	// UDS sndbuf on EVERY platform: ~8KB default on macOS, but ~208KB on
+	// Linux (net.core.wmem_default) — 500 sessions (~25KB) blocked on
+	// macOS and sailed through Linux's buffer untouched, so the deadline
+	// never fired and CI's Linux leg failed. 8000 sessions produce a
+	// snapshot near 1MB, comfortably past both. All submits arrive inside
+	// one debounce window, so they coalesce into a single (large) publish
+	// — exactly what a stuck client cannot drain before the deadline.
+	for i := 0; i < 8000; i++ {
 		_ = h.Submit(tmuxctl.SessionChanged{
 			ID:   fmt.Sprintf("$%d", i+1),
 			Name: fmt.Sprintf("stuck-session-with-a-long-enough-name-to-overflow-sndbuf-%d", i),
