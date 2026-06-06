@@ -102,10 +102,6 @@ func (a *Animator) CadenceFor(snap *proto.Snapshot) time.Duration {
 	return time.Duration(IdleSleepMS) * time.Millisecond
 }
 
-// PulseGlyph returns the current pulse-frame glyph at the fastest pace
-// (a single rune from the 8-frame cycle). Prefer PulseGlyphAt, which
-// paces the pulse by wait age.
-func (a *Animator) PulseGlyph() string { return PulseFrames[a.pulseFrame%len(PulseFrames)] }
 
 // PulseGlyphAt returns the pulse glyph paced by wait age (dogfood
 // feedback: a flat ~0.5s pulse reads as alarm from second one). The
@@ -155,14 +151,3 @@ func anyWaiting(snap *proto.Snapshot) bool {
 	return false
 }
 
-func hasCurrentSession(snap *proto.Snapshot) bool {
-	if snap.CurrentSession == "" {
-		return false
-	}
-	for _, p := range snap.Projects {
-		if p.Name == snap.CurrentSession {
-			return true
-		}
-	}
-	return false
-}

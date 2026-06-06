@@ -27,7 +27,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
@@ -293,11 +292,3 @@ func BindOrCleanStale(path string) (*net.UnixListener, error) {
 	return ln, nil
 }
 
-// HumanReadableError shapes errors for slog/log output without leaking
-// the full path to LaunchAgent stdout (which is captured to a file).
-func HumanReadableError(err error) string {
-	if err == nil {
-		return ""
-	}
-	return strings.TrimSpace(err.Error())
-}

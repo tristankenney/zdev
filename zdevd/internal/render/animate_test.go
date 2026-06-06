@@ -197,10 +197,12 @@ func TestAnimator_CadenceFor_InvisiblePaused(t *testing.T) {
 }
 
 func TestAnimator_PulseFrame_Glyph(t *testing.T) {
+	// At the urgent (÷1) pace, PulseGlyphAt walks the raw 8-frame cycle.
 	a := NewAnimator()
+	urgent := int64(WaitUrgentSec)
 	for i := 0; i < 8; i++ {
-		if a.PulseGlyph() != PulseFrames[i] {
-			t.Errorf("at frame %d PulseGlyph = %q; want %q", i, a.PulseGlyph(), PulseFrames[i])
+		if got := a.PulseGlyphAt(urgent); got != PulseFrames[i] {
+			t.Errorf("at frame %d PulseGlyphAt(urgent) = %q; want %q", i, got, PulseFrames[i])
 		}
 		a.Tick()
 	}

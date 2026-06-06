@@ -52,7 +52,7 @@ func isStaleRow(p *proto.Project, now int64) bool {
 // MarkerFor returns the (glyph, ansiColor) pair for the given project's
 // current Attention state, per VIS-01 / bash baseline lines 484-517.
 //
-//   - Waiting   → animator.PulseGlyph() + RedPulse
+//   - Waiting   → animator.PulseGlyphAt(age) + RedPulse (age-paced pulse)
 //   - Working   → animator.WorkGlyph() spinner + Icy
 //   - Finished  → "◆" + Yellow
 //   - Idle      → "·" + PaletteFor(p.Name) (when session exists)

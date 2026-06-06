@@ -157,9 +157,3 @@ func spawn(path string, args, env []string, n Notification) {
 	}()
 }
 
-// RealNotifier returns the classic terminal-notifier closure for the
-// given resolved path. Retained for callers/tests that resolve the
-// binary themselves; production wiring goes through ResolveNotifier.
-func RealNotifier(path string) func(Notification) {
-	return darwinNotifier(path)
-}
