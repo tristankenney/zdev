@@ -124,19 +124,42 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 				// must continue from its own last output regardless of what
 				// the dwell layer is currently showing.
 				PrevAttention: pd.AttentionDerived,
+				// ...but the latch only ARMS for waits the system believes:
+				// displayed (survived the waiting dwell) or hook-receipted.
+				// A dwell-suppressed title blip is neither and must die
+				// with its title.
+				WaitConfirmed: pd.Attention == proto.AttWaiting ||
+					(pd.HookWaitTS > 0 && now-pd.HookWaitTS <= hookWaitFreshSec),
 			}, now)
 			pd.AttentionDerived = ar.Attention
 			pd.WaitStartedTS = ar.WaitStartedTS
 
 			// Minimum-dwell debounce (status flap suppression): only promote a
 			// derived transition to the displayed Attention once it has held
-			// for st.statusDwell. A working→waiting→working blip inside the
-			// window never surfaces. With statusDwell == 0 this is a pass-
-			// through and displayAtt == ar.Attention.
+			// for the window. The window is TRANSITION-AWARE (dogfood
+			// 2026-06-07 — flapping working→waiting→working between agent
+			// commands):
+			//
+			//   into waiting, hook-confirmed → 0 (instant: the agent
+			//     declared "I'm asking NOW" through zdev-notify; fresh
+			//     HookWaitTS is the receipt)
+			//   into waiting, title-only     → waitingDwell (~7s — must
+			//     out-live one 5s title-poll period, because a single ✳
+			//     blip sample stands unrefuted until the next poll; the
+			//     old flat 250ms could never suppress it)
+			//   every other transition       → statusDwell (250ms)
+			dwellMS := st.statusDwell.Milliseconds()
+			if ar.Attention == proto.AttWaiting && pd.Attention != proto.AttWaiting {
+				if pd.HookWaitTS > 0 && now-pd.HookWaitTS <= hookWaitFreshSec {
+					dwellMS = 0
+				} else if st.waitingDwell > 0 {
+					dwellMS = st.waitingDwell.Milliseconds()
+				}
+			}
 			committed, pendCand, pendSince := applyDwell(
 				pd.Attention, pd.AttentionInit, ar.Attention,
 				pd.PendingAttention, pd.PendingSinceMS,
-				nowMS, st.statusDwell.Milliseconds(),
+				nowMS, dwellMS,
 			)
 			pd.Attention = committed
 			pd.AttentionInit = true

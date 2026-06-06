@@ -128,6 +128,13 @@ type Config struct {
 	// cmd/zdevd supplies statusDwellDefault when ZDEVD_STATUS_DWELL_MS is
 	// unset.
 	StatusDwell time.Duration
+
+	// WaitingDwell is the longer dwell applied only to TITLE-DERIVED
+	// transitions into AttWaiting (must out-live the 5s title poll; see
+	// state.waitingDwell). Hook-confirmed waits bypass it. Optional;
+	// cmd/zdevd supplies waitingDwellDefault when ZDEVD_WAITING_DWELL_MS
+	// is unset. Zero falls back to StatusDwell for waiting transitions.
+	WaitingDwell time.Duration
 	// Agents is the runtime registry of recognised AI clients. When nil,
 	// NewHub falls back to agents.NewRegistry(agents.Builtin()) — matching
 	// what newState() seeds — so tests building hubs with the zero-value
@@ -156,6 +163,7 @@ func NewHub(cfg Config) *Hub {
 	// debounce disabled — the displayed Attention tracks the derived value
 	// pass-for-pass, matching pre-debounce behavior.
 	st.statusDwell = cfg.StatusDwell
+	st.waitingDwell = cfg.WaitingDwell
 	return &Hub{
 		debounce:     cfg.Debounce,
 		events:       make(chan tmuxctl.Event, eventsChanCap),

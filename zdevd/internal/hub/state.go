@@ -122,6 +122,16 @@ type state struct {
 	// so recomputeAgents has a registry to consult.
 	agents *agents.Registry
 
+	// waitingDwell is the minimum-dwell window applied ONLY to title-
+	// derived transitions INTO AttWaiting. It must exceed the supervisor's
+	// 5s cross-session title poll: a single waiting-shaped sample (Claude's
+	// inter-command ✳ flash) stands unrefuted until the next poll, so any
+	// dwell shorter than one poll period commits the blip. Hook-confirmed
+	// waits (fresh projectData.HookWaitTS) bypass this entirely and use
+	// the fast statusDwell path. Default 7s via cmd/zdevd
+	// (ZDEVD_WAITING_DWELL_MS); zero falls back to statusDwell.
+	waitingDwell time.Duration
+
 	// statusDwell is the minimum-dwell window for the per-project displayed
 	// Attention. A derived transition (from DeriveAttention) is only promoted
 	// to the displayed Attention once it has held continuously for this long;
@@ -218,6 +228,19 @@ type projectData struct {
 	DeadSinceTS  int64  // unix-seconds the unclean exit was reported; 0 = not dead
 	DeadReason   string // exit reason from the hook payload, for the triage gist
 	DeadNotified bool   // at-most-once-per-disappearance notification bit
+
+	// HookWaitTS is the unix-second stamp of the most recent HOOK-fired
+	// wait (the NotifSeen waiting branch — agents declaring "I am asking
+	// for input NOW"). It discriminates confirmed waits from title-only
+	// inference for the dwell layer: a wait whose hook stamp is fresh
+	// commits to the display instantly, while a title-only waiting
+	// derivation must out-dwell the title poll's sampling artifacts
+	// (Claude flashes a waiting-shaped ✳ between commands; one poll
+	// sample of that stands unrefuted for a full 5s, so the old flat
+	// 250ms dwell could never suppress it — dogfood 2026-06-07). Zeroed
+	// by the dead/alive/ack notif branches; otherwise allowed to go
+	// stale naturally (the bypass only honors fresh stamps).
+	HookWaitTS int64
 }
 
 // prCount holds the last-known PR aggregate counts for a project.
@@ -593,6 +616,7 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.DeadSinceTS = e.Timestamp
 			pd.DeadReason = e.Summary
 			pd.DeadNotified = false
+			pd.HookWaitTS = 0
 			pd.WaitStartedTS = 0
 			pd.WaitKind = ""
 			pd.WaitSummary = ""
@@ -608,6 +632,7 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.DeadSinceTS = 0
 			pd.DeadReason = ""
 			pd.DeadNotified = false
+			pd.HookWaitTS = 0
 			pd.WaitStartedTS = 0
 			pd.WaitKind = ""
 			pd.WaitSummary = ""
@@ -628,6 +653,7 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.WaitStartedTS = e.Timestamp
 			pd.WaitKind = e.Kind
 			pd.WaitSummary = e.Summary
+			pd.HookWaitTS = e.Timestamp
 			pd.DeadSinceTS = 0
 			pd.DeadReason = ""
 			pd.DeadNotified = false

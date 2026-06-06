@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
 // TestApplyDwell enumerates the minimum-dwell debounce decision table. Each
@@ -211,5 +212,113 @@ func TestEarliestDwellDeadlineMS(t *testing.T) {
 	s.statusDwell = 0
 	if got := earliestDwellDeadlineMS(s); got != 0 {
 		t.Errorf("disabled: got %d; want 0", got)
+	}
+}
+
+// ---- waiting-dwell (transition-aware; dogfood 2026-06-07) ----
+//
+// The flat 250ms dwell could never suppress poll-sampled blips: cross-
+// session titles arrive every 5s, so a single waiting-shaped sample
+// (Claude's inter-command ✳ flash) stands unrefuted for a full poll
+// period. Transitions INTO waiting now take waitingDwell (~7s) unless a
+// fresh hook receipt (HookWaitTS) confirms the wait, which displays
+// instantly.
+
+// TestBuildSnapshot_WaitingDwell_SuppressesPollBlip replays the exact
+// dogfood flap at title-poll cadence: working → one waiting sample →
+// working. With waitingDwell=7s the blip never surfaces.
+func TestBuildSnapshot_WaitingDwell_SuppressesPollBlip(t *testing.T) {
+	now := time.Now().Unix()
+	s, name := dwellTestState(t, now, 250*time.Millisecond)
+	s.waitingDwell = 7 * time.Second
+
+	// t=0s: cold start commits working.
+	_ = buildSnapshot(s, 1, time.Time{}, now, 0)
+
+	// t=5s poll: a single ✳ blip sample. Old behavior: 250ms dwell expires
+	// long before the next poll → committed waiting. New behavior: the
+	// waiting candidate needs 7s.
+	setTitle(s, "✳ between commands")
+	snap := buildSnapshot(s, 2, time.Time{}, now+5, 5000)
+	if got := findProject(snap.Projects, name).Attention; got != proto.AttWaiting {
+		// it must NOT be waiting
+	} else {
+		t.Fatalf("t=5s Attention = waiting; blip committed instantly")
+	}
+	// Intermediate publish 1s later (event-driven passes happen between
+	// polls) — still inside the 7s window.
+	snap = buildSnapshot(s, 3, time.Time{}, now+6, 6000)
+	if got := findProject(snap.Projects, name).Attention; got == proto.AttWaiting {
+		t.Fatalf("t=6s Attention = waiting; want suppressed (within waitingDwell)")
+	}
+
+	// t=10s poll: title is back to working — the candidate drops; the blip
+	// was never shown.
+	setTitle(s, "⠂ claude")
+	snap = buildSnapshot(s, 4, time.Time{}, now+10, 10000)
+	if got := findProject(snap.Projects, name).Attention; got != proto.AttWorking {
+		t.Fatalf("t=10s Attention = %q; want working (blip suppressed end-to-end)", got)
+	}
+	if pd := s.projectData[name]; pd.PendingSinceMS != 0 {
+		t.Errorf("PendingSinceMS = %d; want 0 (candidate cleared)", pd.PendingSinceMS)
+	}
+}
+
+// TestBuildSnapshot_WaitingDwell_HookWaitDisplaysInstantly: a hook-fired
+// wait (zdev-notify → NotifSeen) carries a fresh HookWaitTS receipt and
+// bypasses the long dwell entirely — genuine claude/opencode waits keep
+// sub-second display latency.
+func TestBuildSnapshot_WaitingDwell_HookWaitDisplaysInstantly(t *testing.T) {
+	now := time.Now().Unix()
+	s, name := dwellTestState(t, now, 250*time.Millisecond)
+	s.waitingDwell = 7 * time.Second
+
+	_ = buildSnapshot(s, 1, time.Time{}, now, 0)
+
+	// Hook fires (Notification → zdev-notify waiting) and the title poll
+	// brings the ● title in the same window.
+	applyEvent(s, tmuxctl.NotifSeen{Session: name, Timestamp: now + 4, Kind: proto.WaitKindDecision, Summary: "which db?"}, nil)
+	setTitle(s, "● claude")
+	snap := buildSnapshot(s, 2, time.Time{}, now+5, 5000)
+	if got := findProject(snap.Projects, name).Attention; got != proto.AttWaiting {
+		t.Fatalf("hook-confirmed wait Attention = %q; want waiting INSTANTLY", got)
+	}
+}
+
+// TestBuildSnapshot_WaitingDwell_TitleOnlyCommitsAfterDwell: a sustained
+// title-only wait (un-hooked agent) still surfaces — just after the
+// poll-aware window instead of 250ms.
+func TestBuildSnapshot_WaitingDwell_TitleOnlyCommitsAfterDwell(t *testing.T) {
+	now := time.Now().Unix()
+	s, name := dwellTestState(t, now, 250*time.Millisecond)
+	s.waitingDwell = 7 * time.Second
+
+	_ = buildSnapshot(s, 1, time.Time{}, now, 0)
+
+	setTitle(s, "● someagent")
+	_ = buildSnapshot(s, 2, time.Time{}, now+5, 5000)   // candidate starts
+	snap := buildSnapshot(s, 3, time.Time{}, now+13, 13000) // 8s held > 7s window
+	if got := findProject(snap.Projects, name).Attention; got != proto.AttWaiting {
+		t.Fatalf("sustained title wait Attention = %q; want waiting after dwell", got)
+	}
+}
+
+// TestBuildSnapshot_WaitingDwell_StaleHookReceiptDoesNotBypass: an old
+// HookWaitTS (wait long since answered) must not fast-track a later
+// unrelated ✳ blip.
+func TestBuildSnapshot_WaitingDwell_StaleHookReceiptDoesNotBypass(t *testing.T) {
+	now := time.Now().Unix()
+	s, name := dwellTestState(t, now, 250*time.Millisecond)
+	s.waitingDwell = 7 * time.Second
+
+	pd := s.projectData[name]
+	pd.HookWaitTS = now - 120 // stale: two minutes old
+	s.projectData[name] = pd
+
+	_ = buildSnapshot(s, 1, time.Time{}, now, 0)
+	setTitle(s, "✳ blip")
+	snap := buildSnapshot(s, 2, time.Time{}, now+5, 5000)
+	if got := findProject(snap.Projects, name).Attention; got == proto.AttWaiting {
+		t.Fatal("stale hook receipt bypassed the waiting dwell")
 	}
 }

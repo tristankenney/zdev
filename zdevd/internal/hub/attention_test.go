@@ -129,8 +129,21 @@ func TestDeriveAttention(t *testing.T) {
 				LastVisitTS:       0,
 				WaitStartedTS:     500,
 				PrevAttention:     proto.AttWaiting,
+				WaitConfirmed:     true, // displayed or hook-receipted
 			},
 			want: AttentionResult{Attention: proto.AttWaiting, WaitStartedTS: 500},
+		},
+		{
+			name: "latch does NOT arm for an unconfirmed blip (dwell-suppressed ✳ sample)",
+			in: AttentionInputs{
+				Titles:            []string{"⠂ Resumed on its own"},
+				LastTitleChangeTS: 600,
+				LastVisitTS:       0,
+				WaitStartedTS:     500,
+				PrevAttention:     proto.AttWaiting,
+				WaitConfirmed:     false, // never displayed, no hook receipt
+			},
+			want: AttentionResult{Attention: proto.AttWorking, WaitStartedTS: 0},
 		},
 		{
 			name: "latch: prev=waiting, agent transitioned to idle before visit",
@@ -140,6 +153,7 @@ func TestDeriveAttention(t *testing.T) {
 				LastVisitTS:       0,
 				WaitStartedTS:     500,
 				PrevAttention:     proto.AttWaiting,
+				WaitConfirmed:     true,
 			},
 			want: AttentionResult{Attention: proto.AttWaiting, WaitStartedTS: 500},
 		},

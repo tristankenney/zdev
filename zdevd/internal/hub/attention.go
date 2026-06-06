@@ -46,6 +46,16 @@ type AttentionInputs struct {
 	// user has visited keeps the session pinned as AttWaiting so the
 	// chip doesn't silently drop.
 	PrevAttention proto.Attention
+
+	// WaitConfirmed reports whether the in-flight wait is REAL by either
+	// measure the system trusts: it was committed to the display (it
+	// out-lived the waiting dwell) or a hook receipt confirms it
+	// (fresh projectData.HookWaitTS). The latch below requires it —
+	// without this, a single poll-sampled ✳ blip armed the latch and
+	// became immortal: the title reverted, but the latch held the
+	// derived value at waiting until the dwell eventually promoted it,
+	// so the flap still surfaced, just late (dogfood 2026-06-07).
+	WaitConfirmed bool
 }
 
 // AttentionResult is the derived UX-state for one session.
@@ -64,7 +74,9 @@ type AttentionResult struct {
 //	─────────────────────────────────────────────────────────────────────
 //	title-waiting AND (visited AND visit >= title-change)        → Idle      (stale ✳ demoter — user has already seen it)
 //	title-waiting                                                → Waiting   (fresh wait — stamp WaitStartedTS if zero)
-//	prev=Waiting AND NOT visited-since-wait-start                → Waiting   (latch — agent self-exited before user noticed)
+//	prev=Waiting AND confirmed AND NOT visited-since-wait-start  → Waiting   (latch — agent self-exited before user noticed;
+//	                                                                          confirmed = displayed or hook-receipted, so a
+//	                                                                          dwell-suppressed blip can never arm it)
 //	title-working                                                → Working
 //	title-finished                                               → Finished
 //	otherwise                                                    → Idle
@@ -96,7 +108,7 @@ func DeriveAttention(in AttentionInputs, now int64) AttentionResult {
 		}
 		return AttentionResult{Attention: proto.AttWaiting, WaitStartedTS: ts}
 
-	case in.PrevAttention == proto.AttWaiting && !visitedSinceWait && in.WaitStartedTS > 0:
+	case in.PrevAttention == proto.AttWaiting && in.WaitConfirmed && !visitedSinceWait && in.WaitStartedTS > 0:
 		// Latch — agent left waiting (or title went stale) before user
 		// visited. Keep pulsing until the next visit; the next
 		// derivation pass after that visit will fall through to one of
@@ -113,6 +125,14 @@ func DeriveAttention(in AttentionInputs, now int64) AttentionResult {
 		return AttentionResult{Attention: proto.AttIdle, WaitStartedTS: 0}
 	}
 }
+
+// hookWaitFreshSec bounds how long a HookWaitTS stamp keeps granting the
+// instant-display bypass for waiting transitions. The title poll catches
+// up within 5s of the hook fire, so 30s is generous; beyond it a stale
+// stamp (hook fired, wait already answered elsewhere) decays to the
+// slow title-only path instead of letting an old receipt fast-track an
+// unrelated ✳ blip.
+const hookWaitFreshSec = 30
 
 // applyDwell is the minimum-dwell debounce layered on top of DeriveAttention.
 // It decides the DISPLAYED attention from the raw derived value, suppressing

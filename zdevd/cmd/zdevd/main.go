@@ -60,6 +60,15 @@ const debounceDefault = 16 * time.Millisecond
 // ZDEVD_STATUS_DWELL_MS; set it to 0 to disable the debounce.
 const statusDwellDefault = 250 * time.Millisecond
 
+// waitingDwellDefault is the longer dwell applied only to TITLE-DERIVED
+// transitions into waiting. Cross-session titles arrive via a 5s poll,
+// so a single waiting-shaped blip sample (Claude's inter-command ✳
+// flash) stands unrefuted for a full poll period — the dwell must
+// out-live it. 7s suppresses every single-sample blip while adding at
+// most ~7s to title-only wait display; hook-confirmed waits (the normal
+// claude/opencode path) bypass this entirely and display instantly.
+const waitingDwellDefault = 7 * time.Second
+
 // version is injected at build time via -ldflags="-X main.version=…".
 // Falls back to "dev" for `go build` / `go install` without ldflags.
 var version = "dev"
@@ -148,6 +157,11 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "zdevd: ZDEVD_STATUS_DWELL_MS: %v\n", err)
 		return err
 	}
+	waitingDwell, err := parseDwellMS(os.Getenv("ZDEVD_WAITING_DWELL_MS"), waitingDwellDefault, "ZDEVD_WAITING_DWELL_MS")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	tmuxSocket := os.Getenv("ZDEVD_TMUX_SOCKET")
 
@@ -185,7 +199,8 @@ func run() error {
 	// Run starts; nil/empty values stay disabled.
 	hubCfg := hub.Config{
 		Debounce:    debounce,
-		StatusDwell: statusDwell,
+		StatusDwell:  statusDwell,
+		WaitingDwell: waitingDwell,
 		SocketPath:  *socketFlag,
 		EventLog:    evlog,
 		StatePath:   *stateFlag,
@@ -442,15 +457,22 @@ func parseDebounceWindow(raw string) (time.Duration, error) {
 // ms; negative / non-integer → error. Unlike ZDEVD_DEBOUNCE_MS, 0 is a valid
 // value here (it disables the feature) rather than an error.
 func parseStatusDwell(raw string) (time.Duration, error) {
+	return parseDwellMS(raw, statusDwellDefault, "ZDEVD_STATUS_DWELL_MS")
+}
+
+// parseDwellMS is the shared parser for the dwell knobs: empty → the
+// given default; 0 → disabled; positive integer → that many ms;
+// negative / non-integer → error naming the env var.
+func parseDwellMS(raw string, def time.Duration, envName string) (time.Duration, error) {
 	if raw == "" {
-		return statusDwellDefault, nil
+		return def, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, fmt.Errorf("invalid ZDEVD_STATUS_DWELL_MS=%q: must be a non-negative integer (ms)", raw)
+		return 0, fmt.Errorf("invalid %s=%q: must be a non-negative integer (ms)", envName, raw)
 	}
 	if n < 0 {
-		return 0, fmt.Errorf("ZDEVD_STATUS_DWELL_MS=%d: must be >= 0", n)
+		return 0, fmt.Errorf("%s=%d: must be >= 0", envName, n)
 	}
 	return time.Duration(n) * time.Millisecond, nil
 }
