@@ -322,3 +322,68 @@ func TestBuildSnapshot_WaitingDwell_StaleHookReceiptDoesNotBypass(t *testing.T) 
 		t.Fatal("stale hook receipt bypassed the waiting dwell")
 	}
 }
+
+// TestEarliestDwellDeadline_WaitingCandidateUsesLongWindow pins the
+// timer/snapshot agreement (invariants review finding 1): a pending
+// waiting candidate's deadline must use waitingDwell, or the Run loop
+// arms a 250ms timer whose deadline is instantly in the past and spins
+// a ~1ms wake loop for the remaining ~6.75s.
+func TestEarliestDwellDeadline_WaitingCandidateUsesLongWindow(t *testing.T) {
+	now := time.Now().Unix()
+	s, name := dwellTestState(t, now, 250*time.Millisecond)
+	s.waitingDwell = 7 * time.Second
+
+	_ = buildSnapshot(s, 1, time.Time{}, now, 0)
+	setTitle(s, "✳ blip")
+	_ = buildSnapshot(s, 2, time.Time{}, now+5, 5000) // candidate starts at 5000ms
+
+	got := earliestDwellDeadlineMS(s)
+	want := int64(5000 + 7000)
+	if got != want {
+		t.Fatalf("earliestDwellDeadlineMS = %d; want %d (PendingSince + waitingDwell)", got, want)
+	}
+	_ = name
+}
+
+// TestPersistRestore_WaitSurvivesAsConfirmed pins invariants-review
+// finding 2: a persisted pre-restart wait must keep its latch on the
+// first post-restart pass even when the agent's waiting title is gone —
+// the restore seeds the DISPLAYED attention, which is what WaitConfirmed
+// reads.
+func TestPersistRestore_WaitSurvivesAsConfirmed(t *testing.T) {
+	now := time.Now().Unix()
+
+	// Pre-restart state: committed, unvisited wait.
+	s1 := buildTestState("proj", []string{"%1"}, []string{"● claude"})
+	s1.projectListNames = []string{"proj"}
+	pd := s1.projectData["proj"]
+	pd.Attention = proto.AttWaiting
+	pd.AttentionDerived = proto.AttWaiting
+	pd.AttentionInit = true
+	pd.WaitStartedTS = now - 300
+	s1.projectData["proj"] = pd
+
+	dir := t.TempDir()
+	path := dir + "/state.json"
+	if err := saveState(path, s1); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+
+	// Post-restart: agent's pane shows a non-waiting title (it self-
+	// resolved while the daemon was down) — the latch is the only thing
+	// keeping the unseen wait alive.
+	s2 := buildTestState("proj", []string{"%1"}, []string{"⠂ claude"})
+	s2.projectListNames = []string{"proj"}
+	s2.statusDwell = 250 * time.Millisecond
+	s2.waitingDwell = 7 * time.Second
+	ps, err := loadState(path)
+	if err != nil || ps == nil {
+		t.Fatalf("loadState: %v %v", ps, err)
+	}
+	applyPersistedState(s2, ps)
+
+	snap := buildSnapshot(s2, 1, time.Time{}, now, 0)
+	if got := findProject(snap.Projects, "proj").Attention; got != proto.AttWaiting {
+		t.Fatalf("post-restart Attention = %q; want waiting (persisted latch must survive WaitConfirmed gating)", got)
+	}
+}

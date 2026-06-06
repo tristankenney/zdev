@@ -263,6 +263,15 @@ func applyPersistedState(s *state, ps *persistedState) {
 		// (AttentionInit is false), rather than debouncing against a stale
 		// pre-restart display value.
 		pd.AttentionDerived = v
+		// Seed the DISPLAYED attention too: the persisted value was, by
+		// definition, committed before the restart. Without this the
+		// first post-restart pass sees pd.Attention == idle, computes
+		// WaitConfirmed = false, and the latch silently drops a genuine
+		// pre-restart wait the user never saw (invariants review,
+		// finding 2). It also lets a restored wait re-display without
+		// re-serving the waiting dwell.
+		pd.Attention = v
+		pd.AttentionInit = true
 		s.projectData[k] = pd
 	}
 

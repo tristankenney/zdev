@@ -159,8 +159,8 @@ func run() error {
 	}
 	waitingDwell, err := parseDwellMS(os.Getenv("ZDEVD_WAITING_DWELL_MS"), waitingDwellDefault, "ZDEVD_WAITING_DWELL_MS")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		fmt.Fprintf(os.Stderr, "zdevd: ZDEVD_WAITING_DWELL_MS: %v\n", err)
+		return err
 	}
 
 	tmuxSocket := os.Getenv("ZDEVD_TMUX_SOCKET")
@@ -198,13 +198,13 @@ func run() error {
 	// WithStatePath/WithNotifier fluent chain). Fields are read-only after
 	// Run starts; nil/empty values stay disabled.
 	hubCfg := hub.Config{
-		Debounce:    debounce,
+		Debounce:     debounce,
 		StatusDwell:  statusDwell,
 		WaitingDwell: waitingDwell,
-		SocketPath:  *socketFlag,
-		EventLog:    evlog,
-		StatePath:   *stateFlag,
-		Agents:      cfg.AgentRegistry(),
+		SocketPath:   *socketFlag,
+		EventLog:     evlog,
+		StatePath:    *stateFlag,
+		Agents:       cfg.AgentRegistry(),
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve

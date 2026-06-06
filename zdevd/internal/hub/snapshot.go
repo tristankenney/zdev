@@ -148,14 +148,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			//     blip sample stands unrefuted until the next poll; the
 			//     old flat 250ms could never suppress it)
 			//   every other transition       → statusDwell (250ms)
-			dwellMS := st.statusDwell.Milliseconds()
-			if ar.Attention == proto.AttWaiting && pd.Attention != proto.AttWaiting {
-				if pd.HookWaitTS > 0 && now-pd.HookWaitTS <= hookWaitFreshSec {
-					dwellMS = 0
-				} else if st.waitingDwell > 0 {
-					dwellMS = st.waitingDwell.Milliseconds()
-				}
-			}
+			dwellMS := dwellWindowMS(st, &pd, ar.Attention, now)
 			committed, pendCand, pendSince := applyDwell(
 				pd.Attention, pd.AttentionInit, ar.Attention,
 				pd.PendingAttention, pd.PendingSinceMS,
@@ -318,14 +311,26 @@ func projectAgentStates(src map[string]string) map[string]proto.Attention {
 // pending status would only surface on the next event or the supervisor's
 // 1Hz heartbeat, adding up to a second of latency to every real change.
 func earliestDwellDeadlineMS(st *state) int64 {
-	dwellMS := st.statusDwell.Milliseconds()
-	if dwellMS <= 0 {
+	if st.statusDwell.Milliseconds() <= 0 {
 		return 0
 	}
+	// now for the hook-receipt freshness check: derive from the pending
+	// stamp's own clock domain (unix ms → s). The deadline only needs to
+	// be conservative — an early timer fire republished and re-arms.
 	var earliest int64
 	for _, pd := range st.projectData {
 		if pd.PendingSinceMS == 0 {
 			continue
+		}
+		// The candidate's REAL window is transition-aware: a pending
+		// waiting candidate dwells for waitingDwell, not statusDwell.
+		// Arming the timer at statusDwell for those spun a ~1ms wake
+		// loop for the remaining ~6.75s (deadline already in the past
+		// on every re-arm — caught by the invariants review).
+		pdCopy := pd
+		dwellMS := dwellWindowMS(st, &pdCopy, pd.PendingAttention, pd.PendingSinceMS/1000)
+		if dwellMS <= 0 {
+			dwellMS = st.statusDwell.Milliseconds()
 		}
 		deadline := pd.PendingSinceMS + dwellMS
 		if earliest == 0 || deadline < earliest {
@@ -333,6 +338,24 @@ func earliestDwellDeadlineMS(st *state) int64 {
 		}
 	}
 	return earliest
+}
+
+// dwellWindowMS selects the dwell window for promoting `candidate` as
+// the displayed attention — the single source of truth shared by the
+// snapshot pass and the Run loop's timer arming (they MUST agree or the
+// timer spins). Transitions into waiting take the long poll-aware
+// window unless a fresh hook receipt confirms the wait; everything
+// else takes the fast statusDwell.
+func dwellWindowMS(st *state, pd *projectData, candidate proto.Attention, now int64) int64 {
+	if candidate == proto.AttWaiting && pd.Attention != proto.AttWaiting {
+		if pd.HookWaitTS > 0 && now-pd.HookWaitTS <= hookWaitFreshSec {
+			return 0
+		}
+		if st.waitingDwell > 0 {
+			return st.waitingDwell.Milliseconds()
+		}
+	}
+	return st.statusDwell.Milliseconds()
 }
 
 // emitPortDiff fires one eventlog.Event per port that opened (in `now`
