@@ -100,6 +100,15 @@ if [[ -z "$go_major" || "$go_major" -lt 1 ]] || \
   exit 1
 fi
 ok_ "Go $go_raw"
+if ! command -v fzf >/dev/null 2>&1; then
+  warn_ "fzf not installed — the M-p project switcher and M-a triage popup won't open"
+  case "$OS" in
+    Darwin) next_step "Install fzf (powers the M-p switcher + M-a triage popup):  brew install fzf" ;;
+    Linux)  next_step "Install fzf (powers the M-p switcher + M-a triage popup):  sudo apt install fzf" ;;
+  esac
+else
+  ok_ "fzf present (M-p switcher, M-a triage popup)"
+fi
 if command -v gh >/dev/null 2>&1; then
   if ! gh auth status >/dev/null 2>&1; then
     warn_ "'gh' is installed but not authenticated — PR/CI chips stay empty"
@@ -231,7 +240,7 @@ if grep -q "zdev.tmux.conf" "$TMUX_CONF" 2>/dev/null; then
   ok_ "~/.tmux.conf already sources zdev.tmux.conf"
 elif grep -q "zdev-sidebar-toggle" "$TMUX_CONF" 2>/dev/null; then
   ok_ "~/.tmux.conf integrates zdev manually — left alone"
-  next_step "Your tmux conf predates the bundled one — compare against $REPO/config/zdev.tmux.conf for new bindings (M-n next, M-a triage, M-r ack-all, M-? help)."
+  next_step "Your tmux conf predates the bundled one — compare against $REPO/config/zdev.tmux.conf for new bindings (M-p switch, M-n next, M-a triage, M-r ack-all, M-? help)."
 else
   {
     printf '\n# zdev — sidebar hooks + triage bindings (added by zdev install.sh)\n'
@@ -257,7 +266,7 @@ else
   dim_ "daemon        systemd --user zdevd.service"
 fi
 dim_ "tmux conf     $REPO/config/zdev.tmux.conf"
-dim_ "keys          M-n next · M-a triage · M-r ack-all · M-? help/legend"
+dim_ "keys          M-p switch · M-n next · M-a triage · M-r ack-all · M-? help"
 
 printf '\n%sWhat to do now%s\n' "$C_BOLD" "$C_RST"
 i=1
