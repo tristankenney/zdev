@@ -157,9 +157,6 @@ const (
 	MoodGreen = "\x1b[38;5;46m"  // bright green (xterm 46)
 	MoodIdle  = "\x1b[38;5;245m" // mid-grey (xterm 245)
 
-	// MoodBlock is U+2588 FULL BLOCK — exactly 1 cell wide in all modern
-	// monospace fonts. Used as the header mood indicator.
-	MoodBlock = "█"
 
 	// Ellipsis is the U+2026 horizontal ellipsis, used as the truncation
 	// suffix per VIS-11. Three bytes UTF-8 (0xE2 0x80 0xA6).

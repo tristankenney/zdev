@@ -228,10 +228,9 @@ func formatLegend() string {
 	row(redPulse+"! 7m"+reset, "wait age ≥5min (urgent — also fires macOS notifications)")
 	row(dim+"1d"+reset, "last-activity age (only shown when ≥30s and not waiting)")
 
-	section("Header")
-	row("zdev projects "+moodIdle+"█"+reset, "title + mood block")
-	row(moodIdle+"█"+reset+" / "+moodGreen+"█"+reset+" / "+orange+"█"+reset+" / "+moodRed+"█"+reset,
-		"mood — idle / something finished or running / waiting / urgent (dead, ≥3 waits, or ≥5min)")
+	section("Mood divider (top row)")
+	row(moodIdle+"─────"+reset+" / "+moodGreen+"─────"+reset+" / "+orange+"─────"+reset+" / "+moodRed+"─────"+reset,
+		"fleet mood by color — idle / finished or running / waiting / urgent (dead, ≥3 waits, or ≥5min)")
 
 	section("Footer tally (non-zero buckets only)")
 	row(redPulse+"1 dead"+reset+dim+" · "+reset+orange+"2 waiting"+reset+dim+" · "+reset+icy+"3 working"+reset,

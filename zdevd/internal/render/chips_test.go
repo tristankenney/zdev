@@ -386,7 +386,7 @@ func TestMoodFor_ThreePlusWaiting(t *testing.T) {
 		},
 	}
 	got := MoodFor(snap, func() int64 { return 1000000 })
-	want := MoodRed + MoodBlock + Reset
+	want := MoodRed
 	if got != want {
 		t.Errorf("MoodFor 3+ waiting: want %q, got %q", want, got)
 	}
@@ -399,7 +399,7 @@ func TestMoodFor_OneWaiting(t *testing.T) {
 		},
 	}
 	got := MoodFor(snap, func() int64 { return 1000000 })
-	want := Orange + MoodBlock + Reset
+	want := Orange
 	if got != want {
 		t.Errorf("MoodFor 1 waiting: want %q, got %q", want, got)
 	}
@@ -413,7 +413,7 @@ func TestMoodFor_OneFinished(t *testing.T) {
 		},
 	}
 	got := MoodFor(snap, func() int64 { return 1000000 })
-	want := MoodGreen + MoodBlock + Reset
+	want := MoodGreen
 	if got != want {
 		t.Errorf("MoodFor 1 finished: want %q, got %q", want, got)
 	}
@@ -427,7 +427,7 @@ func TestMoodFor_AllAlive(t *testing.T) {
 		},
 	}
 	got := MoodFor(snap, func() int64 { return 1000000 })
-	want := MoodIdle + MoodBlock + Reset
+	want := MoodIdle
 	if got != want {
 		t.Errorf("MoodFor all alive: want %q, got %q", want, got)
 	}
@@ -441,7 +441,7 @@ func TestMoodFor_UrgentWaitAge(t *testing.T) {
 		},
 	}
 	got := MoodFor(snap, func() int64 { return now })
-	want := MoodRed + MoodBlock + Reset
+	want := MoodRed
 	if got != want {
 		t.Errorf("MoodFor urgent wait age: want %q, got %q", want, got)
 	}
@@ -454,37 +454,21 @@ func TestMoodFor_ShellRunning_HappyMood(t *testing.T) {
 		},
 	}
 	got := MoodFor(snap, func() int64 { return 1000000 })
-	want := MoodGreen + MoodBlock + Reset
+	want := MoodGreen
 	if got != want {
 		t.Errorf("MoodFor shell-running: want %q, got %q", want, got)
 	}
 }
 
-func TestMoodFor_BlockIsExactlyOneCell(t *testing.T) {
-	// MoodFor must return a block that is exactly 1 rune wide after stripping SGR.
+func TestMoodFor_ReturnsBareColor(t *testing.T) {
+	// MoodFor returns ONLY an SGR color sequence — the divider composes
+	// the glyphs; any visible rune here would corrupt the divider row.
 	snap := &proto.Snapshot{
 		Projects: []proto.Project{{Name: "a", Status: "alive"}},
 	}
 	result := MoodFor(snap, func() int64 { return 1000000 })
-	// Strip all \x1b[...m sequences.
-	stripped := strings.Builder{}
-	inEscape := false
-	for _, r := range result {
-		if r == '\x1b' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if r == 'm' {
-				inEscape = false
-			}
-			continue
-		}
-		stripped.WriteRune(r)
-	}
-	runeCount := len([]rune(stripped.String()))
-	if runeCount != 1 {
-		t.Errorf("MoodFor block must be exactly 1 cell (rune), got %d runes: %q (stripped: %q)", runeCount, result, stripped.String())
+	if !strings.HasPrefix(result, "\x1b[") || !strings.HasSuffix(result, "m") {
+		t.Errorf("MoodFor = %q; want a bare SGR color sequence", result)
 	}
 }
 

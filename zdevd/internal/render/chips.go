@@ -112,16 +112,18 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 	}
 }
 
-// MoodFor returns the header mood block based on the snapshot state per
-// VIS-04 / PD-06 (260511-n4n task 4). Returns a pre-wrapped string of the
-// form: {color}█{Reset}. The block is exactly 1 cell wide.
+// MoodFor returns the fleet-mood ANSI color per VIS-04 / PD-06. Since
+// the header row's removal (dogfood: "the zdev projects header doesn't
+// add anything" — the pane border already names the pane), the DIVIDER
+// carries the mood as its color; this returns the bare color code and
+// the divider composes it.
 //
 // Tiers (highest priority first):
 //
-//	urgent = any wait-age >= WaitUrgentSec OR count(waiting) >= 3 → MoodRed block
-//	warn   = count(waiting) >= 1                                  → Orange block
-//	happy  = count(finished) > 0 OR count(shell-running) > 0     → MoodGreen block
-//	idle   = otherwise                                            → MoodIdle block
+//	urgent = any wait-age >= WaitUrgentSec, any dead, OR count(waiting) >= 3 → MoodRed
+//	warn   = count(waiting) >= 1                                            → Orange
+//	happy  = count(finished) > 0 OR count(shell-running) > 0                → MoodGreen
+//	idle   = otherwise                                                      → MoodIdle
 func MoodFor(snap *proto.Snapshot, nowFn func() int64) string {
 	now := nowFn()
 	nWait, nDone, nRun := 0, 0, 0
@@ -147,13 +149,13 @@ func MoodFor(snap *proto.Snapshot, nowFn func() int64) string {
 	}
 	switch {
 	case urgent || nWait >= 3:
-		return MoodRed + MoodBlock + Reset
+		return MoodRed
 	case nWait >= 1:
-		return Orange + MoodBlock + Reset
+		return Orange
 	case nDone > 0 || nRun > 0:
-		return MoodGreen + MoodBlock + Reset
+		return MoodGreen
 	default:
-		return MoodIdle + MoodBlock + Reset
+		return MoodIdle
 	}
 }
 

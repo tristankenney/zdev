@@ -107,33 +107,25 @@ func RenderStub(snap *proto.Snapshot, width int) []byte {
 //
 // Frame structure:
 //  1. CursorHome
-//  2. Header: bold "  zdev projects <mood>" + ClearLineEnd + LF
-//  3. Divider: "  ─────────────────" (17 U+2500) + ClearLineEnd + LF
-//  4. For each project: 2 visual rows (marker + metadata, em-dash
-//     placeholder when no chip applies; click-row math invariant
-//     per Pitfall H).
-//  5. Footer: "  N● N◎ N◆ N· N·" + ClearLineEnd + LF
-//  6. ClearToEnd
+//  2. Mood divider: "  ─────────────────" (17 U+2500, fleet-mood color)
+//     + ClearLineEnd + LF
+//  3. For each project: rows (marker + metadata for current session;
+//     click-row math invariant per Pitfall H).
+//  4. Footer tally (one row, possibly blank — see FooterMode)
+//  5. ClearToEnd
 //
 // Source-of-truth: ~/.local/bin/zdev-sidebar-render lines 622-661.
 func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64) []byte {
 	var buf bytes.Buffer
 	buf.WriteString(CursorHome)
 
-	// Header: bold "  zdev projects {mood}" + reset + clear + LF.
-	// The trailing dim " [go]" build-tag was distilled out — it carried no
-	// user signal, only renderer build identity (debug). For build identity
-	// at runtime, use `zdevd diag` or `zdev-show --legend`.
-	buf.WriteString(Bold)
-	buf.WriteString("  zdev projects ")
-	buf.WriteString(MoodFor(snap, nowFn))
-	buf.WriteString(Reset)
-	buf.WriteString(ClearLineEnd)
-	buf.WriteByte('\n')
-
-	// Divider: "  " + dim + 17xU+2500 + reset + clear + LF
+	// Mood divider: the frame's first row. The "  zdev projects" header
+	// text was dropped (dogfood: it added nothing — the pane border
+	// already names the pane); the divider carries the fleet mood as its
+	// COLOR (grey idle / green active / orange waiting / red urgent),
+	// preserving the at-a-glance signal in zero extra rows.
 	buf.WriteString("  ")
-	buf.WriteString(Dim)
+	buf.WriteString(MoodFor(snap, nowFn))
 	buf.WriteString(strings.Repeat("─", 17))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
@@ -142,7 +134,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// Triage section (phase4-v9): pinned ranked attention strip between
 	// the divider and the stable project list. Renders ZERO rows when the
 	// queue is empty, so the pre-triage row math (project section starts
-	// at click-row 3) is unchanged for quiet sidebars; when non-empty it
+	// at click-row 2, after the mood divider) is unchanged for quiet
+	// sidebars; when non-empty it
 	// adds min(len(Triage), triageSectionMax) entry rows plus one closing
 	// divider row, shifting the project section down by exactly that.
 	// The main list is never reordered — spatial memory of row positions

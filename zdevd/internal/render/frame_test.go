@@ -145,8 +145,8 @@ func TestRender_PreservesPhase1Stub(t *testing.T) {
 	if !bytes.Contains(out, []byte(CursorHome)) {
 		t.Errorf("Render missing CursorHome")
 	}
-	if !bytes.Contains(out, []byte("zdev projects")) {
-		t.Errorf("Render missing 'zdev projects' header")
+	if !bytes.Contains(out, []byte("─────")) {
+		t.Errorf("Render missing the mood divider (header text was removed by design)")
 	}
 	if !bytes.Contains(out, []byte("alpha")) {
 		t.Errorf("Render missing project name 'alpha'")
@@ -204,20 +204,19 @@ func TestRender_TwoLevelRowCounts(t *testing.T) {
 // countProjectRows returns the number of project rows in the rendered frame.
 // The frame structure (after bytes.Split on "\n") is:
 //
-//	[0] CursorHome + header
-//	[1] divider
-//	[2..2+2N-1] project rows (2 per project)
-//	[2+2N] footer
-//	[2+2N+1] ClearToEnd (no trailing \n)
+//	[0] CursorHome + mood divider
+//	[1..1+2N-1] project rows (2 per project)
+//	[1+2N] footer
+//	[1+2N+1] ClearToEnd (no trailing \n)
 //
-// So project rows = len(splitLines) - 4.
+// So project rows = len(splitLines) - 3.
 func countProjectRows(frame []byte) int {
 	lines := bytes.Split(frame, []byte("\n"))
 	// Need at least 4 non-project lines: header, divider, footer, clearToEnd.
 	if len(lines) < 4 {
 		return 0
 	}
-	n := len(lines) - 4
+	n := len(lines) - 3
 	if n < 0 {
 		return 0
 	}

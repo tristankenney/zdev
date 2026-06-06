@@ -83,13 +83,13 @@ func TestClickColumnMath(t *testing.T) {
 				// With domain-row suppression (260511-ohu), current-session projects
 				// can produce 1 row (marker only) up to 4 rows (marker + 3 domain rows)
 				// depending on chip population. Non-current always produces 1 row.
-				// The authoritative count is bytes.Count(frame, "\n") - 3 fixed rows.
+				// The authoritative count is bytes.Count(frame, "\n") - 2 fixed rows.
 				totalNewlines := bytes.Count(frame, []byte("\n"))
-				expectedProjectRows := totalNewlines - 3 // header + divider + footer
+				expectedProjectRows := totalNewlines - 2 // mood divider + footer
 
-				// Sanity: total newlines must be >= 3 (header + divider + footer).
-				if totalNewlines < 3 {
-					t.Errorf("total \\n = %d; expected at least 3 (header+divider+footer)", totalNewlines)
+				// Sanity: total newlines must be >= 2 (mood divider + footer).
+				if totalNewlines < 2 {
+					t.Errorf("total \\n = %d; expected at least 2 (divider+footer)", totalNewlines)
 				}
 
 				// Non-current rows must all be 1 row each.
@@ -127,7 +127,7 @@ func TestClickColumnMath(t *testing.T) {
 				offset := 0            // 0-based line index into the project-rows section
 				for i, p := range s.snap.Projects {
 					isCurrent := p.Name == s.snap.CurrentSession && s.snap.CurrentSession != ""
-					// 1-indexed click row: header=1, divider=2, project section starts at 3.
+					// 1-indexed click row: mood divider=1, project section starts at 2.
 					markerClickRow := 3 + offset
 					// Verify the offset table maps back correctly.
 					if markerClickRow < 3 {
