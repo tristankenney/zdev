@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# zdev doctor — mechanized setup diagnosis (ROADMAP NEXT item; spec
+# written during the first Ubuntu install's debugging sessions).
+#
+# Answers "is my setup right, and if not, where?" in one run. Read-only
+# by default; `--probe` additionally fires a synthetic agent wait
+# through the REAL notify channel and asserts it reaches the triage
+# queue (requires tmux; overwrites the current session's pending notif
+# state, then acks it).
+#
+# Exit code: number of ✗ failures (0 = healthy).
+set -uo pipefail
+
+# Gap-fill from ~/.config/zdev/env (real env wins) — same loader as the
+# other scripts, so doctor sees the same config the components do.
+_zdev_env="${XDG_CONFIG_HOME:-$HOME/.config}/zdev/env"
+if [[ -f "$_zdev_env" ]]; then
+  while IFS='=' read -r _k _v; do
+    [[ -z "$_k" || "$_k" == \#* ]] && continue
+    [[ -z "${!_k:-}" ]] && export "$_k=$_v"
+  done < "$_zdev_env"
+fi
+
+PROBE=0
+[[ "${1:-}" == "--probe" ]] && PROBE=1
+
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  C_OK=$'\033[32m'; C_WARN=$'\033[1;33m'; C_ERR=$'\033[1;31m'
+  C_DIM=$'\033[90m'; C_BOLD=$'\033[1m'; C_RST=$'\033[0m'
+else
+  C_OK=""; C_WARN=""; C_ERR=""; C_DIM=""; C_BOLD=""; C_RST=""
+fi
+
+FAILS=0
+WARNS=0
+ok()   { printf '  %s✓%s %s\n' "$C_OK" "$C_RST" "$1"; }
+warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_RST" "$1"; WARNS=$((WARNS+1)); }
+bad()  { printf '  %s✗%s %s\n' "$C_ERR" "$C_RST" "$1"; FAILS=$((FAILS+1)); }
+fix()  { printf '      %s→ %s%s\n' "$C_DIM" "$1" "$C_RST"; }
+sect() { printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RST"; }
+
+OS="$(uname -s)"
+
+# ---------- 1. PATH + binaries ----------
+sect "Binaries"
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ok "~/.local/bin on PATH" ;;
+  *) bad "~/.local/bin NOT on PATH — zdev commands won't resolve"
+     fix "echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.$(basename "${SHELL:-bash}")rc && exec \$SHELL" ;;
+esac
+for b in zdevd zdev-show zdev-sidebar-render zdev-notify zdev; do
+  if [[ -x "$HOME/.local/bin/$b" || -L "$HOME/.local/bin/$b" ]]; then
+    if [[ -L "$HOME/.local/bin/$b" && ! -e "$HOME/.local/bin/$b" ]]; then
+      bad "$b is a BROKEN symlink ($(readlink "$HOME/.local/bin/$b"))"
+      fix "re-run install.sh from the zdev checkout"
+    fi
+  else
+    bad "$b missing from ~/.local/bin"
+    fix "re-run install.sh from the zdev checkout"
+  fi
+done
+[[ $FAILS -eq 0 ]] && ok "zdevd, zdev-show, zdev-sidebar-render, zdev-notify, zdev present"
+
+# ---------- 2. daemon ----------
+sect "Daemon"
+if [[ "$OS" == "Linux" ]]; then
+  if systemctl --user is-active zdevd.service >/dev/null 2>&1; then
+    ok "systemd unit zdevd.service active"
+  else
+    state=$(systemctl --user is-active zdevd.service 2>/dev/null || echo "no user bus")
+    if pgrep -x zdevd >/dev/null 2>&1; then
+      warn "zdevd running but NOT via systemd (unit: $state) — won't survive logout/reboot"
+      fix "systemctl --user enable --now zdevd.service   (and: loginctl enable-linger \$USER)"
+    else
+      bad "zdevd not running (unit: $state)"
+      fix "systemctl --user enable --now zdevd.service; logs: journalctl --user -u zdevd -n 20"
+    fi
+  fi
+else
+  if pgrep -x zdevd >/dev/null 2>&1; then
+    ok "zdevd process running"
+  else
+    bad "zdevd not running"
+    fix "launchctl kickstart -k gui/\$(id -u)/com.zdev.zdevd; logs: ~/Library/Logs/zdev/"
+  fi
+fi
+show_err=$("$HOME/.local/bin/zdev-show" 2>&1 >/dev/null)
+if [[ -z "$show_err" ]]; then
+  ok "daemon answers on its socket"
+elif grep -q "schema mismatch" <<<"$show_err"; then
+  bad "daemon/CLI schema mismatch — stale binary on one side"
+  fix "make -C <zdev-repo>/zdevd install, then restart the daemon"
+else
+  bad "cannot reach daemon socket: ${show_err}"
+  fix "is zdevd running? check the daemon logs above"
+fi
+
+# ---------- 3. tmux ----------
+sect "tmux"
+if ! tmux info >/dev/null 2>&1; then
+  warn "no tmux server running — start tmux, then: zdev <project>"
+else
+  hooks=$(tmux show-hooks -g 2>/dev/null | grep -c zdev-sidebar-toggle || true)
+  if [[ "$hooks" -ge 1 ]]; then
+    ok "sidebar hooks registered ($hooks)"
+  else
+    bad "zdev hooks NOT registered in this tmux server"
+    fix "tmux source-file ~/.tmux.conf   (does it source config/zdev.tmux.conf?)"
+  fi
+  keys=$(tmux list-keys 2>/dev/null | grep -c zdev || true)
+  if [[ "$keys" -ge 1 ]]; then
+    ok "zdev key bindings present ($keys)"
+  else
+    warn "no zdev key bindings — M-p/M-n/M-a/M-r/M-? won't work"
+    fix "tmux source-file ~/.tmux.conf"
+  fi
+  width=$(tmux display-message -p '#{client_width}' 2>/dev/null || echo "")
+  threshold="${ZDEV_SIDEBAR_THRESHOLD:-160}"
+  if [[ -n "$width" ]]; then
+    if (( width >= threshold )); then
+      ok "client width $width ≥ threshold $threshold — sidebar eligible"
+    else
+      # The one failure mode where EVERYTHING else reports healthy.
+      bad "client width $width < threshold $threshold — sidebar correctly suppressed"
+      fix "widen the terminal, or: echo 'ZDEV_SIDEBAR_THRESHOLD=120' >> ~/.config/zdev/env"
+    fi
+  else
+    warn "no attached tmux client — width check skipped (run inside tmux)"
+  fi
+fi
+
+# ---------- 4. config ----------
+sect "Config"
+ws="${ZDEV_WORKSPACE:-$HOME/workspace}"
+if [[ -d "$ws" ]]; then ok "workspace $ws exists"; else
+  bad "workspace $ws does not exist"
+  fix "mkdir -p $ws, or fix ZDEV_WORKSPACE in ~/.config/zdev/env"
+fi
+pf="${ZDEV_PROJECTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zdev/projects}"
+if [[ ! -f "$pf" ]]; then
+  bad "projects file missing ($pf)"
+  fix "one project per line, paths relative to $ws"
+else
+  missing=0; total=0
+  while IFS= read -r line; do
+    line="${line%%#*}"; line="${line%\*}"; line="${line%% }"; line="${line## }"
+    [[ -z "$line" ]] && continue
+    total=$((total+1))
+    [[ -d "$ws/$line" ]] || { missing=$((missing+1)); }
+  done < "$pf"
+  if [[ "$total" -eq 0 ]]; then
+    bad "projects file is empty ($pf)"
+  elif [[ "$missing" -gt 0 ]]; then
+    warn "$missing of $total project dir(s) missing under $ws — placeholder entries?"
+    fix "edit $pf to match real checkouts in $ws"
+  else
+    ok "projects file: $total project(s), all dirs exist"
+  fi
+fi
+
+# ---------- 5. agent hooks ----------
+sect "Agent integration"
+cs="${ZDEV_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+if [[ -f "$cs" ]] && command -v jq >/dev/null 2>&1; then
+  if jq -e '[.hooks[][]? | .hooks[]? | .command // ""] | any(contains("zdev-notify"))' "$cs" >/dev/null 2>&1; then
+    ok "Claude Code hooks installed"
+    jq -e '.hooks.SessionEnd' "$cs" >/dev/null 2>&1 || { warn "SessionEnd hook missing — death detection off"; fix "zdev-install-hooks"; }
+  else
+    warn "Claude Code present but zdev hooks not installed"
+    fix "zdev-install-hooks  (then restart running claude sessions)"
+  fi
+fi
+oc_root=""
+[[ -d "$HOME/.config/opencode" ]] && oc_root="$HOME/.config/opencode"
+[[ -z "$oc_root" && -d "$HOME/.opencode" ]] && oc_root="$HOME/.opencode"
+if [[ -n "$oc_root" ]]; then
+  linked=0
+  for d in "$oc_root/plugins" "$oc_root/plugin"; do
+    [[ -e "$d/zdev-notify.js" ]] && linked=$((linked+1))
+  done
+  if [[ "$linked" -ge 1 ]]; then
+    ok "opencode plugin linked ($linked location(s) under $oc_root)"
+    dim_note=1
+  else
+    bad "opencode detected but zdev plugin NOT linked"
+    fix "zdev-install-hooks  (then restart running opencode sessions)"
+  fi
+  # Best-effort: scan the newest opencode log for plugin load errors.
+  oclog=$(ls -t "$HOME/.local/share/opencode/log/"*.log 2>/dev/null | head -1)
+  if [[ -n "$oclog" ]] && grep -qi "zdev-notify" "$oclog" 2>/dev/null; then
+    if grep -i "zdev-notify" "$oclog" | grep -qiE "error|fail"; then
+      bad "opencode log reports an error loading zdev-notify.js"
+      fix "grep -i zdev '$oclog' | tail -5"
+    else
+      ok "opencode log mentions zdev-notify.js (loaded)"
+    fi
+  elif [[ -n "$oclog" && "$linked" -ge 1 ]]; then
+    warn "opencode log never mentions the plugin — running session may predate the install"
+    fix "restart opencode (plugins load at session start)"
+  fi
+fi
+# Notif channel plumbing.
+nd="${TMPDIR:-/tmp/}"; case "$nd" in */) ;; *) nd="$nd/";; esac; nd="${nd}zdevd-notif"
+if [[ -d "$nd" && -w "$nd" ]]; then ok "notify channel dir writable ($nd)"; else
+  warn "notify channel dir missing/unwritable ($nd) — daemon creates it; is the daemon up?"
+fi
+
+# ---------- 6. live probe (opt-in) ----------
+if [[ "$PROBE" -eq 1 ]]; then
+  sect "Live probe (synthetic agent wait → triage)"
+  if [[ -z "${TMUX:-}" ]]; then
+    bad "--probe requires running inside tmux"
+  else
+    sess=$(tmux display-message -p '#{session_name}')
+    TMUX_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}" \
+      "$HOME/.local/bin/zdev-notify" doctor waiting
+    found=0
+    for i in $(seq 1 12); do
+      "$HOME/.local/bin/zdev-show" triage 2>/dev/null | grep -q "$sess" && { found=1; break; }
+      sleep 1
+    done
+    if [[ "$found" -eq 1 ]]; then
+      ok "probe wait reached the triage queue (full channel verified)"
+    else
+      bad "probe wait NEVER reached triage — daemon-side ingestion broken"
+      fix "tail -20 \"\${XDG_STATE_HOME:-\$HOME/.local/state}/zdev/events.ndjson\" and report"
+    fi
+    "$HOME/.local/bin/zdev" ack "$sess" >/dev/null 2>&1 || true
+  fi
+fi
+
+# ---------- verdict ----------
+printf '\n%s' "$C_BOLD"
+if [[ "$FAILS" -eq 0 && "$WARNS" -eq 0 ]]; then
+  printf 'doctor: healthy.%s' "$C_RST"
+  [[ "$PROBE" -eq 0 ]] && printf '%s  (run `zdev doctor --probe` inside tmux for the live end-to-end test)%s' "$C_DIM" "$C_RST"
+  printf '\n'
+elif [[ "$FAILS" -eq 0 ]]; then
+  printf 'doctor: %d warning(s), no failures.%s\n' "$WARNS" "$C_RST"
+else
+  printf 'doctor: %s%d failure(s)%s%s, %d warning(s) — fixes suggested above.%s\n' "$C_ERR" "$FAILS" "$C_RST" "$C_BOLD" "$WARNS" "$C_RST"
+fi
+exit "$FAILS"

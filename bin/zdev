@@ -160,6 +160,7 @@ Usage:
   zdev triage                    Show the ranked attention queue
   zdev ack [--all|<project>]     Acknowledge statuses — like "read all"
                                  (tmux: bind -n M-r run-shell "zdev ack --all")
+  zdev doctor [--probe]          Diagnose the setup (--probe: live end-to-end test)
   zdev list                      Show configured vs running sessions
   zdev kill <project>...         Kill named sessions
   zdev kill all                  Kill every session (except currently attached)
@@ -510,6 +511,10 @@ case "$1" in
         shift
         cmd_ack "$@"
         exit 0
+        ;;
+    doctor)
+        shift
+        exec "$(dirname "$(readlink "$0" 2>/dev/null || echo "$0")")/zdev-doctor" "$@"
         ;;
 esac
 
