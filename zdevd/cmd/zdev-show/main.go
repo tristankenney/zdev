@@ -233,8 +233,10 @@ func formatLegend() string {
 	row(moodIdle+"█"+reset+" / "+moodGreen+"█"+reset+" / "+orange+"█"+reset+" / "+moodRed+"█"+reset,
 		"mood — idle / something finished or running / waiting / urgent (dead, ≥3 waits, or ≥5min)")
 
-	section("Footer tally (counts by marker)")
-	row("0● 1◎ 0◆ 16· 0·", "waiting / shell-running / finished / alive / absent")
+	section("Footer tally (non-zero buckets only)")
+	row(redPulse+"1 dead"+reset+dim+" · "+reset+orange+"2 waiting"+reset+dim+" · "+reset+icy+"3 working"+reset,
+		"what demands you; blank when the fleet is quiet")
+	row("", "ZDEV_SIDEBAR_FOOTER=compact restores the glyph tally; =off hides it")
 
 	section("Visual cues")
 	row(cyan+"▌"+reset+" (left edge)", "breath bar — marks THIS sidebar's own session")

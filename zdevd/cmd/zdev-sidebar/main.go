@@ -183,6 +183,15 @@ func run() error {
 	// Triage strip opt-in (default off — dogfood 2026-06-06: at fleet
 	// scale the strip duplicates main-list rows without adding signal).
 	render.TriageStripEnabled = os.Getenv("ZDEV_SIDEBAR_TRIAGE") == "1"
+
+	// Footer style (dogfood #4): full (worded, default) | compact
+	// (legacy glyph tally) | off. Unknown values fall back to full.
+	switch os.Getenv("ZDEV_SIDEBAR_FOOTER") {
+	case "compact":
+		render.FooterMode = "compact"
+	case "off":
+		render.FooterMode = "off"
+	}
 	snap, conn, err := initialSubscribe(ctx, func(ctx context.Context) (*proto.Snapshot, net.Conn, error) {
 		return socket.Subscribe(ctx, socketPath, tmuxPane, tmuxSession)
 	}, width)

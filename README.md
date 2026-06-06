@@ -116,6 +116,7 @@ running `$ZDEV_AGENT_CMD`.
 | `ZDEV_REAP_AFTER_HOURS` | `8` | Idle threshold for `zdev reap` |
 | `ZDEV_REAP_LOG` | `~/Library/Logs/zdev/reaper.log` | Reap event log |
 | `ZDEV_SIDEBAR_THRESHOLD` | `160` | Min client width (cols) for sidebar to appear |
+| `ZDEV_SIDEBAR_FOOTER` | `full` | Footer tally: `full` (worded, non-zero buckets) / `compact` (glyphs) / `off` |
 | `ZDEV_SIDEBAR_WIDTH` | `50` | Sidebar pane width (cols) |
 
 ## Pane title convention

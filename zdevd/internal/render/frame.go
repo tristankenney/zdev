@@ -150,7 +150,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	renderTriageSection(&buf, snap, width, animator, nowFn)
 
 	// Per-project rows.
-	var nWait, nRun, nDone, nAlive, nAbsent int
+	var nWait, nDead, nRun, nDone, nAlive, nAbsent int
 	for i := range snap.Projects {
 		p := snap.Projects[i]
 		// Absent is a session-existence flag, not an Attention value;
@@ -159,11 +159,12 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			nAbsent++
 		} else {
 			switch projectAttention(&p) {
-			case proto.AttWaiting, proto.AttDead:
-				// Dead counts in the attention bucket (NOW#3): the footer
-				// tally is "how many rows demand me", and a dead agent
-				// demands a relaunch.
+			case proto.AttWaiting:
 				nWait++
+			case proto.AttDead:
+				// Counted separately (dogfood #4 redesign): "1 dead"
+				// carries a different demand — relaunch — than a wait.
+				nDead++
 			case proto.AttWorking:
 				nRun++
 			case proto.AttFinished:
@@ -185,16 +186,82 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 	}
 
-	// Footer.
-	buf.WriteString("  ")
-	buf.WriteString(Dim)
-	fmt.Fprintf(&buf, "%d● %d◎ %d◆ %d· %d·", nWait, nRun, nDone, nAlive, nAbsent)
-	buf.WriteString(Reset)
-	buf.WriteString(ClearLineEnd)
-	buf.WriteByte('\n')
+	renderFooter(&buf, nWait, nDead, nRun, nDone, nAlive, nAbsent)
 
 	buf.WriteString(ClearToEnd)
 	return buf.Bytes()
+}
+
+// FooterMode selects the footer tally style (dogfood #4: the glyph
+// tally was unmemorable noise — "I don't remember what the glyphs
+// signify"). cmd/zdev-sidebar sets this from ZDEV_SIDEBAR_FOOTER:
+//
+//	full    — worded counts of NON-ZERO decision-relevant buckets only
+//	          ("2 waiting · 1 dead · 3 working · 1 done"); quiet fleets
+//	          render a blank footer row. The default.
+//	compact — the legacy glyph tally (N● N◎ N◆ N· N·), always present.
+//	off     — blank footer row always.
+//
+// Every mode emits exactly ONE row (possibly empty) so the frame's
+// line count — which tests and click-row math rely on — is invariant
+// across modes and fleet states; an empty last row is visually
+// indistinguishable from no row.
+var FooterMode = "full"
+
+// renderFooter writes the footer tally per FooterMode. Counts use the
+// bucket's own marker color (waiting orange, dead red, working icy,
+// done yellow) so the words tie back to the rows; separators are dim.
+func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent int) {
+	switch FooterMode {
+	case "off":
+		buf.WriteString(ClearLineEnd)
+		buf.WriteByte('\n')
+		return
+	case "compact":
+		buf.WriteString("  ")
+		buf.WriteString(Dim)
+		// Dead folds into the waiting slot here — the compact form is
+		// the legacy 5-bucket shape, kept stable for muscle memory.
+		fmt.Fprintf(buf, "%d● %d◎ %d◆ %d· %d·", nWait+nDead, nRun, nDone, nAlive, nAbsent)
+		buf.WriteString(Reset)
+		buf.WriteString(ClearLineEnd)
+		buf.WriteByte('\n')
+		return
+	}
+	// full: words, non-zero buckets only, decision-relevant first.
+	type bucket struct {
+		n     int
+		word  string
+		color string
+	}
+	buckets := []bucket{
+		{nDead, "dead", RedPulse},
+		{nWait, "waiting", Orange},
+		{nRun, "working", Icy},
+		{nDone, "done", Yellow},
+	}
+	wrote := false
+	for _, b := range buckets {
+		if b.n == 0 {
+			continue
+		}
+		if !wrote {
+			buf.WriteString("  ")
+		} else {
+			buf.WriteString(Dim)
+			buf.WriteString(" · ")
+			buf.WriteString(Reset)
+		}
+		buf.WriteString(b.color)
+		fmt.Fprintf(buf, "%d %s", b.n, b.word)
+		buf.WriteString(Reset)
+		wrote = true
+	}
+	// All-zero (idle/absent only) emits the blank row: a quiet fleet
+	// LOOKS quiet instead of enumerating its quietness, and the frame
+	// keeps its invariant line count.
+	buf.WriteString(ClearLineEnd)
+	buf.WriteByte('\n')
 }
 
 // domainSep is the separator between sub-groups within a domain row.

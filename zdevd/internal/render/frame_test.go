@@ -234,8 +234,11 @@ func TestRender_PulseGlyph(t *testing.T) {
 	}
 	anim := NewAnimator()
 	anim.OnSnapshot(snap)
-	// Force pulse to frame 4 (peak "●").
-	anim.pulseFrame = 4
+	// Pin tick 16: the status-only fixture has no WaitStartedTS, so the
+	// marker renders at PulseGlyphAt's calm ÷4 pace — tick 16 is visual
+	// frame 4 (peak "●"). (Until the worded footer landed, this test was
+	// accidentally satisfied by the footer's own "1●" glyph.)
+	anim.pulseFrame = 16
 
 	out := Render(snap, 50, anim, fixedNowFn)
 	// Frame 4 is "●" — verify it appears in the marker row.
@@ -325,9 +328,21 @@ func TestRender_FooterCounts(t *testing.T) {
 	anim.OnSnapshot(snap)
 
 	out := Render(snap, 50, anim, fixedNowFn)
-	// Footer: "1● 0◎ 1◆ 2· 0·"
+	// Footer (full mode, dogfood #4): worded non-zero buckets only —
+	// 1 waiting, 1 done; alive/absent are not enumerated.
+	if !bytes.Contains(out, []byte("1 waiting")) || !bytes.Contains(out, []byte("1 done")) {
+		t.Errorf("Render footer: expected '1 waiting' and '1 done' in output\n%q", out)
+	}
+	if bytes.Contains(out, []byte("alive")) {
+		t.Errorf("Render footer: quiet buckets must not be enumerated\n%q", out)
+	}
+
+	// compact mode keeps the legacy glyph tally.
+	FooterMode = "compact"
+	defer func() { FooterMode = "full" }()
+	out = Render(snap, 50, anim, fixedNowFn)
 	if !bytes.Contains(out, []byte("1● 0◎ 1◆ 2· 0·")) {
-		t.Errorf("Render footer: expected '1● 0◎ 1◆ 2· 0·' in output\n%q", out)
+		t.Errorf("Render footer (compact): expected '1● 0◎ 1◆ 2· 0·' in output\n%q", out)
 	}
 }
 
@@ -746,7 +761,6 @@ func TestRender_CurrentRow_LongerBranch(t *testing.T) {
 		t.Errorf("current-row 25-rune branch: Ellipsis must appear in output\n%q", out2)
 	}
 }
-
 
 // TestRender_NonCurrentRow_UnchangedBranchCap verifies non-current compact
 // rows do NOT show branch at all (no branch chip on compact rows per PD-02).
@@ -1260,12 +1274,12 @@ func TestRender_DomainRows_SeparatorBetweenSubgroups(t *testing.T) {
 	snap := &proto.Snapshot{
 		Projects: []proto.Project{
 			{
-				Name:          "alpha",
-				Status:        "alive",
-				Branch:        "feat",
-				PROpen:        1,
-				CIStatus:      "completed",
-				CIConclusion:  "success",
+				Name:         "alpha",
+				Status:       "alive",
+				Branch:       "feat",
+				PROpen:       1,
+				CIStatus:     "completed",
+				CIConclusion: "success",
 			},
 		},
 		CurrentSession: "alpha",
