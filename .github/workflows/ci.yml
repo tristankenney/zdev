@@ -95,10 +95,15 @@ jobs:
           systemctl --user stop zdevd 2>/dev/null || true
           nohup "$HOME/.local/bin/zdevd" >/tmp/zdevd.log 2>&1 &
           for i in $(seq 1 30); do
-            zdev-show list >/dev/null 2>&1 && break
+            zdev-show triage >/dev/null 2>&1 && break
             sleep 1
           done
-          zdev-show list
+          # The daemon answers on its socket; give its tmux control
+          # client a beat to finish the bootstrap scan, then prove the
+          # session registered (zdev-show with no args lists projects).
+          sleep 2
+          zdevd diag || true
+          zdev-show triage
       - name: claude lifecycle (hook JSON → triage → clear → death → ack)
         run: |
           pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
@@ -134,6 +139,12 @@ jobs:
           TMUX_PANE="$pane" zdev-notify opencode done
           wait_in "opencode done state never reached triage"
           zdev ack --all
-      - name: daemon log on failure
+      - name: diagnostics on failure
         if: failure()
-        run: cat /tmp/zdevd.log /tmp/zdevd.err 2>/dev/null || true
+        run: |
+          echo "=== zdevd diag ==="; zdevd diag || true
+          echo "=== tmux state ==="; tmux ls || true; tmux list-panes -a -F '#{session_name} #{pane_id} [#{pane_title}]' || true
+          echo "=== notif dir ==="; ls -la "${TMPDIR:-/tmp/}zdevd-notif/" 2>/dev/null; cat "${TMPDIR:-/tmp/}zdevd-notif/"* 2>/dev/null || true
+          echo "=== daemon slog ==="; cat "$HOME/.local/state/zdev/zdevd.log" 2>/dev/null | tail -60 || true
+          echo "=== daemon stdout ==="; cat /tmp/zdevd.log 2>/dev/null || true
+          echo "=== list --json ==="; zdev-show list --json || true
