@@ -84,6 +84,32 @@ else
     fix "launchctl kickstart -k gui/\$(id -u)/com.zdev.zdevd; logs: ~/Library/Logs/zdev/"
   fi
 fi
+# Stale-binary check: a rebuilt zdevd does nothing until the RUNNING
+# process is restarted (this exact gap shipped a fixed binary to disk
+# while the buggy daemon kept running through several install cycles).
+zpid=$(pgrep -x zdevd 2>/dev/null | head -1)
+if [[ -n "$zpid" ]]; then
+  zbin=$(readlink -f "$HOME/.local/bin/zdevd" 2>/dev/null || readlink "$HOME/.local/bin/zdevd" 2>/dev/null || echo "$HOME/.local/bin/zdevd")
+  if [[ -f "$zbin" ]]; then
+    if [[ "$OS" == "Linux" ]]; then
+      proc_start=$(stat -c %Y "/proc/$zpid" 2>/dev/null || echo 0)
+      bin_mtime=$(stat -c %Y "$zbin" 2>/dev/null || echo 0)
+    else
+      proc_start=$(date -j -f "%a %b %d %T %Y" "$(ps -o lstart= -p "$zpid" | sed 's/^ *//')" +%s 2>/dev/null || echo 0)
+      bin_mtime=$(stat -f %m "$zbin" 2>/dev/null || echo 0)
+    fi
+    if [[ "$proc_start" -gt 0 && "$bin_mtime" -gt "$proc_start" ]]; then
+      bad "daemon is running an OLDER build than the binary on disk"
+      if [[ "$OS" == "Linux" ]]; then
+        fix "systemctl --user restart zdevd.service"
+      else
+        fix "launchctl kickstart -k gui/\$(id -u)/com.zdev.zdevd"
+      fi
+    else
+      ok "running daemon matches the installed binary"
+    fi
+  fi
+fi
 show_err=$("$HOME/.local/bin/zdev-show" 2>&1 >/dev/null)
 if [[ -z "$show_err" ]]; then
   ok "daemon answers on its socket"

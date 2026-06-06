@@ -397,7 +397,8 @@ install: build $(ZDEVD_UNIT_BUILT) $(REAPER_UNIT_BUILT) $(REAPER_TIMER_BUILT)
 		systemctl --user daemon-reload; \
 		systemctl --user enable --now zdevd.service; \
 		systemctl --user enable --now zdev-reaper.timer; \
-		echo "install: zdevd + reaper.timer enabled and started."; \
+		systemctl --user restart zdevd.service; \
+		echo "install: zdevd + reaper.timer enabled and (re)started."; \
 	else \
 		echo "install: WARNING — no systemd user bus (CI, or SSH without lingering)."; \
 		echo "install:           units linked but not started. To run at login:"; \
