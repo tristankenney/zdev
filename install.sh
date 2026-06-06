@@ -269,4 +269,4 @@ done
 printf '  %s%d.%s Start (or attach) tmux, then open a project:  zdev <project>\n' "$C_BOLD" "$i" "$C_RST"
 i=$((i + 1))
 printf '  %s%d.%s The sidebar appears on clients ≥%s cols wide (tune: ZDEV_SIDEBAR_THRESHOLD); press M-? for keys + glyph legend.\n' \
-  "$C_BOLD" "$i" "$C_RST" "${ZDEV_SIDEBAR_THRESHOLD:-200}"
+  "$C_BOLD" "$i" "$C_RST" "${ZDEV_SIDEBAR_THRESHOLD:-160}"

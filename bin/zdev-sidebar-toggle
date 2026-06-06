@@ -21,7 +21,12 @@ if [[ -f "$_zdev_env" ]]; then
   done < "$_zdev_env"
 fi
 
-THRESHOLD="${ZDEV_SIDEBAR_THRESHOLD:-200}"
+# 160 default (was 200): a fullscreen laptop terminal is ~180 cols, so
+# 200 suppressed the sidebar on the most common screen size (first
+# Ubuntu install, dogfood 2026-06-06). At 160 the sidebar (50) leaves
+# two ~54-col panes — tight but workable; below that it's genuinely
+# too cramped and suppression is correct.
+THRESHOLD="${ZDEV_SIDEBAR_THRESHOLD:-160}"
 WIDTH="${ZDEV_SIDEBAR_WIDTH:-50}"
 HYSTERESIS="${ZDEV_SIDEBAR_HYSTERESIS:-30}"
 
