@@ -283,23 +283,33 @@ do_reap() {
 
     tmux list-sessions >/dev/null 2>&1 || return 0
 
-    while IFS=' ' read -r sn attached last_attached created; do
+    while IFS=' ' read -r sn attached last_attached created activity; do
         # Never kill a session with an attached client.
         (( attached > 0 )) && continue
         # Belt-and-suspenders: never kill the session we're running inside.
         [[ "$sn" == "$current" ]] && continue
         # Skip favorites.
         is_favorite_session "$sn" && continue
+        # Gas Town sessions (hq-mayor, gt-<rig>-<polecat>) belong to the
+        # orchestrator — its Witness/Deacon own their lifecycle, and a
+        # polecat is by design never human-attached. Reaping one kills an
+        # agent mid-convoy.
+        case "$sn" in hq-*|gt-*) continue ;; esac
 
+        # Idle = no attach AND no pane activity. The old attach-only ref
+        # killed unattended sessions whose agents were actively WORKING
+        # (a polecat never gets attached at all; an overnight agent run
+        # was reaped mid-task at the 8h mark). Take the newest signal.
         ref=$last_attached
         [[ "$last_attached" == "0" ]] && ref=$created
+        [[ -n "$activity" && "$activity" -gt "$ref" ]] && ref=$activity
 
         if (( ref < cutoff )); then
             age_h=$(( (now - ref) / 3600 ))
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] reap: killing $sn (idle ${age_h}h)" | tee -a "$REAP_LOG" >&2
             tmux kill-session -t "$sn" || true
         fi
-    done < <(tmux list-sessions -F "#{session_name} #{session_attached} #{session_last_attached} #{session_created}")
+    done < <(tmux list-sessions -F "#{session_name} #{session_attached} #{session_last_attached} #{session_created} #{session_activity}")
 }
 
 cmd_kill() {
