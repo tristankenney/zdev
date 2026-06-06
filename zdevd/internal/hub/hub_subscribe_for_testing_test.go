@@ -36,8 +36,11 @@ func TestSubscribeForTesting_DeliversSnapshot(t *testing.T) {
 		if !found {
 			t.Errorf("session 'myproject' not in snapshot.Sessions = %v", snap.Sessions)
 		}
-	case <-time.After(testDebounce + 100*time.Millisecond):
-		t.Fatal("no snapshot within debounce + 100ms")
+	case <-time.After(testDebounce + 2*time.Second):
+		// Generous: under -race with the full suite in parallel, 100ms of
+		// slack flaked on a loaded box. The timeout only extends FAILING
+		// runs; passing runs return on delivery.
+		t.Fatal("no snapshot within debounce + 2s")
 	}
 }
 
@@ -78,10 +81,12 @@ func TestSubscribeForTesting_DropOldest(t *testing.T) {
 		mustSubmit(t, h, tmuxctl.SessionChanged{ID: "$0", Name: "stress"})
 	}
 	elapsed := time.Since(start)
-	// All 1000 submits should complete within 200ms — if the hub goroutine
-	// had blocked on the subscriber channel, this would deadlock.
-	if elapsed > 200*time.Millisecond {
-		t.Errorf("1000 rapid submits took %v; hub goroutine may have blocked (want < 200ms)", elapsed)
+	// The assertion is "didn't block on the subscriber channel", not a
+	// perf gate — 2s is far above any scheduling jitter (-race + loaded
+	// box flaked the old 200ms) while still catching a genuine deadlock,
+	// which would hit mustSubmit's own timeout anyway.
+	if elapsed > 2*time.Second {
+		t.Errorf("1000 rapid submits took %v; hub goroutine may have blocked (want < 2s)", elapsed)
 	}
 
 	// Wait past the debounce window to let at least one snapshot fire.
@@ -101,7 +106,7 @@ func TestSubscribeForTesting_DropOldest(t *testing.T) {
 		default:
 			// OK — channel empty as expected.
 		}
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("no snapshot in channel after debounce window")
 	}
 }
