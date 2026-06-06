@@ -128,6 +128,50 @@ install_claude() {
     echo "claude: note — running Claude sessions keep their old hooks until restarted."
 }
 
+# ---------- opencode ----------
+
+install_opencode() {
+    local oc_root=""
+    if [[ -d "$HOME/.config/opencode" ]]; then
+        oc_root="$HOME/.config/opencode"
+    elif [[ -d "$HOME/.opencode" ]]; then
+        oc_root="$HOME/.opencode"
+    else
+        return 0 # opencode not set up on this machine
+    fi
+    # The adapter is a plugin (config/opencode/zdev-notify.js): opencode
+    # auto-loads plugins/ at session start and forwards session.idle /
+    # permission.asked / session.error into the zdev-notify channel.
+    local plugin_src
+    plugin_src="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config/opencode/zdev-notify.js"
+    if [[ ! -f "$plugin_src" ]]; then
+        # Running from a symlinked ~/.local/bin copy — resolve the repo.
+        plugin_src="$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" || echo "${BASH_SOURCE[0]}")")/.." && pwd)/config/opencode/zdev-notify.js"
+    fi
+    if [[ ! -f "$plugin_src" ]]; then
+        echo "opencode: plugin source not found (expected config/opencode/zdev-notify.js in the zdev repo); skipping." >&2
+        return 0
+    fi
+    # Current opencode loads plugins/ (plural); older builds used
+    # plugin/ (singular). Install to plugins/ always, and ALSO to a
+    # pre-existing plugin/ dir so older installs work — double-loading
+    # is harmless (the notify writes are idempotent).
+    local d installed=0
+    for d in "$oc_root/plugins" $( [[ -d "$oc_root/plugin" ]] && echo "$oc_root/plugin" ); do
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+            echo "opencode: dry-run — would link $d/zdev-notify.js"
+            continue
+        fi
+        mkdir -p "$d"
+        ln -sf "$plugin_src" "$d/zdev-notify.js"
+        installed=1
+    done
+    if [[ "$installed" -eq 1 ]]; then
+        echo "opencode: + plugin linked into $oc_root/plugins (session.idle/permission/error → zdev-notify)"
+        echo "opencode: note — running opencode sessions load plugins at start; restart them."
+    fi
+}
+
 # ---------- other agents: detection + guidance ----------
 
 guidance_others() {
@@ -143,14 +187,8 @@ that maps the JSON payload to zdev-notify states, e.g.
                                    #   zdev-notify codex waiting|done|clear
 EOF
     fi
-    if [[ -d "$HOME/.config/opencode" || -d "$HOME/.opencode" ]]; then
-        cat <<'EOF'
-
-opencode detected: wire its session-event hooks (or a plugin) to call
-  zdev-notify opencode waiting|done|clear
-EOF
-    fi
 }
 
 install_claude
+install_opencode
 guidance_others
