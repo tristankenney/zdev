@@ -91,9 +91,16 @@ defends the gauge from fragmenting the moment worktrees exist.
 - **Kill:** if dogfood shows the bottleneck is not review-bandwidth (queue stays
   empty, gauge never moves), the gauge solves a non-problem — revert to the strip.
 
-### 5. Inactive-session demotion *(dogfood feedback #2, 2026-06-05)*
-Sessions with no agent and no recent activity sit in the list at full visual
-weight, demanding the same attention as active ones. Add an idle tier: after a
+### 5. Inactive-session demotion *(dogfood feedback #2, 2026-06-05; partially shipped)*
+*Update 2026-06-06:* the dim-in-place fallback shipped early (`37a2cc6c` —
+stale >1h and absent rows now dim marker AND name), motivated by the
+alive-vs-stale indistinguishability report. Open question for the dogfood
+week: is whole-row dimming enough visual hierarchy, or is positional
+demotion (fold below a divider) still needed? If dimming suffices, this
+item shrinks to the config knob.
+
+Original framing: sessions with no agent and no recent activity sit in the
+list at full visual weight, demanding the same attention as active ones. Add an idle tier: after a
 configurable quiet period (no agent, no title change, no shell command), a
 session either folds below a divider or dims-and-sinks to the bottom of the
 list. Must NOT reorder the active set — spatial memory of active rows is the
@@ -103,17 +110,13 @@ Config: threshold + mode (fold/dim/off).
 - **Kill:** if folding hides a session the operator then forgets to resume
   (the "out of sight, agent rots" failure), default to dim-in-place.
 
-### 6. Footer tally redesign *(dogfood feedback #4, 2026-06-05)*
-The `N● N◎ N◆ N· N·` footer is unmemorable glyph noise — the operator doesn't
-remember what the glyphs signify, so it carries zero signal. Replace with
-worded counts of only the non-zero, decision-relevant buckets (e.g.
-`2 waiting · 1 dead · 3 working`, dim, one line) and make it configurable:
-`footer = full | compact | off`. Glyph-only display earns its place only if
-the glyphs match the row markers the eye already tracks — audit that mapping
-first (◆ matches rows; ● vs pulse does not).
-- **Effort:** days · **Depends:** none
-- **Kill:** if the worded footer still gets ignored in dogfood, ship `off` as
-  the default — reclaim the row entirely.
+### ✅ 6. Footer tally redesign *(shipped 2026-06-07)*
+Worded counts of non-zero decision-relevant buckets in marker colors
+("1 dead · 2 waiting · 3 working · 1 done"); dead counted separately from
+waiting (relaunch ≠ answer); quiet fleets render a blank row.
+`ZDEV_SIDEBAR_FOOTER = full | compact | off`. Building it unmasked a test
+that had been passing off the old footer's literal glyph.
+- **Kill (live):** if the worded footer still gets ignored, default to off.
 
 ### ✅ 7. Mark-all-read — `56e96bb4` *(shipped 2026-06-06)*
 `zdev ack [--all|<project>]` — rides the notif channel as an `ack` kind
@@ -211,11 +214,15 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   name + setup hook — *not* a universal port-collision fix.
 - **`zdev reap --worktree`** — opt-in conservative GC: clean-tree + merged only,
   refuses on any dirty/ahead/unmerged. Destructive, hence last.
-- **Bundled notify-adapter pack (Codex first)** — `bin/zdev-codex-notify`
-  (argv[1] JSON contract verified) + registry `NotifyInstall` field + golden
-  fixture per adapter so schema drift fails CI loudly. Gemini/Amp ship as
-  documented "untested — PRs welcome" stubs. Deferred: the dogfood fleet is
-  all-claude today; breadth earns its keep when a non-claude agent enters it.
+- **Bundled notify-adapter pack (Codex next)** — *the opencode half shipped
+  2026-06-06* (`8c987cf3`: plugin mapping session.idle/permission.asked/
+  session.error → notify states, auto-installed by zdev-install-hooks,
+  contract-tested in CI without an agent install) — its deferral trigger
+  ("breadth earns its keep when a non-claude agent enters the fleet") fired
+  when the operator ran opencode on Ubuntu. Codex remains: zdev-codex-notify
+  (argv[1] JSON contract verified) + golden fixture per adapter. Live
+  verification of the opencode adapter against a real opencode is still
+  pending on the operator's UTM box.
 
 ---
 
@@ -277,6 +284,18 @@ still has no analog) and worktree spawn (why it's LATER).
    `zdev doctor` clean → receives a real 15m STUCK notification via notify-send
    or their own ntfy hook. Tracked by the first external Linux issue opened
    *and closed*.
+   *Status 2026-06-07: substantially de-risked.* The operator ran the full
+   loop on a fresh Ubuntu VM, surfacing ~10 adoption bugs in one day
+   (Darwin-only termios, zsh dependency, inotify empty-read race, Linux
+   socket-buffer sizing, 200-col threshold, missing switcher binding/mouse/
+   escape-time, systemd-vs-manual daemon collision) — all fixed, and the
+   whole loop is now gated by CI's `agent-smoke` job: fresh install + real
+   daemon + synthetic claude/opencode lifecycles asserted via triage on
+   every push (first-ever green main, 2026-06-06). What remains for the
+   milestone is an EXTERNAL user. The `zdev doctor` spec wrote itself
+   during the sidebar debugging: client-width-vs-threshold (the one failure
+   where everything reports healthy), daemon status, renderer symlink,
+   hooks registered, toggle exit code.
 3. **The one-week dogfood validates the load-bearing bets**: death detection
    fires a true positive before the operator notices by eye (zero false
    positives on clean exits), and the review gauge surfaces at least one
