@@ -108,3 +108,44 @@ func TestApplyEvent_TitleDiscoveryIsNotAChange(t *testing.T) {
 		t.Errorf("identical title re-send re-stamped lastTitleChangeTS=%d; want 42", ts)
 	}
 }
+
+// TestApplyEvent_WindowAttachMovesPanes pins the late-session association
+// fix: a window discovered cross-session parks in "$_unlinked" with its
+// panes; the poll's WindowAttach re-association must MOVE that window
+// object — panes and all — into the real session. The old code created a
+// second EMPTY window there, so sessionTitles read no titles and a
+// session created after daemon start never derived attention (except
+// when findWindow's random map order happened to route the pane into the
+// right copy — a literal coin flip per run, caught by CI's agent-smoke).
+func TestApplyEvent_WindowAttachMovesPanes(t *testing.T) {
+	s := newState()
+	// The exact arrival order from a CI/fresh-boot daemon: the window
+	// shows up unlinked, its pane and waiting title arrive via the poll,
+	// and only then does the re-association land.
+	applyEvent(s, tmuxctl.UnlinkedWindowAdd{ID: "@1"}, nil)
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%1"}, nil)
+	applyEvent(s, tmuxctl.PaneTitleChanged{PaneID: "%1", Title: "● claude"}, nil)
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "proj-a"}, nil)
+	applyEvent(s, tmuxctl.WindowAttach{SessionID: "$1", WindowID: "@1"}, nil)
+
+	sess, ok := sessionByName(s, "proj-a")
+	if !ok {
+		t.Fatal("session proj-a not found")
+	}
+	w, ok := sess.windows["@1"]
+	if !ok {
+		t.Fatal("window @1 not attached to proj-a")
+	}
+	if _, ok := w.panesIDs["%1"]; !ok {
+		t.Fatalf("pane %%1 missing from proj-a's window — attach duplicated instead of moving (panes: %v)", w.panesIDs)
+	}
+	if got := sessionTitles(s, sess); len(got) != 1 || got[0] != "● claude" {
+		t.Fatalf("sessionTitles = %v; want the waiting title — attention can't derive without it", got)
+	}
+	// The unlinked bucket must no longer hold the window.
+	if unlinked, ok := s.sessions["$_unlinked"]; ok {
+		if _, still := unlinked.windows["@1"]; still {
+			t.Error("window @1 still in $_unlinked after attach — duplicated, not moved")
+		}
+	}
+}

@@ -894,9 +894,30 @@ func attachWindow(s *state, sessID, winID string) {
 		sess = &session{ID: sessID, Name: sessID, windows: make(map[string]*window)}
 		s.sessions[sessID] = sess
 	}
-	if _, exists := sess.windows[winID]; !exists {
-		sess.windows[winID] = &window{ID: winID, panesIDs: make(map[string]struct{})}
+	if _, exists := sess.windows[winID]; exists {
+		return
 	}
+	// Re-association MOVES the existing window object — panes and all —
+	// from whichever session currently holds it (usually the synthetic
+	// "$_unlinked" bucket that %unlinked-window-add parks cross-session
+	// windows in). The old behavior created a second, EMPTY window object
+	// here and left the populated one stranded: sessionTitles then read
+	// the empty copy, so a session created after daemon start derived no
+	// title attention — unless findWindow's random map-iteration order
+	// happened to route WindowPaneChanged into the right copy, which is
+	// why the bug was a coin flip per daemon run (caught by CI's
+	// agent-smoke job and reproduced on an isolated daemon).
+	for osid, osess := range s.sessions {
+		if osid == sessID {
+			continue
+		}
+		if w, ok := osess.windows[winID]; ok {
+			delete(osess.windows, winID)
+			sess.windows[winID] = w
+			return
+		}
+	}
+	sess.windows[winID] = &window{ID: winID, panesIDs: make(map[string]struct{})}
 }
 
 // detachWindow removes a window from any session that owns it.
