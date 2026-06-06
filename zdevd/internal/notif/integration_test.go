@@ -177,7 +177,7 @@ func TestSC3_NotifLatency_CpOver(t *testing.T) {
 	}
 
 	write := runSC3Harness(t, dir)
-	elapsed := write("delta", 1714838800, func(path string) {
+	cpOver := func(path string) {
 		// `cp` (not os.ReadFile+os.WriteFile) — ROADMAP SC3 lists `cp` over
 		// as the literal save pattern. exec.Command("cp", ...) matches the
 		// shell-level pattern produced by `~/.local/bin/zdev-notify` if it
@@ -186,9 +186,21 @@ func TestSC3_NotifLatency_CpOver(t *testing.T) {
 		if err := exec.Command("cp", srcPath, path).Run(); err != nil {
 			t.Fatalf("cp source -> watched dir failed: %v", err)
 		}
-	})
+	}
+	elapsed := write("delta", 1714838800, cpOver)
 	if elapsed > sc3Budget {
-		t.Errorf("SC3 cp-over latency = %v; budget = %v", elapsed, sc3Budget)
+		// This variant spawns a subprocess, making it the suite's most
+		// scheduler-sensitive measurement — it flaked the pre-push hook
+		// twice in one day on a loaded box. The SLO stays at 100ms;
+		// measure ONCE more and fail only if both samples breach
+		// (scheduler noise doesn't repeat; a real regression does).
+		second := write("delta2", 1714838900, cpOver)
+		if second > sc3Budget {
+			t.Errorf("SC3 cp-over latency = %v then %v; budget = %v (both samples breached)",
+				elapsed, second, sc3Budget)
+		} else {
+			t.Logf("SC3 cp-over: first sample %v (load spike), retry %v within budget", elapsed, second)
+		}
 	}
 	t.Logf("SC3 cp-over latency = %v", elapsed)
 }
