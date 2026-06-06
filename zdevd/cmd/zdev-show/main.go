@@ -54,6 +54,10 @@ const (
 	green    = "\x1b[32m"
 	red      = "\x1b[31m"
 	redPulse = "\x1b[1;91m"
+	// Mood block hues — mirror internal/render/theme.go MoodRed/Green/Idle.
+	moodRed   = "\x1b[38;5;196m"
+	moodGreen = "\x1b[38;5;46m"
+	moodIdle  = "\x1b[38;5;245m"
 )
 
 func main() {
@@ -225,9 +229,9 @@ func formatLegend() string {
 	row(dim+"1d"+reset, "last-activity age (only shown when ≥30s and not waiting)")
 
 	section("Header")
-	row("zdev projects", "title")
-	row("🌿 / 😀 / 😬 / 🔥", "mood — calm / something finished / waiting / urgent (≥3 waits or ≥5min)")
-	row("[go]", "renderer build tag (debug)")
+	row("zdev projects "+moodIdle+"█"+reset, "title + mood block")
+	row(moodIdle+"█"+reset+" / "+moodGreen+"█"+reset+" / "+orange+"█"+reset+" / "+moodRed+"█"+reset,
+		"mood — idle / something finished or running / waiting / urgent (dead, ≥3 waits, or ≥5min)")
 
 	section("Footer tally (counts by marker)")
 	row("0● 1◎ 0◆ 16· 0·", "waiting / shell-running / finished / alive / absent")
