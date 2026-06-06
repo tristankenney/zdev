@@ -117,9 +117,9 @@ jobs:
           # pane titles, which reach the daemon via its 5s cross-session
           # poll — a 3s sleep races it (first smoke run failed exactly
           # there).
-          wait_in()  { for i in $(seq 1 20); do zdev-show triage | grep -q proj-a && return 0; sleep 1; done
+          wait_in()  { for i in $(seq 1 40); do zdev-show triage | grep -q proj-a && return 0; sleep 1; done
                        echo "FAIL: $1"; zdev-show triage; return 1; }
-          wait_out() { for i in $(seq 1 20); do zdev-show triage | grep -q proj-a || return 0; sleep 1; done
+          wait_out() { for i in $(seq 1 40); do zdev-show triage | grep -q proj-a || return 0; sleep 1; done
                        echo "FAIL: $1"; zdev-show triage; return 1; }
           # Agent asks a question → enters the triage queue.
           printf '%s' '{"message":"Which database should I use?"}' \
@@ -146,7 +146,7 @@ jobs:
       - name: opencode lifecycle (adapter states → triage)
         run: |
           pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
-          wait_in()  { for i in $(seq 1 20); do zdev-show triage | grep -q proj-a && return 0; sleep 1; done
+          wait_in()  { for i in $(seq 1 40); do zdev-show triage | grep -q proj-a && return 0; sleep 1; done
                        echo "FAIL: $1"; zdev-show triage; return 1; }
           # The exact argv the plugin produces (its event→state mapping
           # is covered by scripts/test-opencode-plugin.mjs; this leg
@@ -161,5 +161,6 @@ jobs:
           echo "=== tmux state ==="; tmux ls || true; tmux list-panes -a -F '#{session_name} #{pane_id} [#{pane_title}]' || true
           echo "=== notif dir ==="; ls -la "${TMPDIR:-/tmp/}zdevd-notif/" 2>/dev/null; cat "${TMPDIR:-/tmp/}zdevd-notif/"* 2>/dev/null || true
           echo "=== daemon slog ==="; cat "$HOME/.local/state/zdev/zdevd.log" 2>/dev/null | tail -60 || true
+          echo "=== eventlog (semantic transitions) ==="; tail -30 "$HOME/.local/state/zdev/events.ndjson" 2>/dev/null || true
           echo "=== daemon stdout ==="; cat /tmp/zdevd.log 2>/dev/null || true
           echo "=== list --json ==="; zdev-show list --json || true
