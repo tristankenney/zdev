@@ -152,12 +152,13 @@ install_opencode() {
         echo "opencode: plugin source not found (expected config/opencode/zdev-notify.js in the zdev repo); skipping." >&2
         return 0
     fi
-    # Current opencode loads plugins/ (plural); older builds used
-    # plugin/ (singular). Install to plugins/ always, and ALSO to a
-    # pre-existing plugin/ dir so older installs work — double-loading
-    # is harmless (the notify writes are idempotent).
+    # Current opencode loads plugins/ (plural); older builds load
+    # plugin/ (singular) ONLY. Install to BOTH unconditionally — we
+    # can't know the user's opencode version, a wrong guess silently
+    # drops all activity feedback, and double-loading on versions that
+    # read both is harmless (the notify writes are idempotent).
     local d installed=0
-    for d in "$oc_root/plugins" $( [[ -d "$oc_root/plugin" ]] && echo "$oc_root/plugin" ); do
+    for d in "$oc_root/plugins" "$oc_root/plugin"; do
         if [[ "$DRY_RUN" -eq 1 ]]; then
             echo "opencode: dry-run — would link $d/zdev-notify.js"
             continue

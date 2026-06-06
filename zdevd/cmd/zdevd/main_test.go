@@ -6,13 +6,17 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// TestDefaultStatePath_ShapeMatchesSocket asserts that defaultStatePath()
-// returns a path under $HOME/Library/Application Support/zdev/ ending in
-// "zdevd-state.json" — mirrors defaultSocketPath()'s directory exactly.
+// TestDefaultStatePath_ShapeMatchesSocket asserts the per-platform state
+// path shape. On darwin, state and socket share one Application Support
+// dir; on Linux the XDG layout deliberately SPLITS them (state under
+// $XDG_STATE_HOME, socket under $XDG_RUNTIME_DIR) — first caught by CI:
+// this test asserted the darwin shape unconditionally and failed every
+// Linux run.
 func TestDefaultStatePath_ShapeMatchesSocket(t *testing.T) {
 	got := defaultStatePath()
 
@@ -21,21 +25,24 @@ func TestDefaultStatePath_ShapeMatchesSocket(t *testing.T) {
 		t.Skip("HOME not set")
 	}
 
-	wantDir := filepath.Join(home, "Library", "Application Support", "zdev")
-	wantFile := "zdevd-state.json"
-
-	if !strings.HasPrefix(got, wantDir) {
-		t.Errorf("defaultStatePath() = %q, want path under %q", got, wantDir)
-	}
+	const wantFile = "zdevd-state.json"
 	if !strings.HasSuffix(got, wantFile) {
 		t.Errorf("defaultStatePath() = %q, want suffix %q", got, wantFile)
 	}
 
-	// Also verify it shares the same directory as defaultSocketPath.
-	socketDir := filepath.Dir(defaultSocketPath())
-	stateDir := filepath.Dir(got)
-	if socketDir != stateDir {
-		t.Errorf("defaultStatePath() dir = %q, defaultSocketPath() dir = %q; expected same dir",
-			stateDir, socketDir)
+	switch runtime.GOOS {
+	case "darwin":
+		wantDir := filepath.Join(home, "Library", "Application Support", "zdev")
+		if !strings.HasPrefix(got, wantDir) {
+			t.Errorf("defaultStatePath() = %q, want path under %q", got, wantDir)
+		}
+		if socketDir, stateDir := filepath.Dir(defaultSocketPath()), filepath.Dir(got); socketDir != stateDir {
+			t.Errorf("defaultStatePath() dir = %q, defaultSocketPath() dir = %q; darwin expects same dir",
+				stateDir, socketDir)
+		}
+	case "linux":
+		if os.Getenv("XDG_STATE_HOME") == "" && !strings.Contains(got, filepath.Join("state", "zdev")) {
+			t.Errorf("defaultStatePath() = %q, want a path under ~/.local/state/zdev", got)
+		}
 	}
 }

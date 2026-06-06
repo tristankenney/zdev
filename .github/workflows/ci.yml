@@ -31,22 +31,19 @@ jobs:
         run: |
           set -e
           sudo apt-get update -qq
-          # zsh because some scripts use #!/bin/zsh; systemd-analyze for unit
-          # linting (`make test` runs it best-effort).
+          # systemd-analyze for unit linting (`make test` runs it best-effort).
           sudo apt-get install -y --no-install-recommends \
-            tmux zsh jq systemd
+            tmux jq systemd
 
       - name: Shell-syntax checks
         run: |
           set -e
-          # Pick the interpreter from each shebang so we don't false-fail
-          # bash scripts under zsh (or vice-versa).
+          # Everything is bash (the zsh dependency was adoption bug #2).
           check() {
             local f="$1"
             local shebang
             shebang=$(head -1 "$f")
             case "$shebang" in
-              *zsh*)  zsh  -n "$f" ;;
               *bash*) bash -n "$f" ;;
               *)      sh   -n "$f" ;;
             esac
@@ -56,5 +53,87 @@ jobs:
           for f in zdevd/scripts/*.sh; do check "$f"; done
           for f in bin/*; do check "$f"; done
 
+      - name: opencode plugin contract
+        run: node scripts/test-opencode-plugin.mjs
+
       - name: make test (lint + anti-fork gates + go test -race)
         run: make -C zdevd test
+
+  # Agent-simulation smoke (Linux): real tmux server, real daemon, and
+  # synthetic agent lifecycles driven through the SAME entry points the
+  # agents use — claude-style hook invocations (JSON on stdin) and the
+  # opencode adapter's notify states — asserted end-to-end via the
+  # triage queue. This is "run it in CI with different agents" minus
+  # the model APIs: the agents' integration surfaces are exercised;
+  # their LLM loops are not (that needs API keys — follow-up workflow).
+  agent-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: zdevd/go.mod
+          cache-dependency-path: zdevd/go.sum
+      - name: deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tmux jq
+      - name: install (non-interactive)
+        run: |
+          mkdir -p "$HOME/workspace/proj-a" "$HOME/.claude" "$HOME/.config/opencode"
+          ./install.sh < /dev/null
+          echo 'proj-a' > "$HOME/.config/zdev/projects"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # Hook + plugin installs must have landed.
+          jq -e '.hooks.SessionEnd' "$HOME/.claude/settings.json" >/dev/null
+          test -L "$HOME/.config/opencode/plugins/zdev-notify.js"
+          test -L "$HOME/.config/opencode/plugin/zdev-notify.js"
+      - name: boot daemon + fleet
+        run: |
+          tmux new-session -d -s proj-a -c "$HOME/workspace/proj-a"
+          # CI runners have no user session bus; run the daemon directly.
+          systemctl --user stop zdevd 2>/dev/null || true
+          nohup "$HOME/.local/bin/zdevd" >/tmp/zdevd.log 2>&1 &
+          for i in $(seq 1 30); do
+            zdev-show list >/dev/null 2>&1 && break
+            sleep 1
+          done
+          zdev-show list
+      - name: claude lifecycle (hook JSON → triage → clear → death → ack)
+        run: |
+          pane=$(tmux list-panes -t proj-a -F '#{pane_id}' | head -1)
+          # Agent asks a question → enters the triage queue.
+          printf '%s' '{"message":"Which database should I use?"}' \
+            | TMUX_PANE="$pane" zdev-notify claude waiting --json
+          sleep 3
+          zdev-show triage | grep -q proj-a \
+            || { echo "FAIL: waiting state never reached triage"; exit 1; }
+          # User answers → queue empties.
+          TMUX_PANE="$pane" zdev-notify claude clear
+          sleep 3
+          ! zdev-show triage | grep -q proj-a \
+            || { echo "FAIL: clear did not remove the wait"; exit 1; }
+          # Unclean SessionEnd → death tops the queue; ack clears it.
+          printf '%s' '{"reason":"other"}' \
+            | TMUX_PANE="$pane" zdev-notify claude session-end --json
+          sleep 3
+          zdev-show triage | grep -q proj-a \
+            || { echo "FAIL: death never reached triage"; exit 1; }
+          zdev ack --all
+          sleep 3
+          ! zdev-show triage | grep -q proj-a \
+            || { echo "FAIL: ack did not clear the death"; exit 1; }
+      - name: opencode lifecycle (adapter states → triage)
+        run: |
+          pane=$(tmux list-panes -t proj-a -F '#{pane_id}' | head -1)
+          # The exact argv the plugin produces (its event→state mapping
+          # is covered by scripts/test-opencode-plugin.mjs; this leg
+          # covers the daemon side of the contract).
+          TMUX_PANE="$pane" zdev-notify opencode done
+          sleep 3
+          zdev-show triage | grep -q proj-a \
+            || { echo "FAIL: opencode done state never reached triage"; exit 1; }
+          zdev ack --all
+      - name: daemon log on failure
+        if: failure()
+        run: cat /tmp/zdevd.log /tmp/zdevd.err 2>/dev/null || true

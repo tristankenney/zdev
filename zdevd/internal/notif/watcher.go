@@ -106,6 +106,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 			session := strings.TrimSuffix(strings.TrimPrefix(base, notifPrefix), notifSuffix)
 			ts, kind, summary := readNotifFile(ev.Name)
+			if ts == 0 {
+				// No valid timestamp = no signal yet. On Linux,
+				// inotify delivers the Create event BEFORE the
+				// writer's content lands, so the first read of every
+				// notif file is empty — submitting it would feed the
+				// hub a garbage ts=0 wait-start that the immediate
+				// Write event then has to repair. macOS coalesces, so
+				// this race never showed on the dev platform (first
+				// caught by CI's Linux leg).
+				continue
+			}
 			w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary})
 		case err, ok := <-fsw.Errors:
 			if !ok {

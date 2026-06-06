@@ -389,12 +389,21 @@ install: build $(ZDEVD_UNIT_BUILT) $(REAPER_UNIT_BUILT) $(REAPER_TIMER_BUILT)
 	ln -sf "$(ZDEVD_UNIT_BUILT)" "$(ZDEVD_UNIT_DST)"
 	ln -sf "$(REAPER_UNIT_BUILT)" "$(REAPER_UNIT_DST)"
 	ln -sf "$(REAPER_TIMER_BUILT)" "$(REAPER_TIMER_DST)"
-	@# Reload + enable + start. `daemon-reload` picks up the new units;
-	@# `enable --now` both enables on login and starts immediately.
-	systemctl --user daemon-reload
-	systemctl --user enable --now zdevd.service
-	systemctl --user enable --now zdev-reaper.timer
-	@echo "install: zdevd + reaper.timer enabled and started."
+	@# Reload + enable + start — but only when a systemd user bus exists.
+	@# CI runners and bare SSH sessions without lingering have none;
+	@# failing the whole install over it would block the build/symlink
+	@# steps that DO work everywhere.
+	@if systemctl --user show-environment >/dev/null 2>&1; then \
+		systemctl --user daemon-reload; \
+		systemctl --user enable --now zdevd.service; \
+		systemctl --user enable --now zdev-reaper.timer; \
+		echo "install: zdevd + reaper.timer enabled and started."; \
+	else \
+		echo "install: WARNING — no systemd user bus (CI, or SSH without lingering)."; \
+		echo "install:           units linked but not started. To run at login:"; \
+		echo "install:             loginctl enable-linger $$USER"; \
+		echo "install:             systemctl --user enable --now zdevd.service"; \
+	fi
 	@# Sapling pre-push hook (Pitfall D).
 	bash "$(ZDEVD_DIR)/scripts/install-prepush.sh"
 	@echo "install: complete. Open a tmux pane via zdev-sidebar-toggle to verify."
