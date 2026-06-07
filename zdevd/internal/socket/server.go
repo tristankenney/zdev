@@ -29,9 +29,19 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/diag"
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
+
+// SnapshotSource is the interface the Server requires from its backing hub.
+// *hub.Hub satisfies this interface; demo.DemoSource also satisfies it for
+// the `zdevd demo` subcommand (reproducible README GIF, no agents needed).
+type SnapshotSource interface {
+	Register(sub *hub.Subscriber, regDone chan<- struct{}) error
+	Unregister(sub *hub.Subscriber)
+	DiagSnapshot(ctx context.Context) (*diag.Reply, error)
+}
 
 // dialProbeTimeout caps the liveness probe in BindOrCleanStale.
 const dialProbeTimeout = 200 * time.Millisecond
@@ -59,7 +69,7 @@ var snapshotWriteTimeout = 5 * time.Second
 type Server struct {
 	Path string
 	ln   *net.UnixListener
-	hub  *hub.Hub
+	hub  SnapshotSource
 }
 
 // NewServer constructs a Server bound to path. The caller must invoke
@@ -70,7 +80,7 @@ func NewServer(path string) *Server {
 
 // SetHub wires the snapshot publisher. Must be called before Serve.
 // Calling SetHub after Serve has started is a defensive no-op; logs WARN.
-func (s *Server) SetHub(h *hub.Hub) {
+func (s *Server) SetHub(h SnapshotSource) {
 	if s.ln != nil {
 		slog.Warn("socket: SetHub called after Serve started; ignoring")
 		return
@@ -291,4 +301,3 @@ func BindOrCleanStale(path string) (*net.UnixListener, error) {
 	}
 	return ln, nil
 }
-

@@ -66,6 +66,7 @@ type Subscriber struct {
 	TmuxSession string               // session name from Hello.TmuxSession; "" if not provided
 	snaps       chan *proto.Snapshot // capacity 1; drop-oldest (D2-03)
 	done        chan struct{}        // closed by hub when subscription is torn down
+	closeOnce   sync.Once            // guards Close; hub may also close done directly
 }
 
 // NewSubscriber constructs a Subscriber. The hub takes ownership after
@@ -89,6 +90,32 @@ func (s *Subscriber) Snaps() <-chan *proto.Snapshot { return s.snaps }
 // Done is closed by the hub when the subscription is torn down (either via
 // Unregister or hub shutdown).
 func (s *Subscriber) Done() <-chan struct{} { return s.done }
+
+// Send delivers snap to the subscriber using the same drop-oldest policy as
+// the hub's internal publishDropOldest. Safe for concurrent use. Intended
+// for demo.DemoSource and test helpers; production pushes go through the hub
+// goroutine which calls publishDropOldest directly on the unexported snaps field.
+func (s *Subscriber) Send(snap *proto.Snapshot) {
+	select {
+	case s.snaps <- snap:
+	default:
+		select {
+		case <-s.snaps:
+		default:
+		}
+		select {
+		case s.snaps <- snap:
+		default:
+		}
+	}
+}
+
+// Close tears down the subscriber by closing its done channel. Idempotent.
+// Intended for demo.DemoSource; Hub.Run closes done directly via the
+// unregister protocol and does not call this method.
+func (s *Subscriber) Close() {
+	s.closeOnce.Do(func() { close(s.done) })
+}
 
 type registerReq struct {
 	sub  *Subscriber

@@ -1,0 +1,25 @@
+{
+  "delay_seconds": 8,
+  "snapshot": {
+    "v": 1,
+    "type": "snapshot",
+    "schema": "phase4-v11",
+    "seq": 0,
+    "sent_at": "2024-01-01T00:00:00Z",
+    "sessions": ["myorg/backend", "myorg/api", "myorg/tools"],
+    "projects": [
+      {
+        "name": "myorg/backend",
+        "status": "alive",
+        "branch": "feat/auth",
+        "attention": "working",
+        "agent_states": {"claude": "working"},
+        "ahead": 3,
+        "dirty_count": 2
+      },
+      {"name": "myorg/api",   "status": "alive", "branch": "main"},
+      {"name": "myorg/tools", "status": "alive", "branch": "feature/metrics", "pr_open": 1}
+    ],
+    "current_session": "myorg/backend"
+  }
+}
