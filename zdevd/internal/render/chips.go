@@ -43,10 +43,22 @@ func PaletteFor(name string) string {
 // predicate for the marker dim-out and the row-recede treatment —
 // dogfood feedback (2026-06-06): a palette `·` vs a dim `·` is not
 // distinguishable at one cell, so staleness must also recede the name.
+// In "off" mode callers skip this check entirely (DemoteMode=="off" guard
+// lives at the call site — this predicate is mode-agnostic).
 func isStaleRow(p *proto.Project, now int64) bool {
 	return projectAttention(p) == proto.AttIdle &&
 		p.LastActivityTS > 0 &&
 		now-p.LastActivityTS >= int64(StaleThresholdSec)
+}
+
+// isDemotedRow reports whether p should be relocated to the fold section
+// when DemoteMode=="fold". Uses DemoteThresholdSec (runtime-configurable)
+// instead of the StaleThresholdSec constant so fold and dim thresholds can
+// diverge independently.
+func isDemotedRow(p *proto.Project, now int64) bool {
+	return projectAttention(p) == proto.AttIdle &&
+		p.LastActivityTS > 0 &&
+		now-p.LastActivityTS >= int64(DemoteThresholdSec)
 }
 
 // MarkerFor returns the (glyph, ansiColor) pair for the given project's

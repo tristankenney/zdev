@@ -192,6 +192,21 @@ func run() error {
 	case "off":
 		render.FooterMode = "off"
 	}
+
+	// Inactive-session demotion: dim (default) | fold | off.
+	// Unknown values fall back to dim (current behavior).
+	switch os.Getenv("ZDEV_SIDEBAR_DEMOTE") {
+	case "fold":
+		render.DemoteMode = "fold"
+	case "off":
+		render.DemoteMode = "off"
+	}
+	// Optional threshold override (seconds). Falls back to DemoteThresholdSecDefault.
+	if v := os.Getenv("ZDEV_SIDEBAR_DEMOTE_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			render.DemoteThresholdSec = n
+		}
+	}
 	snap, conn, err := initialSubscribe(ctx, func(ctx context.Context) (*proto.Snapshot, net.Conn, error) {
 		return socket.Subscribe(ctx, socketPath, tmuxPane, tmuxSession)
 	}, width)

@@ -129,6 +129,11 @@ const (
 	// VIS-12. Bash hardcodes 3600 (1 hour).
 	StaleThresholdSec = 3600
 
+	// DemoteThresholdSecDefault — default inactive threshold for fold/dim demotion.
+	// cmd/zdev-sidebar can override via ZDEV_SIDEBAR_DEMOTE_THRESHOLD; falls
+	// back to StaleThresholdSec so the two behaviors align out of the box.
+	DemoteThresholdSecDefault = StaleThresholdSec
+
 	// WaitWarnSec — wait-age renders dim until this threshold.
 	// DATA-09. Bash WAIT_WARN_SECONDS=60.
 	WaitWarnSec = 60
@@ -156,7 +161,6 @@ const (
 	MoodRed   = "\x1b[38;5;196m" // bright red (xterm 196)
 	MoodGreen = "\x1b[38;5;46m"  // bright green (xterm 46)
 	MoodIdle  = "\x1b[38;5;245m" // mid-grey (xterm 245)
-
 
 	// Ellipsis is the U+2026 horizontal ellipsis, used as the truncation
 	// suffix per VIS-11. Three bytes UTF-8 (0xE2 0x80 0xA6).

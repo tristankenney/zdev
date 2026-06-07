@@ -241,6 +241,7 @@ func formatLegend() string {
 	row(cyan+"▌"+reset+" (left edge)", "breath bar — marks THIS sidebar's own session")
 	row(bold+cyan+"project-name"+reset, "current session, bold cyan")
 	row(dim+"dimmed row"+reset, "stale (>1h activity) or daemon outage")
+	row("", "ZDEV_SIDEBAR_DEMOTE=fold sinks stale sessions below a dim ─── divider; =off disables stale treatment")
 
 	fmt.Fprintf(&b, "\n%sSee also: zdev-show <project> for the captured wait-on-input prompt.%s\n", dim, reset)
 	return b.String()

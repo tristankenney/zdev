@@ -143,8 +143,12 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	renderTriageSection(&buf, snap, width, animator, nowFn)
 
 	// Per-project rows.
+	//
+	// renderProject writes one project's row(s) and tallies it into the
+	// footer buckets. Used by both the main loop (dim/off modes) and the
+	// active/demoted sub-loops (fold mode).
 	var nWait, nDead, nRun, nDone, nAlive, nAbsent int
-	for i := range snap.Projects {
+	renderProject := func(i int) {
 		p := snap.Projects[i]
 		// Absent is a session-existence flag, not an Attention value;
 		// detect via Status here since Attention has no "absent" case.
@@ -179,6 +183,44 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 	}
 
+	if DemoteMode == "fold" {
+		// Fold mode: separate active and demoted projects. Active projects
+		// render in their original positions (spatial memory preserved for
+		// the active block). Demoted (idle > DemoteThresholdSec) projects
+		// sink below a dim divider at the bottom of the list.
+		// Demoted rows still receive stale-dim treatment (renderCompactRow /
+		// renderProjectRow apply isStaleRow normally — only "off" disables it).
+		var activeIdx, demotedIdx []int
+		now := nowFn()
+		for i := range snap.Projects {
+			if isDemotedRow(&snap.Projects[i], now) {
+				demotedIdx = append(demotedIdx, i)
+			} else {
+				activeIdx = append(activeIdx, i)
+			}
+		}
+		for _, i := range activeIdx {
+			renderProject(i)
+		}
+		if len(demotedIdx) > 0 {
+			// Dim demote divider: same glyph family as the mood divider but
+			// Dim-colored to signal "below the fold". One row always.
+			buf.WriteString("  ")
+			buf.WriteString(Dim)
+			buf.WriteString(strings.Repeat("─", 17))
+			buf.WriteString(Reset)
+			buf.WriteString(ClearLineEnd)
+			buf.WriteByte('\n')
+			for _, i := range demotedIdx {
+				renderProject(i)
+			}
+		}
+	} else {
+		for i := range snap.Projects {
+			renderProject(i)
+		}
+	}
+
 	renderFooter(&buf, nWait, nDead, nRun, nDone, nAlive, nAbsent)
 
 	buf.WriteString(ClearToEnd)
@@ -200,6 +242,35 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 // across modes and fleet states; an empty last row is visually
 // indistinguishable from no row.
 var FooterMode = "full"
+
+// DemoteMode selects the inactive-session demotion style.
+// cmd/zdev-sidebar sets this from ZDEV_SIDEBAR_DEMOTE:
+//
+//	dim  — stale rows dim in place (default; current VIS-12 behavior).
+//	fold — stale sessions sink below a dim ─── divider at the bottom;
+//	       the active block is never reordered (spatial memory preserved).
+//	off  — no special treatment for inactive sessions (no dim, no fold).
+//
+// Kill criterion: if fold hides a session the operator forgets,
+// default stays dim. fold requires explicit opt-in.
+//
+// Frame line-count math for fold mode (when N_demoted > 0):
+//
+//	rows = 1 (mood divider)
+//	     + T (triage rows, 0 when quiet)
+//	     + A (active project rows)
+//	     + 1 (demote divider)    ← only present when N_demoted > 0
+//	     + D (demoted project rows)
+//	     + 1 (footer)
+//
+// Click-row offsets: active projects index from row 3+T as usual;
+// demoted projects index from row 3+T+A+1 (past the demote divider).
+var DemoteMode = "dim"
+
+// DemoteThresholdSec is the inactivity duration (seconds) after which a
+// project is eligible for fold/dim demotion. Defaults to StaleThresholdSec.
+// cmd/zdev-sidebar overrides via ZDEV_SIDEBAR_DEMOTE_THRESHOLD.
+var DemoteThresholdSec = DemoteThresholdSecDefault
 
 // renderFooter writes the footer tally per FooterMode. Counts use the
 // bucket's own marker color (waiting orange, dead red, working icy,
@@ -379,8 +450,9 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 		pForMarker.Status = "alive"
 	}
 	glyph, color := MarkerFor(pForMarker, animator, nowFn())
-	// VIS-12 stale dim-out: idle + age >= StaleThreshold => Dim
-	if isStaleRow(p, nowFn()) {
+	// VIS-12 stale dim-out: idle + age >= StaleThreshold => Dim.
+	// Skipped in "off" mode where no special treatment applies.
+	if DemoteMode != "off" && isStaleRow(p, nowFn()) {
 		color = Dim
 	}
 	buf.WriteString(color)
@@ -507,9 +579,10 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	}
 
 	// Marker (reuse MarkerFor with stale-dim override, same as renderProjectRow VIS-12).
+	// Stale-dim skipped in "off" mode.
 	pForMarker := *p
 	glyph, color := MarkerFor(pForMarker, animator, nowFn())
-	stale := isStaleRow(p, nowFn())
+	stale := DemoteMode != "off" && isStaleRow(p, nowFn())
 	if stale {
 		color = Dim
 	}
