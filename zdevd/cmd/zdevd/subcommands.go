@@ -18,11 +18,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
+	"github.com/tristankenney/zdev/zdevd/internal/demo"
 	"github.com/tristankenney/zdev/zdevd/internal/diag"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	socketpkg "github.com/tristankenney/zdev/zdevd/internal/socket"
@@ -101,6 +107,57 @@ func historySubcmd(args []string) int {
 			continue
 		}
 		fmt.Println(formatEventHuman(ev))
+	}
+	return 0
+}
+
+// demoSubcmd implements `zdevd demo [--socket PATH]`.
+//
+// It starts a scripted fake-fleet server on the daemon socket so a real
+// zdev-sidebar can connect from a clean clone with no agents, no gh auth,
+// and no tmux fleet. The demo replays committed golden fixtures, animating
+// tier escalation (idle → working → waiting → death) in ~30 seconds.
+//
+// After connecting a sidebar, Ctrl-C stops the demo and closes all subscriber
+// connections cleanly.
+func demoSubcmd(args []string) int {
+	fs := flag.NewFlagSet("zdevd demo", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	socketPath := fs.String("socket", defaultSocketPath(), "unix socket path for the demo server")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	src, err := demo.New()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd demo: load fixtures: %v\n", err)
+		return 1
+	}
+
+	srv := socketpkg.NewServer(*socketPath)
+	srv.SetHub(src)
+	if err := srv.Listen(); err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd demo: listen: %v\n", err)
+		return 1
+	}
+	defer func() { _ = srv.Close() }()
+
+	fmt.Fprintf(os.Stderr, "zdevd demo: serving on %s (Ctrl-C to stop)\n", *socketPath)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return src.Run(gctx) })
+	g.Go(func() error {
+		if serr := srv.Serve(gctx); serr != nil && !errors.Is(serr, context.Canceled) {
+			return serr
+		}
+		return nil
+	})
+	if gerr := g.Wait(); gerr != nil && !errors.Is(gerr, context.Canceled) {
+		fmt.Fprintf(os.Stderr, "zdevd demo: %v\n", gerr)
+		return 1
 	}
 	return 0
 }

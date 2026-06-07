@@ -90,6 +90,8 @@ func main() {
 			os.Exit(diagSubcmd(os.Args[2:]))
 		case "history":
 			os.Exit(historySubcmd(os.Args[2:]))
+		case "demo":
+			os.Exit(demoSubcmd(os.Args[2:]))
 		case "-v", "--version", "version":
 			fmt.Println(version)
 			os.Exit(0)
@@ -102,7 +104,7 @@ func main() {
 			// is a usage error — the daemon takes flags only.
 			if !strings.HasPrefix(os.Args[1], "-") {
 				fmt.Fprintf(os.Stderr,
-					"zdevd: unknown subcommand %q (expected: diag, history, version, or no args for daemon)\n",
+					"zdevd: unknown subcommand %q (expected: demo, diag, history, version, or no args for daemon)\n",
 					os.Args[1])
 				os.Exit(2)
 			}
