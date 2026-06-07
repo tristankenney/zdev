@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1501,5 +1502,163 @@ func TestRender_FailingChecksRow_NonCurrentSuppressed(t *testing.T) {
 	}
 	if bytes.Contains(out, []byte("lint, test")) {
 		t.Errorf("non-current project: names must not appear (inline alerts only)\n%q", out)
+	}
+}
+
+// --- DemoteMode tests ---
+
+// TestRender_FoldMode_DemotedProjectsMovedToBottom verifies that in fold mode
+// stale projects (age >= DemoteThresholdSec) appear after the dim divider and
+// not before it, while the active block order is preserved.
+func TestRender_FoldMode_DemotedProjectsMovedToBottom(t *testing.T) {
+	DemoteMode = "fold"
+	defer func() { DemoteMode = "dim" }()
+
+	// alpha: recently active → stays in active block
+	// beta:  stale (age 7200s) → demoted below fold divider
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "alpha", Status: "alive", LastActivityTS: fixedNow - 60},
+			{Name: "beta", Status: "alive", LastActivityTS: fixedNow - 7200},
+		},
+	}
+	anim := NewAnimator()
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+
+	// Dim demote divider must be present.
+	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	if !bytes.Contains(out, demoteDivider) {
+		t.Errorf("fold mode: expected dim demote divider %q in output\n%q", demoteDivider, out)
+	}
+
+	// alpha must appear BEFORE the demote divider; beta AFTER it.
+	alphaIdx := bytes.Index(out, []byte("alpha"))
+	betaIdx := bytes.Index(out, []byte("beta"))
+	divIdx := bytes.Index(out, demoteDivider)
+
+	if alphaIdx < 0 || betaIdx < 0 || divIdx < 0 {
+		t.Fatalf("fold mode: alpha=%d beta=%d divider=%d in %q", alphaIdx, betaIdx, divIdx, out)
+	}
+	if alphaIdx > divIdx {
+		t.Errorf("fold mode: active 'alpha' must appear before demote divider (alpha=%d div=%d)", alphaIdx, divIdx)
+	}
+	if betaIdx < divIdx {
+		t.Errorf("fold mode: stale 'beta' must appear after demote divider (beta=%d div=%d)", betaIdx, divIdx)
+	}
+}
+
+// TestRender_FoldMode_NoDividerWhenNoDemoted verifies that when no projects
+// are stale the fold divider is absent (no spurious extra row).
+func TestRender_FoldMode_NoDividerWhenNoDemoted(t *testing.T) {
+	DemoteMode = "fold"
+	defer func() { DemoteMode = "dim" }()
+
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "alpha", Status: "alive", LastActivityTS: fixedNow - 60},
+		},
+	}
+	anim := NewAnimator()
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+
+	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	if bytes.Contains(out, demoteDivider) {
+		t.Errorf("fold mode: demote divider must NOT appear when no stale projects\n%q", out)
+	}
+}
+
+// TestRender_FoldMode_ActiveBlockOrderPreserved verifies that the active
+// projects retain their original relative order (spatial memory contract).
+func TestRender_FoldMode_ActiveBlockOrderPreserved(t *testing.T) {
+	DemoteMode = "fold"
+	defer func() { DemoteMode = "dim" }()
+
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "alpha", Status: "alive", LastActivityTS: fixedNow - 60},
+			{Name: "beta", Status: "alive", LastActivityTS: fixedNow - 7200}, // stale
+			{Name: "gamma", Status: "alive", LastActivityTS: fixedNow - 120},
+		},
+	}
+	anim := NewAnimator()
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+
+	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	divIdx := bytes.Index(out, demoteDivider)
+	if divIdx < 0 {
+		t.Fatalf("fold mode: expected demote divider in output\n%q", out)
+	}
+	// alpha and gamma are active — must both appear before divider.
+	alphaIdx := bytes.Index(out, []byte("alpha"))
+	gammaIdx := bytes.Index(out, []byte("gamma"))
+	betaIdx := bytes.Index(out, []byte("beta"))
+	if alphaIdx < 0 || gammaIdx < 0 || betaIdx < 0 {
+		t.Fatalf("fold mode: missing projects in output\n%q", out)
+	}
+	if alphaIdx > divIdx {
+		t.Errorf("fold mode: alpha must be in active block (before divider)")
+	}
+	if gammaIdx > divIdx {
+		t.Errorf("fold mode: gamma must be in active block (before divider)")
+	}
+	if alphaIdx > gammaIdx {
+		t.Errorf("fold mode: alpha must appear before gamma (original order preserved)")
+	}
+	if betaIdx < divIdx {
+		t.Errorf("fold mode: stale beta must be in demoted block (after divider)")
+	}
+}
+
+// TestRender_FoldMode_DimAndFoldDefaultsUnchanged verifies that the existing
+// dim-in-place behavior is not affected — DemoteMode defaults to "dim" and
+// no divider appears.
+func TestRender_FoldMode_DimAndFoldDefaultsUnchanged(t *testing.T) {
+	// DemoteMode is "dim" by default — no reset needed.
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "alpha", Status: "alive", LastActivityTS: fixedNow - 7200}, // stale
+		},
+	}
+	anim := NewAnimator()
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+
+	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	if bytes.Contains(out, demoteDivider) {
+		t.Errorf("dim mode: demote divider must NOT appear (fold is opt-in)\n%q", out)
+	}
+	// Stale row must still be dim (VIS-12).
+	if !bytes.Contains(out, []byte(Dim)) {
+		t.Errorf("dim mode: stale row must still apply Dim color\n%q", out)
+	}
+}
+
+// TestRender_OffMode_NoStaleDim verifies that DemoteMode="off" disables the
+// stale dim-out treatment entirely — a stale row renders at full brightness.
+func TestRender_OffMode_NoStaleDim(t *testing.T) {
+	DemoteMode = "off"
+	defer func() { DemoteMode = "dim" }()
+
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "alpha", Status: "alive", LastActivityTS: fixedNow - 7200}, // stale
+		},
+	}
+	anim := NewAnimator()
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+
+	// Palette color for alpha must appear (not suppressed by Dim).
+	paletteColor := PaletteFor("alpha")
+	if !bytes.Contains(out, []byte(paletteColor)) {
+		t.Errorf("off mode: stale row must render with palette color (no dim-out); paletteColor=%q\n%q", paletteColor, out)
+	}
+	// No demote divider either.
+	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	if bytes.Contains(out, demoteDivider) {
+		t.Errorf("off mode: demote divider must NOT appear\n%q", out)
 	}
 }

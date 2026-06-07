@@ -21,39 +21,46 @@ func nowFnFixed() int64 { return refTimeUnix }
 
 // fixtureCases is the table of VIS + DATA fixture cases. pulseFrame and
 // breathState pin the animator's state for deterministic byte output.
+// demoteMode overrides DemoteMode for the test (empty string leaves the
+// default "dim", which matches the pre-existing goldens).
 var fixtureCases = []struct {
 	name        string
 	prefix      string
 	pulseFrame  int
 	breathState int
+	demoteMode  string
 }{
-	{"VIS-01-markers", "vis-01", 0, 0},
+	{"VIS-01-markers", "vis-01", 0, 0, ""},
 	// vis-02 pins tick 16: its waiting project has no WaitStartedTS, so
 	// MarkerFor sees age 0 → the calm ÷4 pace of PulseGlyphAt, and tick
 	// 16 lands on visual frame 4 (●) — the frame the golden was cut at.
-	{"VIS-02-pulse-cycle", "vis-02", 16, 0},
-	{"VIS-03-breath-bar", "vis-03", 0, 0},
-	{"VIS-04-mood-glyph", "vis-04", 0, 0},
-	{"VIS-05-hue-palette", "vis-05", 0, 0},
-	{"VIS-06-footer-counts", "vis-06", 0, 0},
-	{"VIS-07-two-row-layout", "vis-07", 0, 0},
-	{"VIS-08-header", "vis-08", 0, 0},
-	{"VIS-09-cursor-handling", "vis-09", 0, 0},
-	{"VIS-10-differential-skip", "vis-10", 0, 0},
-	{"VIS-11-truncation", "vis-11", 0, 0},
-	{"VIS-12-stale-dim", "vis-12", 0, 0},
-	{"VIS-13-current-session-bold", "vis-13", 0, 0},
-	{"VIS-14-em-dash-placeholder", "vis-14", 0, 0},
-	{"DATA-01-branch-chip", "data-01", 0, 0},
-	{"DATA-02-dirty", "data-02", 0, 0},
-	{"DATA-03-shell-cmd", "data-03", 0, 0},
-	{"DATA-04-pr-aggregate", "data-04", 0, 0},
-	{"DATA-05-pr-celebration", "data-05", 0, 0},
-	{"DATA-06-ports", "data-06", 0, 0},
-	{"DATA-07-activity-age", "data-07", 0, 0},
-	{"DATA-08-agent-chips", "data-08", 0, 0},
-	{"DATA-09-wait-age-escalation", "data-09", 0, 0},
-	{"DATA-10-canonical-rows", "data-10", 0, 0},
+	{"VIS-02-pulse-cycle", "vis-02", 16, 0, ""},
+	{"VIS-03-breath-bar", "vis-03", 0, 0, ""},
+	{"VIS-04-mood-glyph", "vis-04", 0, 0, ""},
+	{"VIS-05-hue-palette", "vis-05", 0, 0, ""},
+	{"VIS-06-footer-counts", "vis-06", 0, 0, ""},
+	{"VIS-07-two-row-layout", "vis-07", 0, 0, ""},
+	{"VIS-08-header", "vis-08", 0, 0, ""},
+	{"VIS-09-cursor-handling", "vis-09", 0, 0, ""},
+	{"VIS-10-differential-skip", "vis-10", 0, 0, ""},
+	{"VIS-11-truncation", "vis-11", 0, 0, ""},
+	{"VIS-12-stale-dim", "vis-12", 0, 0, ""},
+	{"VIS-13-current-session-bold", "vis-13", 0, 0, ""},
+	{"VIS-14-em-dash-placeholder", "vis-14", 0, 0, ""},
+	// VIS-15: fold mode — stale sessions demoted below a dim ─── divider.
+	// alpha (age 60s) stays in the active block; beta + gamma (age 7200s)
+	// are relocated to the demoted section.
+	{"VIS-15-fold-demote", "vis-15", 0, 0, "fold"},
+	{"DATA-01-branch-chip", "data-01", 0, 0, ""},
+	{"DATA-02-dirty", "data-02", 0, 0, ""},
+	{"DATA-03-shell-cmd", "data-03", 0, 0, ""},
+	{"DATA-04-pr-aggregate", "data-04", 0, 0, ""},
+	{"DATA-05-pr-celebration", "data-05", 0, 0, ""},
+	{"DATA-06-ports", "data-06", 0, 0, ""},
+	{"DATA-07-activity-age", "data-07", 0, 0, ""},
+	{"DATA-08-agent-chips", "data-08", 0, 0, ""},
+	{"DATA-09-wait-age-escalation", "data-09", 0, 0, ""},
+	{"DATA-10-canonical-rows", "data-10", 0, 0, ""},
 }
 
 // TestVisualParity exercises the Go renderer against 14 VIS + 10 DATA golden
@@ -97,6 +104,14 @@ func TestVisualParity(t *testing.T) {
 			// Pin animator state to the fixture's expected frame position.
 			anim.pulseFrame = tc.pulseFrame
 			anim.breathState = tc.breathState
+
+			// Apply demote mode override for fixtures that need non-default
+			// behavior (e.g. fold mode). Restore after the subtest.
+			if tc.demoteMode != "" {
+				orig := DemoteMode
+				DemoteMode = tc.demoteMode
+				defer func() { DemoteMode = orig }()
+			}
 
 			got := Render(&snap, 50, anim, nowFnFixed)
 			goldenPath := filepath.Join("testdata", "golden", tc.prefix+".golden")
