@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# zdev-sidebar-move — drive the sidebar cursor from tmux key bindings.
+#
+# Usage (set in config/zdev.tmux.conf):
+#   bind -n M-j run-shell -b "$HOME/.local/bin/zdev-sidebar-move +1"
+#   bind -n M-k run-shell -b "$HOME/.local/bin/zdev-sidebar-move -1"
+#   bind -n M-Enter run-shell -b "$HOME/.local/bin/zdev-sidebar-move select"
+#
+# +1 and -1 move the cursor down/up; zdevd republishes the snapshot and the
+# sidebar re-renders with ▶ on the new row.  "select" queries the current row
+# name and calls `tmux switch-client` to jump there.
+set -euo pipefail
+
+ZDEVD="${ZDEVD_BIN:-zdevd}"
+ARG="${1:-}"
+
+case "$ARG" in
+  +1|-1)
+    "$ZDEVD" cursor "$ARG" >/dev/null
+    ;;
+  select)
+    NAME="$("$ZDEVD" cursor select 2>/dev/null || true)"
+    if [[ -z "$NAME" ]]; then
+        exit 0
+    fi
+    # Convert slash-form (e.g. "example/backend") to dash-form for tmux.
+    SESSION="${NAME//\//-}"
+    tmux switch-client -t "=$SESSION" 2>/dev/null || true
+    ;;
+  *)
+    echo "zdev-sidebar-move: usage: $0 {+1|-1|select}" >&2
+    exit 1
+    ;;
+esac
