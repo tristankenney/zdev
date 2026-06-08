@@ -1356,3 +1356,90 @@ func TestPaneCaptureFailed_EvictsAfterThreshold(t *testing.T) {
 		}
 	})
 }
+
+// TestCursorMove verifies the sidebar cursor state machine implemented in
+// applyEvent(CursorMove) and the projectNameAtRow helper.
+func TestCursorMove(t *testing.T) {
+	makeState := func(projectNames ...string) *state {
+		s := newState()
+		s.projectListNames = projectNames
+		return s
+	}
+
+	t.Run("first_press_activates_at_row_zero", func(t *testing.T) {
+		s := makeState("alpha", "beta", "gamma")
+		if s.cursorActive {
+			t.Fatal("cursor should start inactive")
+		}
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil)
+		if !s.cursorActive {
+			t.Error("cursor should be active after first press")
+		}
+		if s.cursorRow != 0 {
+			t.Errorf("cursorRow = %d; want 0 (first press always activates at row 0)", s.cursorRow)
+		}
+	})
+
+	t.Run("moves_down", func(t *testing.T) {
+		s := makeState("alpha", "beta", "gamma")
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // activate at 0
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // move to 1
+		if s.cursorRow != 1 {
+			t.Errorf("cursorRow = %d; want 1", s.cursorRow)
+		}
+	})
+
+	t.Run("wraps_down_past_end", func(t *testing.T) {
+		s := makeState("alpha", "beta", "gamma")          // n=3
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // activate 0
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // 1
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // 2
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // wraps to 0
+		if s.cursorRow != 0 {
+			t.Errorf("cursorRow = %d; want 0 (wrap-around)", s.cursorRow)
+		}
+	})
+
+	t.Run("wraps_up_past_start", func(t *testing.T) {
+		s := makeState("alpha", "beta", "gamma")          // n=3
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // activate 0
+		applyEvent(s, tmuxctl.CursorMove{Delta: -1}, nil) // wraps to 2
+		if s.cursorRow != 2 {
+			t.Errorf("cursorRow = %d; want 2 (reverse wrap)", s.cursorRow)
+		}
+	})
+
+	t.Run("select_delta_zero_does_not_move", func(t *testing.T) {
+		s := makeState("alpha", "beta", "gamma")
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // activate at 0
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // move to 1
+		applyEvent(s, tmuxctl.CursorMove{Delta: 0}, nil)  // select — must not move
+		if s.cursorRow != 1 {
+			t.Errorf("cursorRow = %d after delta=0; want 1 (select must not move)", s.cursorRow)
+		}
+	})
+
+	t.Run("noop_when_no_projects", func(t *testing.T) {
+		s := makeState()
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil)
+		if s.cursorActive {
+			t.Error("cursor must stay inactive when project list is empty")
+		}
+	})
+
+	t.Run("projectNameAtRow_returns_correct_name", func(t *testing.T) {
+		s := makeState("alpha", "beta", "gamma")
+		for i, want := range []string{"alpha", "beta", "gamma"} {
+			got := projectNameAtRow(s, i)
+			if got != want {
+				t.Errorf("projectNameAtRow(%d) = %q; want %q", i, got, want)
+			}
+		}
+		if got := projectNameAtRow(s, -1); got != "" {
+			t.Errorf("projectNameAtRow(-1) = %q; want \"\"", got)
+		}
+		if got := projectNameAtRow(s, 99); got != "" {
+			t.Errorf("projectNameAtRow(99) = %q; want \"\"", got)
+		}
+	})
+}

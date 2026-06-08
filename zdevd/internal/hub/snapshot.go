@@ -388,6 +388,52 @@ func dwellWindowMS(st *state, pd *projectData, candidate proto.Attention, now in
 	return st.statusDwell.Milliseconds()
 }
 
+// projectNameAtRow returns the canonical project name at the given row index
+// using the same name-ordering logic as buildSnapshot (sorted project list
+// then sorted unmanaged sessions). Used by the cursorRequests handler to
+// return an authoritative name from current state rather than from a
+// potentially-stale lastSnap.
+//
+// Returns "" when row is out of bounds or the project list is empty.
+// Safe to call only from the hub goroutine.
+func projectNameAtRow(st *state, row int) string {
+	seen := make(map[string]struct{}, len(st.projectListNames)+len(st.sessions))
+	names := make([]string, 0, len(st.projectListNames))
+
+	for _, n := range st.projectListNames {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		seen[proto.SessionKey(n)] = struct{}{}
+		names = append(names, n)
+	}
+
+	var unmanagedNames []string
+	for _, sess := range st.sessions {
+		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
+			continue
+		}
+		if _, ok := seen[sess.Name]; ok {
+			continue
+		}
+		seen[sess.Name] = struct{}{}
+		if st.showUnmanaged {
+			unmanagedNames = append(unmanagedNames, sess.Name)
+		} else {
+			names = append(names, sess.Name)
+		}
+	}
+	sort.Strings(names)
+	sort.Strings(unmanagedNames)
+
+	allNames := append(names, unmanagedNames...)
+	if row < 0 || row >= len(allNames) {
+		return ""
+	}
+	return allNames[row]
+}
+
 // emitPortDiff fires one eventlog.Event per port that opened (in `now`
 // but not `prev`) and per port that closed (in `prev` but not `now`).
 // Closes come first, then opens; both are sorted ascending so the output

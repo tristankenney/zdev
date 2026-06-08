@@ -554,15 +554,13 @@ func (h *Hub) Run(ctx context.Context) error {
 			} else {
 				resetDebounce(timer, h.debounce)
 			}
-			// Return the project name at the cursor row so `zdevd cursor select`
-			// can hand it to `tmux switch-client`. Use lastSnap for the ordered
-			// project list (same order the renderer is currently drawing).
+			// Return the name at the new cursor row. Derive it from current
+			// state using projectNameAtRow (mirrors buildSnapshot's ordering),
+			// not from lastSnap — the project list may have changed since the
+			// last publish, and lastSnap could be stale or shorter.
 			name := ""
-			if h.state.cursorActive && h.lastSnap != nil {
-				row := h.state.cursorRow
-				if row >= 0 && row < len(h.lastSnap.Projects) {
-					name = h.lastSnap.Projects[row].Name
-				}
+			if h.state.cursorActive {
+				name = projectNameAtRow(h.state, h.state.cursorRow)
 			}
 			req.reply <- name
 

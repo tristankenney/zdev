@@ -101,10 +101,13 @@ type state struct {
 	// cursorRow is the index (into buildSnapshot's Projects slice) of the
 	// currently selected sidebar row. Only meaningful when cursorActive is
 	// true. Owned by hub goroutine; set by applyEvent(CursorMove).
+	// NOT persisted — cursor position is transient UI state; restoring a
+	// stale row into a potentially-resized project list would be unsafe.
 	cursorRow int
 	// cursorActive is true once the user has pressed M-j or M-k at least
 	// once. The renderer draws the ▶ cursor glyph only when this is true,
 	// so a fresh sidebar is cursor-free until the user navigates it.
+	// NOT persisted — see cursorRow.
 	cursorActive bool
 
 	// paneCapturer is the injectable seam for tmux capture-pane calls.
