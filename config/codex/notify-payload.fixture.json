@@ -1,0 +1,8 @@
+{
+  "task_started":                 {"type": "task_started"},
+  "task_complete":                {"type": "task_complete"},
+  "exec_approval_request":        {"type": "exec_approval_request", "command": "ls", "cwd": "/tmp"},
+  "apply_patch_approval_request": {"type": "apply_patch_approval_request"},
+  "agent_message":                {"type": "agent_message", "content": "I will help you with that."},
+  "agent_reasoning":              {"type": "agent_reasoning"}
+}

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# zdev attention adapter for Codex — maps the JSON event payload Codex
+# passes as argv[1] to zdev-notify states, giving Codex panes the same
+# sidebar states and triage ranking as Claude Code hooks.
+#
+# Installed by zdev-install-hooks as a config.toml notify entry when
+# ~/.codex is present:
+#   notify = ["/path/to/zdev-codex-notify"]
+#
+# Event → state mapping (EventMsg.type):
+#   task_started                 → clear   (agent is now working)
+#   task_complete                → done    (turn finished — ◆)
+#   exec_approval_request        → waiting (shell exec approval needed — ●)
+#   apply_patch_approval_request → waiting (patch approval needed — ●)
+#   (all other types ignored — never break the agent)
+NOTIFY="$HOME/.local/bin/zdev-notify"
+PAYLOAD="${1:-}"
+
+[[ -z "$PAYLOAD" ]] && exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+TYPE=$(printf '%s' "$PAYLOAD" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
+[[ -z "$TYPE" ]] && exit 0
+
+case "$TYPE" in
+  task_complete)
+    "$NOTIFY" codex done 2>/dev/null || true ;;
+  exec_approval_request|apply_patch_approval_request)
+    "$NOTIFY" codex waiting 2>/dev/null || true ;;
+  task_started)
+    "$NOTIFY" codex clear 2>/dev/null || true ;;
+esac

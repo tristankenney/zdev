@@ -173,23 +173,39 @@ install_opencode() {
     fi
 }
 
-# ---------- other agents: detection + guidance ----------
+# ---------- codex ----------
 
-guidance_others() {
-    # Codex's `notify` program receives a JSON payload as argv[1], so it
-    # needs a thin adapter rather than zdev-notify directly.
-    if [[ -d "$HOME/.codex" ]]; then
-        cat <<'EOF'
-
-codex detected (~/.codex): add to ~/.codex/config.toml a notify adapter
-that maps the JSON payload to zdev-notify states, e.g.
-
-  notify = ["zdev-codex-notify"]   # write a 3-line wrapper calling:
-                                   #   zdev-notify codex waiting|done|clear
-EOF
+install_codex() {
+    if [[ ! -d "$HOME/.codex" ]]; then
+        return 0 # codex not set up on this machine
     fi
+    local config="$HOME/.codex/config.toml"
+    local adapter_path="$HOME/.local/bin/zdev-codex-notify"
+
+    # Check if already configured with our adapter.
+    if grep -q "zdev-codex-notify" "$config" 2>/dev/null; then
+        echo "codex: notify adapter already configured — nothing to do."
+        return 0
+    fi
+
+    # If notify is set to something else, report and skip.
+    if grep -qE '^notify\s*=' "$config" 2>/dev/null; then
+        echo "codex: notify is already set in $config (not zdev-codex-notify)"
+        echo "       to use the new adapter: remove the existing notify line and re-run."
+        return 0
+    fi
+
+    # Append notify entry to config.toml.
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        echo "codex: dry-run — would append notify = [\"$adapter_path\"] to $config"
+        return 0
+    fi
+    [[ -f "$config" ]] && cp "$config" "$config.bak-zdev"
+    printf '\nnotify = ["%s"]\n' "$adapter_path" >> "$config"
+    echo "codex: + appended notify = [\"$adapter_path\"] to $config"
+    echo "codex: note — running Codex sessions pick up the new notify on restart."
 }
 
 install_claude
 install_opencode
-guidance_others
+install_codex

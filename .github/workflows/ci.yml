@@ -56,6 +56,9 @@ jobs:
       - name: opencode plugin contract
         run: node scripts/test-opencode-plugin.mjs
 
+      - name: codex notify adapter contract
+        run: bash scripts/test-codex-notify.sh
+
       - name: make test (lint + anti-fork gates + go test -race)
         run: make -C zdevd test
 
