@@ -34,6 +34,23 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
+// cursorRequest is the client-to-server cursor wire frame (zd-e6e).
+// Type is always "cursor"; V is the protocol version (1). Delta encodes
+// the direction: +1=down (M-j), -1=up (M-k), 0=select/query (M-Enter).
+type cursorRequest struct {
+	Type  string `json:"type"`
+	V     int    `json:"v"`
+	Delta int    `json:"delta"`
+}
+
+// cursorReply is the server-to-client cursor wire frame. Name is the
+// canonical slash-form project name at the resulting cursor row, or ""
+// when the cursor is inactive or the project list is empty.
+type cursorReply struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
 // SnapshotSource is the interface the Server requires from its backing hub.
 // *hub.Hub satisfies this interface; demo.DemoSource also satisfies it for
 // the `zdevd demo` subcommand (reproducible README GIF, no agents needed).
@@ -41,6 +58,10 @@ type SnapshotSource interface {
 	Register(sub *hub.Subscriber, regDone chan<- struct{}) error
 	Unregister(sub *hub.Subscriber)
 	DiagSnapshot(ctx context.Context) (*diag.Reply, error)
+	// SubmitCursor applies a cursor move and returns the project name at the
+	// resulting cursor row (zd-e6e, phase4-v14). delta=+1/-1 to move,
+	// delta=0 to query without moving. Returns "" when no projects exist.
+	SubmitCursor(ctx context.Context, delta int) (string, error)
 }
 
 // dialProbeTimeout caps the liveness probe in BindOrCleanStale.
@@ -202,6 +223,35 @@ func (s *Server) serveOne(ctx context.Context, conn net.Conn) {
 			slog.Warn("socket: diag write failed", "err", wErr)
 		}
 		return
+
+	case "cursor":
+		// One-shot cursor move/select: apply delta, write name reply + close.
+		// Only v==1 supported. Delta is +1 (down), -1 (up), 0 (select/query).
+		if h.V != 1 {
+			slog.Warn("socket: cursor request unsupported version", "v", h.V)
+			return
+		}
+		// Re-parse the full cursor request frame for the Delta field.
+		var cr cursorRequest
+		if err := json.Unmarshal(sc.Bytes(), &cr); err != nil {
+			slog.Warn("socket: cursor request unmarshal failed", "err", err)
+			return
+		}
+		name, err := s.hub.SubmitCursor(ctx, cr.Delta)
+		if err != nil {
+			slog.Warn("socket: cursor submit failed", "err", err)
+			return
+		}
+		payload, mErr := proto.MarshalCompact(cursorReply{Type: "cursor-reply", Name: name})
+		if mErr != nil {
+			slog.Warn("socket: cursor reply marshal failed", "err", mErr)
+			return
+		}
+		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
+			slog.Warn("socket: cursor reply write failed", "err", wErr)
+		}
+		return
+
 	default:
 		slog.Warn("socket: unknown hello type", "type", h.Type)
 		return

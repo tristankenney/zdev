@@ -92,6 +92,8 @@ func main() {
 			os.Exit(historySubcmd(os.Args[2:]))
 		case "demo":
 			os.Exit(demoSubcmd(os.Args[2:]))
+		case "cursor":
+			os.Exit(cursorSubcmd(os.Args[2:]))
 		case "-v", "--version", "version":
 			fmt.Println(version)
 			os.Exit(0)

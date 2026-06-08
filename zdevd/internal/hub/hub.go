@@ -34,12 +34,13 @@ const errIncChanCap = 16
 type Hub struct {
 	debounce time.Duration
 
-	events       chan tmuxctl.Event // parser → hub
-	register     chan registerReq   // socket.Server → hub
-	unregister   chan *Subscriber   // socket.Server → hub
-	diagRequests chan diagReq       // socket.Server (diag handler) → hub; ARCH-10
-	errInc       chan struct{}      // RecordError → hub; errors_1h ticker
-	stopped      chan struct{}      // closed by Run on exit; signals Submit/Register/DiagSnapshot
+	events         chan tmuxctl.Event // parser → hub
+	register       chan registerReq   // socket.Server → hub
+	unregister     chan *Subscriber   // socket.Server → hub
+	diagRequests   chan diagReq       // socket.Server (diag handler) → hub; ARCH-10
+	cursorRequests chan cursorReq     // socket.Server (cursor handler) → hub; zd-e6e
+	errInc         chan struct{}      // RecordError → hub; errors_1h ticker
+	stopped        chan struct{}      // closed by Run on exit; signals Submit/Register/DiagSnapshot
 
 	// Populated once by NewHub from the Config argument. Read-only after
 	// Run starts — Config-passed values never mutate during the hub's
@@ -132,6 +133,16 @@ type diagReq struct {
 	reply chan<- *diag.Reply
 }
 
+// cursorReq is the channel-round-trip envelope for cursor move/select
+// requests (zd-e6e, phase4-v14). The caller sends one cursorReq into
+// h.cursorRequests; the hub applies the CursorMove event, arms the
+// debounce, and replies with the project name at the new cursor row.
+// reply cap=1 so Run never blocks on the caller (same Pitfall 6 pattern).
+type cursorReq struct {
+	delta int
+	reply chan<- string
+}
+
 // Config bundles every dependency the hub needs. Pass to NewHub once;
 // fields are read-only after Run starts. Replaces the previous fluent
 // setter chain (WithSocketPath/WithEventLog/WithStatePath/WithNotifier)
@@ -198,22 +209,23 @@ func NewHub(cfg Config) *Hub {
 	st.waitingDwell = cfg.WaitingDwell
 	st.showUnmanaged = cfg.ShowUnmanaged
 	return &Hub{
-		debounce:     cfg.Debounce,
-		events:       make(chan tmuxctl.Event, eventsChanCap),
-		register:     make(chan registerReq),
-		unregister:   make(chan *Subscriber),
-		diagRequests: make(chan diagReq),
-		errInc:       make(chan struct{}, errIncChanCap),
-		stopped:      make(chan struct{}),
-		state:        st,
-		subs:         make(map[*Subscriber]struct{}),
-		startedAt:    now,
-		lastEventAt:  now, // sentinel: 0 ago at boot — diag.Reply.LastEventAgoSec ~ 0 until first event
-		errCounter:   diag.NewErrorCounter(),
-		socketPath:   cfg.SocketPath,
-		eventlog:     cfg.EventLog,
-		statePath:    cfg.StatePath,
-		notifier:     cfg.Notifier,
+		debounce:       cfg.Debounce,
+		events:         make(chan tmuxctl.Event, eventsChanCap),
+		register:       make(chan registerReq),
+		unregister:     make(chan *Subscriber),
+		diagRequests:   make(chan diagReq),
+		cursorRequests: make(chan cursorReq),
+		errInc:         make(chan struct{}, errIncChanCap),
+		stopped:        make(chan struct{}),
+		state:          st,
+		subs:           make(map[*Subscriber]struct{}),
+		startedAt:      now,
+		lastEventAt:    now, // sentinel: 0 ago at boot — diag.Reply.LastEventAgoSec ~ 0 until first event
+		errCounter:     diag.NewErrorCounter(),
+		socketPath:     cfg.SocketPath,
+		eventlog:       cfg.EventLog,
+		statePath:      cfg.StatePath,
+		notifier:       cfg.Notifier,
 	}
 }
 
@@ -532,6 +544,28 @@ func (h *Hub) Run(ctx context.Context) error {
 			// copy + one chan send only.
 			req.reply <- h.buildDiagReply()
 
+		case req := <-h.cursorRequests:
+			// Apply the cursor move (pure state mutation — no I/O).
+			applyEvent(h.state, tmuxctl.CursorMove{Delta: req.delta}, nil)
+			// Arm debounce so subscribers see the updated cursor row promptly.
+			if timer == nil {
+				timer = time.NewTimer(h.debounce)
+				debounceFired = timer.C
+			} else {
+				resetDebounce(timer, h.debounce)
+			}
+			// Return the project name at the cursor row so `zdevd cursor select`
+			// can hand it to `tmux switch-client`. Use lastSnap for the ordered
+			// project list (same order the renderer is currently drawing).
+			name := ""
+			if h.state.cursorActive && h.lastSnap != nil {
+				row := h.state.cursorRow
+				if row >= 0 && row < len(h.lastSnap.Projects) {
+					name = h.lastSnap.Projects[row].Name
+				}
+			}
+			req.reply <- name
+
 		case <-h.errInc:
 			h.errCounter.Inc(time.Now())
 
@@ -601,6 +635,42 @@ func (h *Hub) DiagSnapshot(ctx context.Context) (*diag.Reply, error) {
 		return nil, ErrHubStopped
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// SubmitCursor applies a cursor move and returns the project name at the new
+// cursor row (zd-e6e, phase4-v14). It is a synchronous channel round-trip
+// into the Run goroutine — same Pitfall-6 pattern as DiagSnapshot.
+//
+// delta=+1: move cursor down (M-j)
+// delta=-1: move cursor up  (M-k)
+// delta=0:  select — query current row name without moving (M-Enter)
+//
+// The returned name is the canonical slash-form project name (e.g.
+// "example/backend") at the new cursor row, or "" when the cursor is
+// inactive or the project list is empty. The shell script converts the name
+// to dash-form for `tmux switch-client -t =<dash-name>`.
+func (h *Hub) SubmitCursor(ctx context.Context, delta int) (string, error) {
+	select {
+	case <-h.stopped:
+		return "", ErrHubStopped
+	default:
+	}
+	reply := make(chan string, 1)
+	select {
+	case h.cursorRequests <- cursorReq{delta: delta, reply: reply}:
+	case <-h.stopped:
+		return "", ErrHubStopped
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	select {
+	case name := <-reply:
+		return name, nil
+	case <-h.stopped:
+		return "", ErrHubStopped
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
 }
 
@@ -863,6 +933,11 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	// the renderer learns the new state promptly.
 	// DaemonLastEventTS is intentionally excluded — see publishPass comment.
 	if a.DaemonErrors1h != b.DaemonErrors1h {
+		return false
+	}
+	// Cursor state (phase4-v14, zd-e6e): cursor movements MUST trigger a
+	// publish so the renderer highlights the new row immediately.
+	if a.CursorRow != b.CursorRow || a.CursorActive != b.CursorActive {
 		return false
 	}
 	return true

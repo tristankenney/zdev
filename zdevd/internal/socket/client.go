@@ -149,6 +149,53 @@ func DialDiag(ctx context.Context, socketPath string) (*diag.Reply, error) {
 	return &reply, nil
 }
 
+// DialCursor implements the cursor client side of zd-e6e (phase4-v14).
+// One-shot: dial → write {"type":"cursor","v":1,"delta":<delta>}\n →
+// read one cursor-reply line → close. Returns the project name at the
+// resulting cursor row, or "" when no projects exist / cursor inactive.
+//
+// delta=+1: move cursor down (M-j)
+// delta=-1: move cursor up  (M-k)
+// delta=0:  select — query current row without moving (M-Enter)
+func DialCursor(ctx context.Context, socketPath string, delta int) (string, error) {
+	conn, err := Dial(ctx, socketPath)
+	if err != nil {
+		return "", fmt.Errorf("socket: dial: %w", err)
+	}
+	defer conn.Close()
+
+	req := struct {
+		Type  string `json:"type"`
+		V     int    `json:"v"`
+		Delta int    `json:"delta"`
+	}{Type: "cursor", V: 1, Delta: delta}
+	payload, err := proto.MarshalCompact(&req)
+	if err != nil {
+		return "", fmt.Errorf("cursor marshal: %w", err)
+	}
+	if _, err := conn.Write(append(payload, '\n')); err != nil {
+		return "", fmt.Errorf("cursor write: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(snapshotReadTimeout)); err != nil {
+		return "", fmt.Errorf("cursor set deadline: %w", err)
+	}
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 4*1024), proto.MaxHelloBytes)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return "", fmt.Errorf("cursor read: %w", err)
+		}
+		return "", errors.New("cursor: no reply (clean EOF)")
+	}
+	var reply struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &reply); err != nil {
+		return "", fmt.Errorf("cursor unmarshal: %w", err)
+	}
+	return reply.Name, nil
+}
+
 // Stream reads subsequent snapshots from an already-handshaked conn (i.e.,
 // the conn returned by Subscribe). Returns a channel that receives every
 // snapshot the daemon emits until ctx cancels OR the conn closes. The

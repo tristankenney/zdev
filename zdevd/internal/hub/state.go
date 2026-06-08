@@ -98,6 +98,15 @@ type state struct {
 	// Run starts; read-only throughout Run.
 	showUnmanaged bool
 
+	// cursorRow is the index (into buildSnapshot's Projects slice) of the
+	// currently selected sidebar row. Only meaningful when cursorActive is
+	// true. Owned by hub goroutine; set by applyEvent(CursorMove).
+	cursorRow int
+	// cursorActive is true once the user has pressed M-j or M-k at least
+	// once. The renderer draws the ▶ cursor glyph only when this is true,
+	// so a fresh sidebar is cursor-free until the user navigates it.
+	cursorActive bool
+
 	// paneCapturer is the injectable seam for tmux capture-pane calls.
 	// Production default: realPaneCapture (set by newState).
 	// Tests override with a stub function that returns a controlled string
@@ -804,7 +813,53 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.LastActivityTS = e.ActivityTS
 			s.projectData[sess.Name] = pd
 		}
+
+	case tmuxctl.CursorMove:
+		// Sidebar row-selection cursor (zd-e6e, phase4-v14).
+		// Pure int arithmetic — no I/O, no slog, matching the hub-invariants
+		// requirement for applyEvent.
+		n := countVisibleProjects(s)
+		if n == 0 {
+			return
+		}
+		if !s.cursorActive {
+			// First press: activate cursor at row 0 regardless of Delta.
+			s.cursorActive = true
+			s.cursorRow = 0
+			return
+		}
+		if e.Delta != 0 {
+			s.cursorRow = ((s.cursorRow+e.Delta)%n + n) % n
+		}
 	}
+}
+
+// countVisibleProjects returns the number of rows buildSnapshot would produce
+// for the current state. Mirrors the two-pass name-union logic in buildSnapshot
+// so the cursor wrap-around stays in bounds. Called only from applyEvent and
+// therefore only from the hub goroutine — no locking needed.
+func countVisibleProjects(s *state) int {
+	seen := make(map[string]struct{}, len(s.projectListNames)+len(s.sessions))
+	n := 0
+	for _, name := range s.projectListNames {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		seen[proto.SessionKey(name)] = struct{}{}
+		n++
+	}
+	for _, sess := range s.sessions {
+		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
+			continue
+		}
+		if _, ok := seen[sess.Name]; ok {
+			continue
+		}
+		seen[sess.Name] = struct{}{}
+		n++
+	}
+	return n
 }
 
 // drainPendingActivity applies any pending ActivityRefresh timestamp for the

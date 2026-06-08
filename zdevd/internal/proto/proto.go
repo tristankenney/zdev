@@ -110,7 +110,14 @@ import (
 // them silently (no degraded row), making this forward-compatible in practice,
 // but bumped for strict-equality validation. Restart all zdev-sidebar-render
 // instances after deploying the new zdevd binary.
-const SchemaVersion = "phase4-v13"
+//
+// phase4-v14 (zd-e6e): adds Snapshot.CursorRow and Snapshot.CursorActive for
+// the sidebar row-selection cursor driven by M-j/M-k/M-Enter. Both fields are
+// omitempty (cursor inactive by default — no visual change until first M-j/M-k
+// press). A v13 renderer ignores them silently (no cursor highlight), so this
+// is forward-compatible in practice, but bumped for strict-equality validation.
+// Restart all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v14"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -192,6 +199,17 @@ type Snapshot struct {
 	// means the daemon has not yet received its first event (new process) —
 	// the renderer treats zero as "no information" (no additional row trigger).
 	DaemonLastEventTS int64 `json:"daemon_last_event_ts,omitempty"`
+	// CursorRow is the index into Projects of the currently selected row
+	// (phase4-v14, zd-e6e). Only meaningful when CursorActive is true.
+	// The renderer prefixes that row with ▶ instead of the normal two-space
+	// indent. Zero-valued and omitempty — cursor starts inactive, invisible
+	// until the first M-j/M-k press.
+	CursorRow int `json:"cursor_row,omitempty"`
+	// CursorActive indicates the cursor is visible (phase4-v14, zd-e6e).
+	// False until the user presses M-j or M-k for the first time; resets
+	// to false when there are no projects to navigate. The renderer only
+	// draws the ▶ cursor glyph when this is true.
+	CursorActive bool `json:"cursor_active,omitempty"`
 }
 
 // Project is the per-row metadata in a Snapshot.

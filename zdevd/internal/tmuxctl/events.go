@@ -207,6 +207,16 @@ type PaneCaptureReady struct {
 
 func (PaneCaptureReady) isEvent() {}
 
+// CursorMove is submitted by the "zdevd cursor" subcommand via the socket
+// protocol. It drives the sidebar row-selection cursor (zd-e6e, phase4-v14).
+// Delta is +1 (M-j, move down), -1 (M-k, move up), or 0 (select — query
+// current row without moving). applyEvent wraps the cursor row modulo the
+// visible project count; first press when CursorActive=false activates the
+// cursor at row 0.
+type CursorMove struct{ Delta int }
+
+func (CursorMove) isEvent() {}
+
 // PaneCaptureFailed reports that an asynchronous tmux capture-pane returned
 // an error. The hub uses consecutive-failure counting to evict ghost panes
 // (e.g. a pane whose session was killed externally without zdevd seeing a

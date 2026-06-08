@@ -163,6 +163,50 @@ func demoSubcmd(args []string) int {
 	return 0
 }
 
+// cursorSubcmd implements `zdevd cursor [--socket PATH] {+1|-1|select}`.
+// Connects to the running daemon, applies the cursor delta, and prints the
+// project name at the resulting cursor row to stdout (one line, no newline
+// for select — the caller captures it; +1/-1 callers may ignore it).
+//
+//	+1      move cursor down (M-j binding in zdev-sidebar-move)
+//	-1      move cursor up   (M-k binding in zdev-sidebar-move)
+//	select  query current row name, used by M-Enter to switch-client
+func cursorSubcmd(args []string) int {
+	fs := flag.NewFlagSet("zdevd cursor", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	socket := fs.String("socket", platform.ResolveSocketPath(), "path to zdevd unix socket")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: zdevd cursor [--socket PATH] {+1|-1|select}")
+		return 2
+	}
+	var delta int
+	switch fs.Arg(0) {
+	case "+1":
+		delta = +1
+	case "-1":
+		delta = -1
+	case "select":
+		delta = 0
+	default:
+		fmt.Fprintf(os.Stderr, "zdevd cursor: unknown argument %q (want +1, -1, or select)\n", fs.Arg(0))
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	name, err := socketpkg.DialCursor(ctx, *socket, delta)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd cursor: %v\n", err)
+		return 1
+	}
+	if name != "" {
+		fmt.Println(name)
+	}
+	return 0
+}
+
 // formatEventHuman renders one Event as a `[HH:MM:SS] type k=v ...` line per
 // D4-09 default human output. Local-time formatting (the user reading the
 // log is on the daemon's host).

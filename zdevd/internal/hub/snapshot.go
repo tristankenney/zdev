@@ -288,6 +288,10 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// including the dwell-debounced Attention. Computed here (not
 		// per-subscriber) so every surface shares one ordering.
 		Triage: rankTriage(projects, now),
+		// Cursor (phase4-v14, zd-e6e): propagate hub cursor state so every
+		// subscriber's renderer highlights the selected row consistently.
+		CursorRow:    st.cursorRow,
+		CursorActive: st.cursorActive,
 	}
 }
 
