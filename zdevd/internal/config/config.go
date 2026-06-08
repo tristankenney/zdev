@@ -52,6 +52,13 @@ type Config struct {
 	ClaudeGlyph       string   `toml:"claude_glyph"`
 	PiGlyph           string   `toml:"pi_glyph"` // 260512-cpa: was codex_glyph
 
+	// ShowUnmanaged is set by ZDEV_SIDEBAR_UNMANAGED=show. When true, tmux
+	// sessions that have no corresponding projects-file entry are rendered
+	// below the managed block, dimmed. Default false (hide) preserves
+	// existing sidebar behavior. ENV-only; no TOML key (operators toggle
+	// at shell level, not via sidebar.toml restart).
+	ShowUnmanaged bool `toml:"-"`
+
 	// Agents is the multi-agent registry (CONFIG-06). When any [[agent]]
 	// entries appear in the user's TOML, the built-in defaults are
 	// REPLACED wholesale — opt-in management of the full list. Leaving
@@ -126,11 +133,11 @@ func Defaults() Config {
 	return Config{
 		Workspace:         os.Getenv("HOME") + "/workspace",
 		Width:             50,
-		StaleSeconds:      3600, // VIS-12
-		WaitWarnSeconds:   60,   // DATA-09 (≥60s orange)
-		WaitUrgentSeconds: 300,  // DATA-09 (≥300s red)
-		PortsMax:          4,    // DATA-06
-		DefaultBranches:   []string{"main", "master", "develop", "trunk"},                                     // DATA-01
+		StaleSeconds:      3600,                                                                // VIS-12
+		WaitWarnSeconds:   60,                                                                  // DATA-09 (≥60s orange)
+		WaitUrgentSeconds: 300,                                                                 // DATA-09 (≥300s red)
+		PortsMax:          4,                                                                   // DATA-06
+		DefaultBranches:   []string{"main", "master", "develop", "trunk"},                      // DATA-01
 		DefaultShells:     []string{"zsh", "bash", "sh", "fish", "claude", "claude.exe", "pi"}, // DATA-03 (260512-cpa: codex→pi)
 		PRRefreshSeconds:  300,
 		GitFloorSeconds:   10,
@@ -244,6 +251,7 @@ func applyEnvOverrides(cfg Config) Config {
 	if v := os.Getenv("ZDEV_SIDEBAR_PI_GLYPH"); v != "" {
 		cfg.PiGlyph = v
 	}
+	cfg.ShowUnmanaged = os.Getenv("ZDEV_SIDEBAR_UNMANAGED") == "show"
 	return cfg
 }
 
