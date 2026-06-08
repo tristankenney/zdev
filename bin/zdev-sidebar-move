@@ -48,7 +48,7 @@ case "$ARG" in
             _POLECAT="${SESSION#*-}"
             _RIG=$(jq -r --arg p "$_PREFIX" \
                 '.rigs | to_entries[] | select(.value.beads.prefix == $p) | .key' \
-                "$_RIGS" 2>/dev/null | head -1)
+                "$_RIGS" 2>/dev/null | head -1) || true
             if [[ -n "$_RIG" ]]; then
                 exec gt session at "$_RIG/$_POLECAT"
             fi
