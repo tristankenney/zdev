@@ -400,28 +400,11 @@ func (h *Hub) Run(ctx context.Context) error {
 		// suppressing them when the snapshot is unchanged would silence
 		// the "agent has been waiting silently for 5 minutes" notification.
 		// The supervisor's 1Hz poll keeps this loop alive as the heartbeat.
-		// Single clock sample for the entire pass (Invariant 4 — time threading).
-		// All time-aware decisions in this tick share passNow so there is no
-		// sub-millisecond clock skew between tierCheck, buildSnapshot, and the
-		// daemon-health fields. SentAt and the snapWithCurrentSession now-arg
-		// further down reuse the same value.
-		passNow := time.Now()
-		tierFired := tierCheck(passNow.Unix(), h.state, h.notifier)
+		tierFired := tierCheck(time.Now().Unix(), h.state, h.notifier)
 		// Build with placeholder Seq/SentAt so equality compares only the
 		// observable shape — Seq/SentAt advance every tick by design and
 		// would defeat the diff if they participated.
-		snap := buildSnapshot(h.state, 0, time.Time{}, passNow.Unix(), passNow.UnixMilli())
-		// Daemon health fields (zd-6e1): set before snapshotEqualsCore so
-		// an errors_1h threshold crossing triggers a publish. Both h.lastEventAt
-		// and h.errCounter are Run-owned — safe to read here without locking.
-		//
-		// DaemonLastEventTS is intentionally excluded from snapshotEqualsCore:
-		// it changes on every tmux event (h.lastEventAt is updated per event),
-		// and including it would cause a publish on every event regardless of
-		// project-state change, defeating the idle-CPU optimization. The
-		// renderer computes the display age from the timestamp dynamically.
-		snap.DaemonLastEventTS = h.lastEventAt.Unix()
-		snap.DaemonErrors1h = h.errCounter.Sum(passNow)
+		snap := buildSnapshot(h.state, 0, time.Time{}, time.Now().Unix(), time.Now().UnixMilli())
 		snapshotChanged := h.lastSnap == nil || !snapshotEqualsCore(snap, h.lastSnap)
 		// clientSessions changes don't show in the base snapshot but DO
 		// flip per-subscriber PaneVisible (and chip-suppression). Force a
@@ -457,15 +440,16 @@ func (h *Hub) Run(ctx context.Context) error {
 		}
 		h.seq++
 		snap.Seq = h.seq
-		snap.SentAt = passNow.UTC()
+		snap.SentAt = time.Now().UTC()
 		h.lastSnap = snap
 		// Drop-oldest publication (D2-03).
 		// SAFETY NOTE: any future "edge-detected" logic (e.g., Phase 3
 		// PR celebration on count drop, Pitfall P2-D) MUST run BEFORE
 		// this point — once the snapshot is published with drop-oldest
 		// semantics, intermediate snapshots may be lost.
+		now := time.Now().Unix()
 		for sub := range h.subs {
-			publishDropOldest(sub.snaps, snapWithCurrentSession(snap, h.state, sub, passNow.Unix()))
+			publishDropOldest(sub.snaps, snapWithCurrentSession(snap, h.state, sub, now))
 		}
 	}
 
@@ -859,13 +843,6 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 		if a.Triage[i] != b.Triage[i] {
 			return false
 		}
-	}
-	// DaemonErrors1h participates in equality: an errors_1h threshold crossing
-	// (healthy→degraded or degraded→healthy) must trigger a snapshot publish so
-	// the renderer learns the new state promptly.
-	// DaemonLastEventTS is intentionally excluded — see publishPass comment.
-	if a.DaemonErrors1h != b.DaemonErrors1h {
-		return false
 	}
 	return true
 }
