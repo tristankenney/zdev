@@ -111,13 +111,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.hub == nil {
 		return errors.New("socket: Serve called before SetHub")
 	}
-	// Cancellation: closing the listener causes Accept to return an error.
+	// Capture ln before spawning the watcher goroutine. Close() writes
+	// s.ln = nil to mark itself done; without a local copy the goroutine
+	// reads s.ln (to call Close on it) racing that write. Calling ln.Close
+	// twice (watcher + Close) is safe — net.UnixListener.Close is idempotent.
+	ln := s.ln
 	go func() {
 		<-ctx.Done()
-		_ = s.ln.Close()
+		_ = ln.Close()
 	}()
 	for {
-		conn, err := s.ln.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
