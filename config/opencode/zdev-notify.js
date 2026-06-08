@@ -9,17 +9,18 @@
 // on restart.
 //
 // Event → state mapping:
-//   session.idle      → done             (turn complete — ◆, review me)
-//   permission.asked  → needs-permission (●, ⚡ cheap triage class)
-//   session.error     → waiting          (needs the user; NOT "died" —
-//                       an errored turn is recoverable, the session is
-//                       still alive, and false deaths train dismissal)
+//   (load)                          → alive           (clears stale death marker)
+//   session.idle                    → done             (turn complete — ◆, review me)
+//   permission.asked                → needs-permission (●, ⚡ cheap triage class)
+//   session.error                   → waiting          (needs the user; NOT "died" —
+//                                     an errored turn is recoverable, the session is
+//                                     still alive, and false deaths train dismissal)
+//   tui.command.execute             → clear            (prompt.submit only — exact
+//     (command === 'prompt.submit')   analog of Claude Code's UserPromptSubmit hook)
 //
-// No "clear" mapping yet: opencode has no clean prompt-submitted event,
-// and stale markers already clear on visit (zdev-clear-on-visit) or
-// zdev ack. The notify shellout inherits opencode's env, so $TMUX_PANE
-// is present when opencode runs inside a zdev session pane; outside
-// tmux zdev-notify exits 0 silently.
+// The notify shellout inherits opencode's env, so $TMUX_PANE is present
+// when opencode runs inside a zdev session pane; outside tmux zdev-notify
+// exits 0 silently.
 export const ZdevNotify = async ({ $ }) => {
   const notifyBin = `${process.env.HOME}/.local/bin/zdev-notify`
   const notify = async (state) => {
@@ -29,6 +30,7 @@ export const ZdevNotify = async ({ $ }) => {
       // zdev not installed / pane gone — never break the agent.
     }
   }
+  await notify("alive")
   return {
     event: async ({ event }) => {
       switch (event.type) {
@@ -40,6 +42,9 @@ export const ZdevNotify = async ({ $ }) => {
           break
         case "session.error":
           await notify("waiting")
+          break
+        case "tui.command.execute":
+          if (event.properties?.command === "prompt.submit") await notify("clear")
           break
       }
     },

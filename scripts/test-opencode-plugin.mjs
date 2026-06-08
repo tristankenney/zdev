@@ -34,19 +34,23 @@ if (typeof hooks.event !== "function") {
   process.exit(1)
 }
 
-const fire = (type) => hooks.event({ event: { type } })
+const fire = (type, properties) => hooks.event({ event: { type, properties } })
 
 await fire("session.idle")
 await fire("permission.asked")
 await fire("session.error")
 await fire("message.updated") // noise — must NOT notify
 await fire("storage.write") // noise — must NOT notify
+await fire("tui.command.execute", { command: "prompt.submit" }) // → clear
+await fire("tui.command.execute", { command: "other" }) // noise — must NOT notify
 
 const home = process.env.HOME
 const want = [
+  `${home}/.local/bin/zdev-notify opencode alive`,
   `${home}/.local/bin/zdev-notify opencode done`,
   `${home}/.local/bin/zdev-notify opencode needs-permission`,
   `${home}/.local/bin/zdev-notify opencode waiting`,
+  `${home}/.local/bin/zdev-notify opencode clear`,
 ]
 const got = calls
 if (JSON.stringify(got) !== JSON.stringify(want)) {
@@ -71,4 +75,4 @@ try {
   process.exit(1)
 }
 
-console.log("ok: opencode plugin contract (3 states mapped, noise ignored, failures swallowed)")
+console.log("ok: opencode plugin contract (alive+clear mapped, 3 states mapped, noise ignored, failures swallowed)")
