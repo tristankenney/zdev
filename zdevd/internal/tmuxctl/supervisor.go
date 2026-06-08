@@ -190,6 +190,20 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 
+	// GT-socket recursion guard: if this supervisor targets a named socket
+	// and TMUX points at that exact socket, the process is running INSIDE
+	// that socket's tmux server. Connecting would subscribe to our own
+	// parent session — not intentional and generates spurious self-events.
+	// TMUX format: /path/to/socket,server_pid,client_pid.
+	if d, ok := s.dialer.(socketDialer); ok {
+		if v := os.Getenv("TMUX"); v != "" {
+			sockPath := strings.SplitN(v, ",", 2)[0]
+			if strings.HasSuffix(sockPath, "/"+d.socketName) {
+				return fmt.Errorf("tmuxctl: refusing to connect to GT socket %q: process is running inside it (TMUX=%s)", d.socketName, v)
+			}
+		}
+	}
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil

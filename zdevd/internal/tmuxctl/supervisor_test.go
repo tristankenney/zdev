@@ -109,6 +109,45 @@ func TestSupervisorRefusesInsideTmuxPane(t *testing.T) {
 	}
 }
 
+// TestSupervisorGTSocketRefusesWhenInsideIt verifies the GT-socket recursion
+// guard: a socketDialer supervisor refuses to start when TMUX points at the
+// same named socket, preventing the daemon from subscribing to its own parent
+// tmux server when running inside a Gas Town polecat session.
+func TestSupervisorGTSocketRefusesWhenInsideIt(t *testing.T) {
+	// TMUX points at "gt-abc123" — same socket the supervisor will dial.
+	t.Setenv("TMUX", "/tmp/tmux-501/gt-abc123,12345,0")
+	sup := NewSupervisor(func(ev Event) {}, WithSocketName("gt-abc123"))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := sup.Run(ctx)
+	if err == nil {
+		t.Fatal("GT socket supervisor did not refuse when TMUX points at its socket")
+	}
+	if got := err.Error(); !strings.Contains(got, "gt-abc123") {
+		t.Errorf("error message should mention socket name: %q", got)
+	}
+}
+
+// TestSupervisorGTSocketAllowedWhenOnDifferentSocket verifies that the GT-socket
+// recursion guard does NOT fire when TMUX points at a DIFFERENT socket (the
+// common case: daemon in default tmux, GT supervisor targets gt-abc123).
+func TestSupervisorGTSocketAllowedWhenOnDifferentSocket(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-501/default,12345,0")
+	// Supervisor targets "gt-abc123" but TMUX points at "default" — no conflict.
+	fc := newFakeConn(nil)
+	sup := newTestSupervisor(func(ev Event) {}, nil, fc)
+	sup.dialer = socketDialer{socketName: "gt-abc123"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	// Run should NOT return the recursion-guard error. It may return nil
+	// (context cancelled) or an error from the dial attempt, but not the guard error.
+	err := sup.Run(ctx)
+	if err != nil && strings.Contains(err.Error(), "refusing to connect to GT socket") {
+		t.Errorf("GT-socket guard fired unexpectedly when TMUX points at a different socket: %v", err)
+	}
+}
+
 // TestSupervisorPropagatesEvents verifies the supervisor pumps top-level
 // notifications through the submit callback. Uses the synthetic
 // `multiple-blocks-interleaved.bytes` fixture which produces 3 WindowAdd
@@ -577,10 +616,10 @@ func (f dialerFunc) Dial(ctx context.Context) (subprocessConn, error) { return f
 // no lines and returns once the bufio.Scanner exits. Wait/Close are no-ops.
 type countingConn struct{}
 
-func (countingConn) Stdout() io.Reader            { return strings.NewReader("") }
-func (countingConn) Write(p []byte) (int, error)  { return len(p), nil }
-func (countingConn) Wait() error                  { return nil }
-func (countingConn) Close() error                 { return nil }
+func (countingConn) Stdout() io.Reader           { return strings.NewReader("") }
+func (countingConn) Write(p []byte) (int, error) { return len(p), nil }
+func (countingConn) Wait() error                 { return nil }
+func (countingConn) Close() error                { return nil }
 
 // TestNoBareWildcardSubscriptionEverIssued asserts that the supervisor
 // never writes the broken unquoted `refresh-client -B zdev-titles:%*:` form
@@ -702,7 +741,7 @@ func TestApplyPanesActivityList(t *testing.T) {
 			// Both excluded → fallback emits max raw activity.
 			name: "CaseE_bothWindowsContaminated_fallback",
 			rows: [][]byte{
-				mkRow("$0", "@0", "1", "900", "900"),  // W1 sidebar, contaminated
+				mkRow("$0", "@0", "1", "900", "900"),   // W1 sidebar, contaminated
 				mkRow("$0", "@1", "1", "1500", "1500"), // W2 sidebar, contaminated
 			},
 			wantBySid: map[string]int64{"$0": 1500}, // fallback to max raw
@@ -722,9 +761,9 @@ func TestApplyPanesActivityList(t *testing.T) {
 			// → rows skipped; valid row still processed.
 			name: "CaseG_malformedRows_skipped",
 			rows: [][]byte{
-				[]byte("$0|@0|0|1000|notanumber|pa"), // non-numeric window_activity
-				[]byte("$0|@1|bad_row_only_3_fields"),  // wrong field count
-				mkRow("$0", "@2", "0", "0", "500"),      // valid
+				[]byte("$0|@0|0|1000|notanumber|pa"),  // non-numeric window_activity
+				[]byte("$0|@1|bad_row_only_3_fields"), // wrong field count
+				mkRow("$0", "@2", "0", "0", "500"),    // valid
 			},
 			wantBySid: map[string]int64{"$0": 500},
 		},
