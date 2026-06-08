@@ -229,3 +229,13 @@ type PaneCaptureFailed struct {
 }
 
 func (PaneCaptureFailed) isEvent() {}
+
+// CursorMove is submitted by the `zdevd cursor` subcommand (via the socket
+// cursor-request round-trip) to move the sidebar row-selection cursor.
+// Delta is +1 (down) or -1 (up); 0 is reserved for select-only queries.
+// applyEvent handles this as a pure int mutation — no I/O.
+type CursorMove struct {
+	Delta int
+}
+
+func (CursorMove) isEvent() {}
