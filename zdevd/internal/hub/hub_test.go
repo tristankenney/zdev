@@ -514,6 +514,23 @@ func TestHubSnapshotEqualsCoreIgnoresMeta(t *testing.T) {
 		t.Error("snapshots differing in a Project.Status should be core-unequal")
 	}
 
+	// DaemonErrors1h participates in core equality: a threshold crossing must
+	// trigger a publish so the renderer learns the new degraded/healthy state.
+	errDiff := *base
+	errDiff.DaemonErrors1h = 7
+	if snapshotEqualsCore(base, &errDiff) {
+		t.Error("snapshots differing in DaemonErrors1h should be core-unequal")
+	}
+
+	// DaemonLastEventTS is intentionally excluded from core equality — it
+	// advances on every tmux event and including it would force a publish on
+	// every event regardless of project-state change.
+	tsDiff := *base
+	tsDiff.DaemonLastEventTS = 9999999
+	if !snapshotEqualsCore(base, &tsDiff) {
+		t.Error("snapshots differing only in DaemonLastEventTS should be core-equal")
+	}
+
 	// Sanity: nil handling.
 	if snapshotEqualsCore(nil, base) || snapshotEqualsCore(base, nil) {
 		t.Error("nil-vs-non-nil should be core-unequal")

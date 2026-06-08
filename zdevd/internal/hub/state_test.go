@@ -1028,11 +1028,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v12 (bumped 2026-06-07
-	// for Unmanaged field + ZDEV_SIDEBAR_UNMANAGED opt-in).
-	t.Run("H_schema_version_is_phase4_v12", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v12" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v12")
+	// Test H: proto.SchemaVersion must be phase4-v13 (bumped zd-6e1
+	// for DaemonErrors1h + DaemonLastEventTS daemon-health fields).
+	t.Run("H_schema_version_is_phase4_v13", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v13" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v13")
 		}
 	})
 }
