@@ -11,8 +11,10 @@ project so the list stays tractable.
 
 ![sidebar screenshot placeholder](docs/screenshot.png)
 
-> Drop a real screenshot at `docs/screenshot.png`. Until then this link
-> 404s. (Pre-1.0 lazy.)
+> **To regenerate:** run `zdevd demo` (no agents or gh auth needed), connect
+> a sidebar pane, screen-record the 30-second animation, and save the GIF as
+> `docs/screenshot.png`. The demo animates idle → working → waiting →
+> escalation → agent death in sequence.
 
 ## What you get
 
