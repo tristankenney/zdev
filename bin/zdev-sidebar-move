@@ -25,6 +25,36 @@ case "$ARG" in
     fi
     # Convert slash-form (e.g. "example/backend") to dash-form for tmux.
     SESSION="${NAME//\//-}"
+
+    # Gas Town sessions live on a separate tmux socket; raw switch-client
+    # targets the wrong server and silently fails.  When GT_TOWN_ROOT is
+    # set and the selected session looks like a GT session, delegate to
+    # the canonical gt attach commands instead.
+    if [[ "${ZDEV_GT_TOWN_ROOT:-}" != "off" \
+        && -n "${GT_TOWN_ROOT:-}" ]] \
+        && command -v gt >/dev/null 2>&1; then
+
+        # hq-mayor has a dedicated attach command
+        if [[ "$SESSION" == "hq-mayor" ]]; then
+            exec gt mayor attach
+        fi
+
+        # Derive rig name from beads prefix in $GT_TOWN_ROOT/rigs.json.
+        # jq is standard on macOS; falls through to tmux switch-client if
+        # the file is absent or the prefix has no match.
+        _RIGS="${GT_TOWN_ROOT}/rigs.json"
+        if [[ -f "$_RIGS" ]]; then
+            _PREFIX="${SESSION%%-*}"
+            _POLECAT="${SESSION#*-}"
+            _RIG=$(jq -r --arg p "$_PREFIX" \
+                '.rigs | to_entries[] | select(.value.beads.prefix == $p) | .key' \
+                "$_RIGS" 2>/dev/null | head -1)
+            if [[ -n "$_RIG" ]]; then
+                exec gt session at "$_RIG/$_POLECAT"
+            fi
+        fi
+    fi
+
     tmux switch-client -t "=$SESSION" 2>/dev/null || true
     ;;
   *)
