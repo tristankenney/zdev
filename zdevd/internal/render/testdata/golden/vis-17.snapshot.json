@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase4-v13",
+  "seq": 1,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha", "beta"],
+  "projects": [
+    {"name": "alpha", "status": "alive"},
+    {"name": "beta",  "status": "alive"}
+  ],
+  "current_session": "",
+  "daemon_errors_1h": 2,
+  "daemon_last_event_ts": 1777859900
+}

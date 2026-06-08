@@ -221,6 +221,13 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 	}
 
+	// Daemon self-health row (zd-6e1): appears between the project list and
+	// the footer ONLY when health thresholds are breached. Never on a healthy
+	// fleet, so project row positions are unchanged in the common case.
+	if daemonIsDegraded(snap, nowFn) {
+		renderDaemonHealthRow(&buf, snap, nowFn)
+	}
+
 	renderFooter(&buf, nWait, nDead, nRun, nDone, nAlive, nAbsent)
 
 	buf.WriteString(ClearToEnd)

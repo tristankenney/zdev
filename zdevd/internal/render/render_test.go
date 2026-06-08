@@ -61,6 +61,11 @@ var fixtureCases = []struct {
 	{"DATA-08-agent-chips", "data-08", 0, 0, ""},
 	{"DATA-09-wait-age-escalation", "data-09", 0, 0, ""},
 	{"DATA-10-canonical-rows", "data-10", 0, 0, ""},
+	// VIS-16: daemon degraded — DaemonErrors1h at threshold → degraded row shown.
+	{"VIS-16-daemon-degraded", "vis-16", 0, 0, ""},
+	// VIS-17: daemon healthy with diag fields present but below threshold →
+	// no degraded row (same frame as a snapshot with no diag fields at all).
+	{"VIS-17-daemon-healthy", "vis-17", 0, 0, ""},
 }
 
 // TestVisualParity exercises the Go renderer against 14 VIS + 10 DATA golden
