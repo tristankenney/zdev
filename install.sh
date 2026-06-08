@@ -194,6 +194,10 @@ if [[ "$OS" == "Darwin" ]]; then
 else
   ok_ "daemon installed (systemd user unit zdevd.service)"
   dim_ "check it anytime:  systemctl --user status zdevd"
+  linger_val=$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)
+  if [[ "$linger_val" == "no" ]]; then
+    next_step "Enable systemd linger so zdevd runs even when you're logged out: loginctl enable-linger $USER"
+  fi
 fi
 
 head_ "Agent CLIs (sidebar agent pane + state detection)"
