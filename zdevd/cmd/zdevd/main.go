@@ -106,7 +106,7 @@ func main() {
 			// is a usage error — the daemon takes flags only.
 			if !strings.HasPrefix(os.Args[1], "-") {
 				fmt.Fprintf(os.Stderr,
-					"zdevd: unknown subcommand %q (expected: demo, diag, history, version, or no args for daemon)\n",
+					"zdevd: unknown subcommand %q (expected: cursor, demo, diag, history, version, or no args for daemon)\n",
 					os.Args[1])
 				os.Exit(2)
 			}

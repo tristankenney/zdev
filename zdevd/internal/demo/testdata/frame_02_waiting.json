@@ -1,36 +1,53 @@
 {
-  "delay_seconds": 8,
-  "wait_start_age_sec": {"myorg/backend": 0},
-  "snapshot": {
-    "v": 1,
-    "type": "snapshot",
-    "schema": "phase4-v13",
-    "seq": 0,
-    "sent_at": "2024-01-01T00:00:00Z",
-    "sessions": ["myorg/backend", "myorg/api", "myorg/tools"],
-    "projects": [
-      {
-        "name": "myorg/backend",
-        "status": "alive",
-        "branch": "feat/auth",
-        "attention": "waiting",
-        "agent_states": {"claude": "waiting"},
-        "wait_kind": "permission",
-        "wait_started_ts": 0,
-        "wait_summary": "Run npm install in ./packages? [y/n]",
-        "ahead": 3
-      },
-      {
-        "name": "myorg/api",
-        "status": "alive",
-        "branch": "feat/v2",
-        "attention": "working",
-        "agent_states": {"claude": "working"},
-        "ahead": 1
-      },
-      {"name": "myorg/tools", "status": "alive", "branch": "feature/metrics", "pr_open": 1}
-    ],
-    "current_session": "myorg/backend",
-    "triage": ["myorg/backend"]
-  }
+    "delay_seconds": 8,
+    "wait_start_age_sec": {
+        "myorg/backend": 0
+    },
+    "snapshot": {
+        "v": 1,
+        "type": "snapshot",
+        "schema": "phase4-v14",
+        "seq": 0,
+        "sent_at": "2024-01-01T00:00:00Z",
+        "sessions": [
+            "myorg/backend",
+            "myorg/api",
+            "myorg/tools"
+        ],
+        "projects": [
+            {
+                "name": "myorg/backend",
+                "status": "alive",
+                "branch": "feat/auth",
+                "attention": "waiting",
+                "agent_states": {
+                    "claude": "waiting"
+                },
+                "wait_kind": "permission",
+                "wait_started_ts": 0,
+                "wait_summary": "Run npm install in ./packages? [y/n]",
+                "ahead": 3
+            },
+            {
+                "name": "myorg/api",
+                "status": "alive",
+                "branch": "feat/v2",
+                "attention": "working",
+                "agent_states": {
+                    "claude": "working"
+                },
+                "ahead": 1
+            },
+            {
+                "name": "myorg/tools",
+                "status": "alive",
+                "branch": "feature/metrics",
+                "pr_open": 1
+            }
+        ],
+        "current_session": "myorg/backend",
+        "triage": [
+            "myorg/backend"
+        ]
+    }
 }
