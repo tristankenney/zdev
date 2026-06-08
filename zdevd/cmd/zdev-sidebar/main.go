@@ -580,7 +580,7 @@ func (m *outageMachine) Run() (*proto.Snapshot, net.Conn, error) {
 	}
 }
 
-func defaultSocketPath() string { return platform.SocketPath() }
+func defaultSocketPath() string { return platform.ResolveSocketPath() }
 
 func setupSlog() {
 	logDir := platform.LogDir()

@@ -501,7 +501,7 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-func defaultSocketPath() string { return platform.SocketPath() }
+func defaultSocketPath() string { return platform.ResolveSocketPath() }
 
 // formatAgents loads sidebar.toml and delegates to formatAgentsFromRegistry.
 // Returns an error only on hard parse failures; missing file falls back to

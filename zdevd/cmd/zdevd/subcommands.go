@@ -31,6 +31,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/demo"
 	"github.com/tristankenney/zdev/zdevd/internal/diag"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
+	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	socketpkg "github.com/tristankenney/zdev/zdevd/internal/socket"
 )
 
@@ -43,7 +44,7 @@ import (
 func diagSubcmd(args []string) int {
 	fs := flag.NewFlagSet("zdevd diag", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	socket := fs.String("socket", defaultSocketPath(), "path to zdevd unix socket")
+	socket := fs.String("socket", platform.ResolveSocketPath(), "path to zdevd unix socket")
 	asJSON := fs.Bool("json", false, "emit raw NDJSON (default: human-readable)")
 	if err := fs.Parse(args); err != nil {
 		return 2
