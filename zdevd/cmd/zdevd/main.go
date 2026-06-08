@@ -166,6 +166,7 @@ func run() error {
 	}
 
 	tmuxSocket := os.Getenv("ZDEVD_TMUX_SOCKET")
+	gtSock := gtSocketName()
 
 	slog.Info("zdevd starting (Phase 4)",
 		"socket", *socketFlag,
@@ -180,6 +181,7 @@ func run() error {
 		"workspace", cfg.Workspace,
 		"width", cfg.Width,
 		"tmux_socket", tmuxSocket,
+		"gt_socket", gtSock,
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(),
@@ -329,7 +331,10 @@ func run() error {
 	notifW := notif.NewWatcher(notifDir, submitEvent)
 	workspaceW := workspace.NewWatcher(workspaceDir, lister)
 
-	sup := tmuxctl.NewSupervisor(func(ev tmuxctl.Event) {
+	// rawDefaultSubmit is the core submit function for the default-socket
+	// supervisor: forwards to the hub and schedules probe refreshes on
+	// tmux events that imply probe-relevance (Phase 3 D3-01).
+	rawDefaultSubmit := func(ev tmuxctl.Event) {
 		// Always forward to the hub (Phase 2 contract).
 		_ = h.Submit(ev)
 
@@ -372,9 +377,28 @@ func run() error {
 			// hub.recomputeAgents handles that synchronously. Don't
 			// schedule probes here — title changes don't affect git/PR/lsof.
 		}
-	},
-		tmuxctl.WithSocketName(tmuxSocket),
-	)
+	}
+
+	// When GT integration is active, wrap the default-socket submit with
+	// dedup suppression so sessions already claimed by the GT socket are
+	// not duplicated in the sidebar. The dedup is nil when GT is disabled
+	// (GT_TOWN_ROOT unset or ZDEV_GT_TOWN_ROOT=off) or when the daemon
+	// itself is running inside the GT socket's tmux server.
+	var dedup *gtDedup
+	if gtSock != "" {
+		if isInsideGTSocket(gtSock) {
+			slog.Info("GT supervisor disabled: daemon running inside GT tmux socket", "gt_socket", gtSock)
+		} else {
+			dedup = newGTDedup()
+		}
+	}
+
+	defaultSubmit := rawDefaultSubmit
+	if dedup != nil {
+		defaultSubmit = dedup.wrapDefaultSubmit(rawDefaultSubmit)
+	}
+
+	sup := tmuxctl.NewSupervisor(defaultSubmit, tmuxctl.WithSocketName(tmuxSocket))
 
 	// Phase 4 (D4-10): daemon-start marker. Submitted BEFORE the eventlog
 	// goroutine starts draining — Plan 01's cap=16 buffer absorbs the event
@@ -413,6 +437,18 @@ func run() error {
 	// Phase 3 watchers — fsnotify-based, ctx-cancellable.
 	g.Go(func() error { return notifW.Run(gctx) })
 	g.Go(func() error { return workspaceW.Run(gctx) })
+
+	// GT supervisor: second supervisor on the Gas Town socket. Surfaces GT
+	// rig sessions (hq-mayor, zd-quartz, etc.) as Unmanaged rows alongside
+	// the user's project sessions. Only started when dedup is non-nil, which
+	// means GT_TOWN_ROOT is set, ZDEV_GT_TOWN_ROOT != off, and the daemon is
+	// NOT running inside the GT socket's tmux server.
+	if dedup != nil {
+		gtSubmit := dedup.wrapGTSubmit(func(ev tmuxctl.Event) { _ = h.Submit(ev) })
+		gtSup := tmuxctl.NewSupervisor(gtSubmit, tmuxctl.WithSocketName(gtSock))
+		g.Go(func() error { return gtSup.Run(gctx) })
+		slog.Info("GT supervisor started", "gt_socket", gtSock)
+	}
 
 	wErr := g.Wait()
 
