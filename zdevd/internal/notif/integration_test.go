@@ -194,6 +194,15 @@ func TestSC3_NotifLatency_CpOver(t *testing.T) {
 		// twice in one day on a loaded box. The SLO stays at 100ms;
 		// measure ONCE more and fail only if both samples breach
 		// (scheduler noise doesn't repeat; a real regression does).
+		//
+		// The source file must be updated to hold the retry timestamp so
+		// the harness finds the expected WaitStartedTS in the snapshot —
+		// cpOver copies srcPath verbatim, so a stale "1714838800" content
+		// would cause the harness to wait until the 200ms deadline and
+		// t.Fatalf on every retry regardless of system load.
+		if err := os.WriteFile(srcPath, []byte("1714838900"), 0o644); err != nil {
+			t.Fatalf("update source for retry: %v", err)
+		}
 		second := write("delta2", 1714838900, cpOver)
 		if second > sc3Budget {
 			t.Errorf("SC3 cp-over latency = %v then %v; budget = %v (both samples breached)",
