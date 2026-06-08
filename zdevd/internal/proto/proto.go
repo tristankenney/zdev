@@ -96,7 +96,14 @@ import (
 // time) and WaitSummary (exit reason) — but the new enum value makes a
 // v10 renderer's Attention dispatch incomplete, so forward-only bump.
 // Restart all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v11"
+//
+// phase4-v12 (2026-06-07): adds Project.Unmanaged (omitempty bool) and
+// ZDEV_SIDEBAR_UNMANAGED=show opt-in. When the env var is set, tmux
+// sessions without a projects-file entry appear below the managed block
+// with Unmanaged=true so the renderer can dim them. Default hide preserves
+// pre-Gas-Town sidebar behavior. Restart all zdev-sidebar-render instances
+// after deploying.
+const SchemaVersion = "phase4-v12"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -266,6 +273,11 @@ type Project struct {
 	// Failing wins per check-name when a check appears in both states across PRs.
 	FailingChecks []string `json:"failing_checks,omitempty"`
 	PendingChecks []string `json:"pending_checks,omitempty"`
+	// Unmanaged (phase4-v12) is true when the project row represents a tmux
+	// session that has no corresponding projects-file entry. Only set when
+	// ZDEV_SIDEBAR_UNMANAGED=show; omitted otherwise (omitempty, default false).
+	// Renderers dim these rows and position them below the managed block.
+	Unmanaged bool `json:"unmanaged,omitempty"`
 }
 
 // ValidateHello returns nil when the hello frame is well-formed and the
