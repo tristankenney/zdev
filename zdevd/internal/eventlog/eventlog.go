@@ -20,9 +20,9 @@
 // the channel is full, the event is dropped with a slog.Warn (drop-oldest
 // pattern, see internal/hub/hub.go for the precedent).
 //
-// Channel capacity 16 is the production target — large enough to absorb the
-// daemon-start burst (daemon-start event + initial probe results) without
-// dropping. Tests that need to force overflow use NewWithCap(path, 1).
+// Channel capacity 256 is the production target — large enough to absorb the
+// daemon-start burst even with dual-supervisor (two sockets bootstrapping
+// simultaneously). Tests that need to force overflow use NewWithCap(path, 1).
 //
 // fsync batching: writes are O_APPEND'd to the file immediately so a
 // concurrent reader can tail the log, but f.Sync() is deferred up to
@@ -51,11 +51,13 @@ import (
 const RotateAt10MB = 10 * 1024 * 1024
 
 // DefaultChanCap is the production channel capacity for the Writer's input
-// buffer. Sized to absorb the daemon's startup-burst (daemon-start event +
-// initial probe results from the hub bootstrap) without dropping. Plan 04
-// wires the writer via New(path) and does NOT mutate this constant — tests
-// that need to force drop semantics use NewWithCap(path, 1).
-const DefaultChanCap = 16
+// buffer. Sized to absorb the daemon's startup-burst without dropping. With a
+// dual-supervisor (GT socket + default socket) both supervisors issue a full
+// state-query bootstrap simultaneously on connect, generating ~100+ events in
+// a single burst. 256 absorbs that comfortably with headroom; each Event is a
+// small struct so the memory cost is negligible. Tests that need to force drop
+// semantics use NewWithCap(path, 1).
+const DefaultChanCap = 256
 
 // fsyncDebounce caps the wall-clock latency between the last buffered
 // write and the next fsync. The Run loop uses time.NewTimer + Reset

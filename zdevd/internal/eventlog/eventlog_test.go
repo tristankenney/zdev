@@ -226,16 +226,16 @@ func TestSubmitDropsWhenChannelFull(t *testing.T) {
 }
 
 // TestNewProductionCapacity is a sentinel: it guards against accidental
-// shrinks of DefaultChanCap. Plan 04 relies on cap=16 to absorb the
-// daemon-start burst without dropping. Same-package access lets us inspect
-// the unexported channel directly.
+// shrinks of DefaultChanCap. With dual-supervisor (GT + default sockets),
+// both supervisors bootstrap simultaneously and generate ~100+ events at
+// startup — 256 absorbs this burst without dropping.
 func TestNewProductionCapacity(t *testing.T) {
 	w := New(filepath.Join(t.TempDir(), "x.ndjson"))
 	if got, want := cap(w.in), DefaultChanCap; got != want {
 		t.Fatalf("cap(w.in) = %d, want DefaultChanCap (%d)", got, want)
 	}
-	if DefaultChanCap != 16 {
-		t.Fatalf("DefaultChanCap = %d, want 16 (Plan 04 wiring assumption)", DefaultChanCap)
+	if DefaultChanCap < 256 {
+		t.Fatalf("DefaultChanCap = %d, must be >= 256 to absorb dual-supervisor startup burst", DefaultChanCap)
 	}
 }
 
