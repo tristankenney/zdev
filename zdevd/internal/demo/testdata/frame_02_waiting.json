@@ -4,7 +4,7 @@
   "snapshot": {
     "v": 1,
     "type": "snapshot",
-    "schema": "phase4-v11",
+    "schema": "phase4-v12",
     "seq": 0,
     "sent_at": "2024-01-01T00:00:00Z",
     "sessions": ["myorg/backend", "myorg/api", "myorg/tools"],
