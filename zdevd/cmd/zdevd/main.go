@@ -254,6 +254,19 @@ func run() error {
 	}()
 	slog.Info("zdevd listening", "socket", *socketFlag)
 
+	// Write the discovery file so clients that can't compute the right socket
+	// path (XDG_RUNTIME_DIR unset in SSH sessions) can still find us.
+	// Non-fatal: log warning and continue if the write fails.
+	if err := platform.WriteDiscovery(*socketFlag); err != nil {
+		slog.Warn("socket discovery: write failed", "err", err, "path", platform.DiscoveryPath())
+	} else {
+		defer func() {
+			if err := platform.RemoveDiscovery(); err != nil {
+				slog.Warn("socket discovery: remove failed", "err", err)
+			}
+		}()
+	}
+
 	// Phase 3 — probes + fsnotify watchers + scheduler.
 
 	// Probe scheduler (D3-01): single-flight + max-staleness gating.
