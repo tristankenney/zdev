@@ -172,6 +172,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
+		isCursor := snap.CursorActive && i == snap.CursorRow && !isCurrent
 		// 260511-ohu change A: twoRows := isCurrent only (urgent dropped).
 		// Non-current urgent projects now render as 1 compact row with the red ▌
 		// prefix migrated into renderCompactRow.
@@ -179,7 +180,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent)
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 		} else {
-			renderCompactRow(&buf, &p, width, animator, nowFn, urgent)
+			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor)
 		}
 	}
 
@@ -571,18 +572,22 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 // Prefix dispatch (260511-ohu change A: urgent non-current now reaches here):
 //
 //	urgent=true  → {RedBorder}▌{Reset}" " (urgent accent preserved on single compact line)
+//	cursor=true  → "▶ " (cursor selection indicator; zd-e6e — replaces the 2-space indent)
 //	otherwise    → "  " (2-space indent)
 //
 // No branch, ports, shell-cmd, agent chips, or celebrate chip — those are
 // scanning noise on a non-current row. Only attention-worthy signals surface.
 // Per planner decision PD-02: name soft-cap at max(width-14, 10) runes.
-func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool) {
-	if urgent {
+func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool) {
+	switch {
+	case urgent:
 		buf.WriteString(RedBorder)
 		buf.WriteString("▌")
 		buf.WriteString(Reset)
 		buf.WriteString(" ")
-	} else {
+	case isCursor:
+		buf.WriteString("▶ ")
+	default:
 		buf.WriteString("  ")
 	}
 

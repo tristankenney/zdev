@@ -66,6 +66,10 @@ var fixtureCases = []struct {
 	// VIS-17: daemon healthy with diag fields present but below threshold →
 	// no degraded row (same frame as a snapshot with no diag fields at all).
 	{"VIS-17-daemon-healthy", "vis-17", 0, 0, ""},
+	// cursor-active-row-0: CursorActive=true, CursorRow=0 → first row prefixed with ▶.
+	{"cursor-active-row-0", "cursor-active-row-0", 0, 0, ""},
+	// cursor-inactive: CursorActive=false → pixel-identical to a snapshot with no cursor fields.
+	{"cursor-inactive", "cursor-inactive", 0, 0, ""},
 }
 
 // TestVisualParity exercises the Go renderer against 14 VIS + 10 DATA golden

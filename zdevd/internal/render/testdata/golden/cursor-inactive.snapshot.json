@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase4-v14",
+  "seq": 1,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["alpha", "beta", "gamma"],
+  "projects": [
+    {"name": "alpha", "status": "alive"},
+    {"name": "beta",  "status": "alive"},
+    {"name": "gamma", "status": "alive"}
+  ],
+  "current_session": ""
+}
