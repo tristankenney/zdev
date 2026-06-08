@@ -200,13 +200,14 @@ func run() error {
 	// WithStatePath/WithNotifier fluent chain). Fields are read-only after
 	// Run starts; nil/empty values stay disabled.
 	hubCfg := hub.Config{
-		Debounce:     debounce,
-		StatusDwell:  statusDwell,
-		WaitingDwell: waitingDwell,
-		SocketPath:   *socketFlag,
-		EventLog:     evlog,
-		StatePath:    *stateFlag,
-		Agents:       cfg.AgentRegistry(),
+		Debounce:      debounce,
+		StatusDwell:   statusDwell,
+		WaitingDwell:  waitingDwell,
+		SocketPath:    *socketFlag,
+		EventLog:      evlog,
+		StatePath:     *stateFlag,
+		Agents:        cfg.AgentRegistry(),
+		ShowUnmanaged: cfg.ShowUnmanaged,
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve

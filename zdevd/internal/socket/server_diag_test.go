@@ -79,8 +79,8 @@ func TestServeDiag(t *testing.T) {
 	if r.Schema != proto.SchemaVersion {
 		t.Errorf("Reply.Schema = %q, want %q", r.Schema, proto.SchemaVersion)
 	}
-	if r.Schema != "phase4-v11" {
-		t.Errorf("Reply.Schema = %q, want %q (phase4-v11 bump for AttDead)", r.Schema, "phase4-v11")
+	if r.Schema != "phase4-v12" {
+		t.Errorf("Reply.Schema = %q, want %q (phase4-v12 bump for Unmanaged)", r.Schema, "phase4-v12")
 	}
 	if r.Socket != path {
 		t.Errorf("Reply.Socket = %q, want %q", r.Socket, path)
