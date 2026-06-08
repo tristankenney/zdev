@@ -103,7 +103,14 @@ import (
 // with Unmanaged=true so the renderer can dim them. Default hide preserves
 // pre-Gas-Town sidebar behavior. Restart all zdev-sidebar-render instances
 // after deploying.
-const SchemaVersion = "phase4-v12"
+//
+// phase4-v13 (zd-6e1): adds Snapshot.DaemonErrors1h and
+// Snapshot.DaemonLastEventTS for the daemon self-health degraded row. Both
+// fields are omitempty and default to zero (healthy); a v12 renderer ignores
+// them silently (no degraded row), making this forward-compatible in practice,
+// but bumped for strict-equality validation. Restart all zdev-sidebar-render
+// instances after deploying the new zdevd binary.
+const SchemaVersion = "phase4-v13"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -174,6 +181,17 @@ type Snapshot struct {
 	// `zdev next`, triage popup) agrees on the same ordering. Empty when
 	// nothing needs attention.
 	Triage []string `json:"triage,omitempty"`
+	// DaemonErrors1h is the hub's rolling 1-hour classified-error count
+	// (same source as diag.Reply.Errors1h). When this reaches the renderer's
+	// render.DaemonDegradedErrorThreshold the sidebar shows a dim degraded row
+	// above the footer. omitempty — zero means healthy; absent means healthy.
+	DaemonErrors1h int `json:"daemon_errors_1h,omitempty"`
+	// DaemonLastEventTS is the unix-second timestamp of the most recent tmux
+	// event accepted by the hub (same source as diag.Reply.LastEventAgoSec).
+	// The renderer subtracts its local now to compute the display age. Zero
+	// means the daemon has not yet received its first event (new process) —
+	// the renderer treats zero as "no information" (no additional row trigger).
+	DaemonLastEventTS int64 `json:"daemon_last_event_ts,omitempty"`
 }
 
 // Project is the per-row metadata in a Snapshot.
