@@ -452,7 +452,8 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	glyph, color := MarkerFor(pForMarker, animator, nowFn())
 	// VIS-12 stale dim-out: idle + age >= StaleThreshold => Dim.
 	// Skipped in "off" mode where no special treatment applies.
-	if DemoteMode != "off" && isStaleRow(p, nowFn()) {
+	// Unmanaged rows are always dim (no projects-file entry).
+	if (DemoteMode != "off" && isStaleRow(p, nowFn())) || p.Unmanaged {
 		color = Dim
 	}
 	buf.WriteString(color)
@@ -583,7 +584,7 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	pForMarker := *p
 	glyph, color := MarkerFor(pForMarker, animator, nowFn())
 	stale := DemoteMode != "off" && isStaleRow(p, nowFn())
-	if stale {
+	if stale || p.Unmanaged {
 		color = Dim
 	}
 	buf.WriteString(color)
@@ -591,16 +592,15 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
 
-	// Name (truncated to width budget). Stale and absent rows recede
-	// whole-row: a dim `·` next to a palette `·` is indistinguishable at
-	// one cell (dogfood 2026-06-06), and a no-session row should never
-	// read brighter than a stale one. The name carries the dimming where
-	// the eye actually rests.
+	// Name (truncated to width budget). Stale, absent, and unmanaged rows
+	// recede whole-row. Unmanaged sessions are dim by design (they're not
+	// tracked projects — just adopted polecat/scratch sessions). The name
+	// carries the dimming where the eye actually rests.
 	nameCap := width - 14
 	if nameCap < 10 {
 		nameCap = 10
 	}
-	if stale || p.Status == "absent" {
+	if stale || p.Status == "absent" || p.Unmanaged {
 		buf.WriteString(Dim)
 		buf.WriteString(truncateRunes(p.Name, nameCap))
 		buf.WriteString(Reset)
