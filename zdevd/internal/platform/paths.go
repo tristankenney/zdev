@@ -5,22 +5,29 @@
 //
 // macOS layout:
 //
-//	Socket : $HOME/Library/Application Support/zdev/zdevd.sock
-//	State  : $HOME/Library/Application Support/zdev/zdevd-state.json
-//	Logs   : $HOME/Library/Logs/zdev/<component>.log
+//	Socket    : $HOME/Library/Application Support/zdev/zdevd.sock
+//	State     : $HOME/Library/Application Support/zdev/zdevd-state.json
+//	Logs      : $HOME/Library/Logs/zdev/<component>.log
+//	Discovery : $HOME/Library/Application Support/zdev/socket
 //
 // Linux (XDG Base Directory) layout:
 //
-//	Socket : $XDG_RUNTIME_DIR/zdev/zdevd.sock         (fallback: $TMPDIR/zdev-$UID/)
-//	State  : $XDG_STATE_HOME/zdev/zdevd-state.json    (fallback: $HOME/.local/state/)
-//	Logs   : $XDG_STATE_HOME/zdev/<component>.log
+//	Socket    : $XDG_RUNTIME_DIR/zdev/zdevd.sock    (fallback: $TMPDIR/zdev-$UID/)
+//	State     : $XDG_STATE_HOME/zdev/zdevd-state.json (fallback: $HOME/.local/state/)
+//	Logs      : $XDG_STATE_HOME/zdev/<component>.log
+//	Discovery : $XDG_STATE_HOME/zdev/socket
 //
-// All helpers are pure: they read environment + os.UserHomeDir, never touch
-// disk. Callers are responsible for mkdir-ing the parent directories.
+// All pure helpers (SocketPath, StatePath, etc.) read environment +
+// os.UserHomeDir, never touch disk. WriteDiscovery / RemoveDiscovery are the
+// only disk-touching helpers; callers are responsible for all other mkdir ops.
 package platform
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 )
 
 // SocketPath returns the absolute path to zdevd's unix-domain socket.
@@ -57,3 +64,57 @@ func DataDir() string { return dataDir() }
 // runtime files (sockets, pidfiles). Exposed for the same reason as
 // DataDir.
 func RuntimeDir() string { return runtimeDir() }
+
+// DiscoveryPath returns the absolute path to the socket-discovery file.
+// The daemon writes its actual bound socket path here at startup so clients
+// can locate the socket even when XDG_RUNTIME_DIR differs between the
+// systemd unit environment and the user's shell (e.g. plain SSH sessions).
+// The discovery file lives under dataDir() — the stable XDG_STATE_HOME
+// path — not runtimeDir(), so it survives across XDG_RUNTIME_DIR changes.
+func DiscoveryPath() string {
+	return filepath.Join(dataDir(), "socket")
+}
+
+// WriteDiscovery writes socketPath to the discovery file (mode 0600).
+// The parent directory is created at 0700 if absent.
+// A failure is non-fatal: callers should log a warning and continue.
+func WriteDiscovery(socketPath string) error {
+	p := DiscoveryPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return fmt.Errorf("platform: mkdir discovery dir: %w", err)
+	}
+	return os.WriteFile(p, []byte(socketPath), 0o600)
+}
+
+// RemoveDiscovery removes the discovery file. Idempotent.
+func RemoveDiscovery() error {
+	if err := os.Remove(DiscoveryPath()); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// ResolveSocketPath returns the socket path for clients to dial.
+//
+// Fast path (common case): if SocketPath() exists and is a socket file,
+// return it immediately — zero overhead for macOS and well-configured Linux.
+//
+// Fallback: when the computed path is absent (XDG_RUNTIME_DIR mismatch on
+// plain SSH sessions without PAM's pam_systemd), read the discovery file
+// written by the daemon and return that path. Falls back to SocketPath() if
+// the discovery file is absent or empty.
+func ResolveSocketPath() string {
+	computed := SocketPath()
+	if info, err := os.Stat(computed); err == nil && info.Mode()&os.ModeSocket != 0 {
+		return computed
+	}
+	raw, err := os.ReadFile(DiscoveryPath())
+	if err != nil || len(raw) == 0 {
+		return computed
+	}
+	p := strings.TrimRight(string(raw), "\r\n ")
+	if p == "" {
+		return computed
+	}
+	return p
+}

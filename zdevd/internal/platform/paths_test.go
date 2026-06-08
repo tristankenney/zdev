@@ -19,6 +19,7 @@ func TestPathsAreAbsolute(t *testing.T) {
 		{"LogDir", LogDir()},
 		{"DataDir", DataDir()},
 		{"RuntimeDir", RuntimeDir()},
+		{"DiscoveryPath", DiscoveryPath()},
 	} {
 		if c.got == "" {
 			t.Errorf("%s: empty path", c.name)
