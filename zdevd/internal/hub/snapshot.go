@@ -70,6 +70,12 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 	// (raw-events-*, sub-test-*, test-control-*) — these are infrastructure
 	// from the live-test harness and have no agent panes worth surfacing.
 	// Also skip empty-name sessions (see Pass 1 comment on bootstrap timing).
+	//
+	// When showUnmanaged is true: collect these into unmanagedNames so they
+	// sort after the managed block and are rendered dim. When false (default):
+	// append directly to names so the current mixed-sort behaviour is preserved
+	// exactly — zero behaviour change when the feature is disabled.
+	var unmanagedNames []string
 	for _, sess := range st.sessions {
 		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
 			continue
@@ -77,13 +83,31 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		if _, ok := seen[sess.Name]; ok {
 			continue
 		}
-		names = append(names, sess.Name)
 		seen[sess.Name] = struct{}{}
+		if st.showUnmanaged {
+			unmanagedNames = append(unmanagedNames, sess.Name)
+		} else {
+			names = append(names, sess.Name)
+		}
 	}
 	sort.Strings(names)
+	sort.Strings(unmanagedNames) // no-op when hide (default)
 
-	projects := make([]proto.Project, 0, len(names))
-	for _, n := range names {
+	// Build the unmanaged set for O(1) lookup when assembling projects.
+	unmanagedSet := make(map[string]struct{}, len(unmanagedNames))
+	for _, n := range unmanagedNames {
+		unmanagedSet[n] = struct{}{}
+	}
+
+	// Fresh backing array so snap.Sessions is never an alias of `names`.
+	// The immutable-after-publish contract requires snapshots are not mutated
+	// after publication (Invariant 8 / snapshotEqualsCore contract).
+	allNames := make([]string, len(names)+len(unmanagedNames))
+	copy(allNames, names)
+	copy(allNames[len(names):], unmanagedNames)
+
+	projects := make([]proto.Project, 0, len(allNames))
+	for _, n := range allNames {
 		// D-02 (Phase 999.1): nameToSession, projectData, prCounts, and
 		// celebrateUntil are all keyed by tmux session Name (dash-form, e.g.
 		// "example-backend"). st.projectListNames stores slash-form
@@ -217,6 +241,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			wireWaitSummary = pd.DeadReason
 		}
 
+		_, isUnmanaged := unmanagedSet[n]
 		proj := proto.Project{
 			Name:             n,
 			Status:           status,
@@ -244,6 +269,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			WaitContext:      pd.WaitContext,
 			CIStatus:         pd.CIStatus,
 			CIConclusion:     pd.CIConclusion,
+			Unmanaged:        isUnmanaged,
 		}
 		projects = append(projects, proj)
 	}
@@ -254,7 +280,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		Schema:         proto.SchemaVersion, // single source of truth (Phase 3)
 		Seq:            seq,
 		SentAt:         sentAt,
-		Sessions:       names,
+		Sessions:       allNames,
 		Projects:       projects,
 		CurrentSession: "", // resolved per-connection in Plan 02-04 from hello.TmuxPane
 		// Triage (phase4-v9) ranks the rows just assembled above, so the

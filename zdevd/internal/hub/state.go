@@ -92,6 +92,12 @@ type state struct {
 	celebrateUntil   map[string]int64       // unix-second deadline for celebration; 0 = none
 	projectListNames []string               // canonical names from ProjectListChanged
 
+	// showUnmanaged mirrors config.ShowUnmanaged. When true, buildSnapshot
+	// appends tmux sessions without a projects-file entry below the managed
+	// block with proto.Project.Unmanaged=true. Set once by NewHub before
+	// Run starts; read-only throughout Run.
+	showUnmanaged bool
+
 	// paneCapturer is the injectable seam for tmux capture-pane calls.
 	// Production default: realPaneCapture (set by newState).
 	// Tests override with a stub function that returns a controlled string

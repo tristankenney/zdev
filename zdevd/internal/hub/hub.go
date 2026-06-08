@@ -167,6 +167,11 @@ type Config struct {
 	// what newState() seeds — so tests building hubs with the zero-value
 	// Config still get the default claude+opencode classifier.
 	Agents *agents.Registry
+	// ShowUnmanaged mirrors ZDEV_SIDEBAR_UNMANAGED=show. When true,
+	// buildSnapshot appends tmux sessions without a projects-file entry
+	// below the managed block with proto.Project.Unmanaged=true.
+	// Default false preserves existing sidebar behaviour.
+	ShowUnmanaged bool
 }
 
 // NewHub constructs a hub from a Config. Every dependency is bundled into
@@ -191,6 +196,7 @@ func NewHub(cfg Config) *Hub {
 	// pass-for-pass, matching pre-debounce behavior.
 	st.statusDwell = cfg.StatusDwell
 	st.waitingDwell = cfg.WaitingDwell
+	st.showUnmanaged = cfg.ShowUnmanaged
 	return &Hub{
 		debounce:     cfg.Debounce,
 		events:       make(chan tmuxctl.Event, eventsChanCap),
@@ -882,6 +888,9 @@ func projectEquals(a, b proto.Project) bool {
 		if w, ok := b.AgentStates[k]; !ok || w != v {
 			return false
 		}
+	}
+	if a.Unmanaged != b.Unmanaged {
+		return false
 	}
 	return true
 }
