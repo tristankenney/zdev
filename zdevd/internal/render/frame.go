@@ -184,6 +184,24 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 	}
 
+	// Rig section headers (phase4-v15, zd-l2t): when snap.RigGroups is
+	// non-empty, emit a `── <rig> ──` header above the first row of each
+	// rig in iteration order. `emittedHeader` gates duplicate emission so
+	// fold mode gets the header at the first row that actually surfaces
+	// even when the original snapshot's first-row-of-rig landed in the
+	// OTHER block — spatial-memory invariant: headers move with their
+	// rows, not with their pre-fold positions.
+	rigOfRow := rigRowMap(snap)
+	emittedHeader := make(map[string]bool, len(snap.RigGroups))
+	renderHeaderIfFirst := func(i int) {
+		rig := rigOfRow[i]
+		if rig == "" || emittedHeader[rig] {
+			return
+		}
+		emittedHeader[rig] = true
+		renderRigHeader(&buf, rig)
+	}
+
 	if DemoteMode == "fold" {
 		// Fold mode: separate active and demoted projects. Active projects
 		// render in their original positions (spatial memory preserved for
@@ -201,6 +219,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			}
 		}
 		for _, i := range activeIdx {
+			renderHeaderIfFirst(i)
 			renderProject(i)
 		}
 		if len(demotedIdx) > 0 {
@@ -213,11 +232,13 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			buf.WriteString(ClearLineEnd)
 			buf.WriteByte('\n')
 			for _, i := range demotedIdx {
+				renderHeaderIfFirst(i)
 				renderProject(i)
 			}
 		}
 	} else {
 		for i := range snap.Projects {
+			renderHeaderIfFirst(i)
 			renderProject(i)
 		}
 	}
@@ -229,10 +250,48 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		renderDaemonHealthRow(&buf, snap, nowFn)
 	}
 
-	renderFooter(&buf, nWait, nDead, nRun, nDone, nAlive, nAbsent)
+	renderFooter(&buf, nWait, nDead, nRun, nDone, nAlive, nAbsent, rigAttentionFor(snap))
 
 	buf.WriteString(ClearToEnd)
 	return buf.Bytes()
+}
+
+// rigAttentionFor returns the per-rig attention rollup: rigs whose
+// member sessions include at least one waiting/dead/needs-permission
+// row. Sorted by rig name for deterministic byte output (the renderer
+// itself is differential, so any nondeterminism here causes spurious
+// repaints). Returns nil when snap.RigGroups is empty so the footer
+// path appends nothing — non-GT fleets see the unchanged footer.
+//
+// Tier (matches projectAttention/isUrgent semantics elsewhere in this
+// file): AttDead and AttWaiting both count as attention-grabbing. We
+// roll them into ONE "needs attention" signal at the footer because
+// the rig label is a coarse pointer ("look here"), not a per-session
+// dispatch surface; the dedicated rig section above already shows the
+// member rows so the user can identify the exact session.
+func rigAttentionFor(snap *proto.Snapshot) []string {
+	if len(snap.RigGroups) == 0 {
+		return nil
+	}
+	// Build attention lookup keyed by project name. Cheaper than scanning
+	// all projects per rig.
+	attN := make(map[string]proto.Attention, len(snap.Projects))
+	for _, p := range snap.Projects {
+		attN[p.Name] = projectAttention(&p)
+	}
+	var attentionRigs []string
+	for _, g := range snap.RigGroups {
+		for _, s := range g.Sessions {
+			a := attN[s]
+			if a == proto.AttWaiting || a == proto.AttDead {
+				attentionRigs = append(attentionRigs, g.Name)
+				break
+			}
+		}
+	}
+	// snap.RigGroups is already alphabetised by buildSnapshot, so the
+	// preserve-order iteration gives sorted output without an extra sort.
+	return attentionRigs
 }
 
 // FooterMode selects the footer tally style (dogfood #4: the glyph
@@ -283,9 +342,34 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // renderFooter writes the footer tally per FooterMode. Counts use the
 // bucket's own marker color (waiting orange, dead red, working icy,
 // done yellow) so the words tie back to the rows; separators are dim.
-func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent int) {
+//
+// rigAttention is the optional Gas Town rig rollup (phase4-v15,
+// zd-l2t): rig names whose member sessions include at least one
+// waiting/dead row. Each appended as " · zdev ●" in the orange waiting
+// color. Empty or nil suppresses the suffix entirely so non-GT fleets
+// see the unchanged footer.
+func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent int, rigAttention []string) {
+	writeRigAttention := func() {
+		// Append " · <rig> ●" per rig needing attention. Color matches
+		// the orange "waiting" bucket so the rig pointer ties visually
+		// to the bucket that motivates it. The dim middle separator
+		// uses the existing footer separator pattern.
+		for _, rig := range rigAttention {
+			buf.WriteString(Dim)
+			buf.WriteString(" · ")
+			buf.WriteString(Reset)
+			buf.WriteString(Orange)
+			buf.WriteString(rig)
+			buf.WriteString(" ●")
+			buf.WriteString(Reset)
+		}
+	}
+
 	switch FooterMode {
 	case "off":
+		// "off" mode keeps the row blank by contract — rig rollup is
+		// suppressed too so a user who turned the footer off doesn't
+		// see GT-driven content sneak back in.
 		buf.WriteString(ClearLineEnd)
 		buf.WriteByte('\n')
 		return
@@ -296,6 +380,7 @@ func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent 
 		// the legacy 5-bucket shape, kept stable for muscle memory.
 		fmt.Fprintf(buf, "%d● %d◎ %d◆ %d· %d·", nWait+nDead, nRun, nDone, nAlive, nAbsent)
 		buf.WriteString(Reset)
+		writeRigAttention()
 		buf.WriteString(ClearLineEnd)
 		buf.WriteByte('\n')
 		return
@@ -329,6 +414,21 @@ func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent 
 		buf.WriteString(Reset)
 		wrote = true
 	}
+	// If we have rig attention but no buckets fired (impossible in
+	// principle — a waiting member triggers nWait — but defensive in
+	// case future bucket logic changes), seed the leading indent.
+	if !wrote && len(rigAttention) > 0 {
+		buf.WriteString("  ")
+		// Force the first rig label to render WITHOUT the leading " · "
+		// separator that writeRigAttention prepends.
+		first := rigAttention[0]
+		buf.WriteString(Orange)
+		buf.WriteString(first)
+		buf.WriteString(" ●")
+		buf.WriteString(Reset)
+		rigAttention = rigAttention[1:]
+	}
+	writeRigAttention()
 	// All-zero (idle/absent only) emits the blank row: a quiet fleet
 	// LOOKS quiet instead of enumerating its quietness, and the frame
 	// keeps its invariant line count.
@@ -656,4 +756,70 @@ func spaceIf(buf *bytes.Buffer) {
 		return
 	}
 	buf.WriteByte(' ')
+}
+
+// rigSectionDashes is the dash width on EACH side of the rig name inside
+// the section header. Two dashes per side mirrors the bead's example
+// "── zdev ──" and keeps the header visually subordinate to the 17-dash
+// mood divider above the list.
+const rigSectionDashes = 2
+
+// rigRowMap inspects snap.RigGroups and returns rigOfRow[i] → rig name
+// for project index i (absent entries are ungrouped rows). nil when
+// snap.RigGroups is empty so the header path short-circuits and non-GT
+// fleets stay byte-identical.
+//
+// Membership is keyed by Project.Name matching the rig group's
+// Sessions slice. The header-emit-once gate lives in the renderer (see
+// `emittedHeader` in Render); a separate first-row-of-rig precomputation
+// is unnecessary.
+func rigRowMap(snap *proto.Snapshot) map[int]string {
+	if len(snap.RigGroups) == 0 {
+		return nil
+	}
+	sessRig := make(map[string]string, len(snap.RigGroups)*4)
+	for _, g := range snap.RigGroups {
+		for _, s := range g.Sessions {
+			sessRig[s] = g.Name
+		}
+	}
+	rigOfRow := make(map[int]string, len(snap.Projects))
+	for i, p := range snap.Projects {
+		if r, ok := sessRig[p.Name]; ok {
+			rigOfRow[i] = r
+		}
+	}
+	return rigOfRow
+}
+
+// renderRigHeader writes the Gas Town rig section header row to buf in
+// the same prefix/clear-line/newline shape as the mood divider and the
+// fold demote divider. Dim-colored so it sits visually below the mood
+// signal but above the per-project markers — readers scanning the
+// sidebar from top to bottom see "fleet mood → rig label → rig
+// members" in clear hierarchy.
+//
+// Width: total 17 chars after the 2-space indent — matches the mood
+// divider and gives the renderer a stable click-row geometry to bank
+// on if/when rig headers grow click handlers.
+func renderRigHeader(buf *bytes.Buffer, rig string) {
+	buf.WriteString("  ")
+	buf.WriteString(Dim)
+	buf.WriteString(strings.Repeat("─", rigSectionDashes))
+	buf.WriteString(" ")
+	buf.WriteString(rig)
+	buf.WriteString(" ")
+	// 17 total dashes/space budget after indent; pad the trailing side
+	// so all headers line up regardless of rig-name length. Truncates
+	// rather than overflowing for pathologically long rig names — the
+	// 17-char width is the contract.
+	used := 2 /* leading dashes */ + 1 /* space */ + len(rig) + 1 /* trailing space */
+	trail := 17 - used
+	if trail < 0 {
+		trail = 0
+	}
+	buf.WriteString(strings.Repeat("─", trail))
+	buf.WriteString(Reset)
+	buf.WriteString(ClearLineEnd)
+	buf.WriteByte('\n')
 }

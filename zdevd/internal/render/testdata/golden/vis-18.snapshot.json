@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "schema": "phase4-v15",
+  "seq": 1,
+  "sent_at": "2026-05-04T12:00:00Z",
+  "sessions": ["zd-jasper", "zd-obsidian", "hq-mayor"],
+  "projects": [
+    {"name": "hq-mayor",    "status": "alive"},
+    {"name": "zd-jasper",   "status": "waiting", "wait_started_ts": 1777859940},
+    {"name": "zd-obsidian", "status": "alive"}
+  ],
+  "current_session": "",
+  "rig_groups": [
+    {"name": "hq",   "sessions": ["hq-mayor"]},
+    {"name": "zdev", "sessions": ["zd-jasper", "zd-obsidian"]}
+  ]
+}
