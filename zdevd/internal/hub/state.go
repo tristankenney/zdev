@@ -98,6 +98,14 @@ type state struct {
 	// Run starts; read-only throughout Run.
 	showUnmanaged bool
 
+	// rigPrefixes is the Gas Town prefix→rig name map last published via
+	// GTRigMapChanged (zd-l2t). buildSnapshot scans session names for any
+	// matching `<prefix>-` (or exactly `<prefix>`) and groups them into
+	// snap.RigGroups. Empty when GT integration is off (rigs.json absent
+	// or GT_TOWN_ROOT unset) — buildSnapshot then emits zero RigGroups and
+	// non-GT renderers see no behavioural change.
+	rigPrefixes map[string]string
+
 	// cursorRow is the index (into buildSnapshot's Projects slice) of the
 	// currently selected sidebar row. Only meaningful when cursorActive is
 	// true. Owned by hub goroutine; set by applyEvent(CursorMove).
@@ -905,6 +913,18 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		}
 		if e.Delta != 0 {
 			s.cursorRow = ((s.cursorRow+e.Delta)%n + n) % n
+		}
+
+	case tmuxctl.GTRigMapChanged:
+		// Pure map swap (zd-l2t, phase4-v15). The cmd/zdevd entry point
+		// produces a fresh map per fsnotify tick and submits it; we take
+		// ownership here without copying so the hub goroutine has the
+		// only reference. Nil/empty clears the grouping (rigs.json removed
+		// or unreadable).
+		if len(e.Prefixes) == 0 {
+			s.rigPrefixes = nil
+		} else {
+			s.rigPrefixes = e.Prefixes
 		}
 	}
 }

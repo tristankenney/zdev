@@ -292,7 +292,81 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// subscriber's renderer highlights the selected row consistently.
 		CursorRow:    st.cursorRow,
 		CursorActive: st.cursorActive,
+		// RigGroups (phase4-v15, zd-l2t): group session names under
+		// their Gas Town rig per state.rigPrefixes. Nil when GT
+		// integration is off so non-GT fleets see no wire change.
+		RigGroups: rigGroupsFor(st.rigPrefixes, allNames),
 	}
+}
+
+// rigGroupsFor builds the per-rig session grouping for a snapshot. Returns
+// nil when prefixes is empty so the snapshot omits the field on the wire
+// (omitempty) — non-GT fleets observe zero change.
+//
+// Membership rule: a session name is in rig R if its name starts with
+// `<prefix>-` (matching the standard polecat naming `<prefix>-<polecat>`)
+// or equals the prefix exactly (the rig's hub session, e.g. session "zd"
+// for prefix "zd"). The longest-prefix wins so a session matching two
+// configured prefixes lands in the most specific rig — this matters when
+// one prefix is a strict prefix of another (e.g. "zd" and "zdx").
+//
+// Sessions that match no prefix are not in any group — buildSnapshot still
+// lists them in Projects/Sessions; only the rig section headers are
+// suppressed for them.
+//
+// Output is sorted: groups by rig name, sessions within each group by name.
+// Determinism matters for snapshotEqualsCore (the publish-suppression gate
+// re-computes RigGroups every pass and would publish on every tick if
+// ordering flapped).
+func rigGroupsFor(prefixes map[string]string, sessions []string) []proto.RigGroup {
+	if len(prefixes) == 0 {
+		return nil
+	}
+	// Resolve prefix list once, longest first so the membership loop picks
+	// the most-specific match.
+	type prefixEntry struct {
+		prefix string
+		rig    string
+	}
+	plist := make([]prefixEntry, 0, len(prefixes))
+	for p, r := range prefixes {
+		if p == "" || r == "" {
+			continue
+		}
+		plist = append(plist, prefixEntry{prefix: p, rig: r})
+	}
+	sort.Slice(plist, func(i, j int) bool {
+		// Longer first; tie-break alphabetically so the order is stable.
+		if len(plist[i].prefix) != len(plist[j].prefix) {
+			return len(plist[i].prefix) > len(plist[j].prefix)
+		}
+		return plist[i].prefix < plist[j].prefix
+	})
+
+	byRig := make(map[string][]string, len(plist))
+	for _, s := range sessions {
+		for _, p := range plist {
+			if s == p.prefix || (len(s) > len(p.prefix) && s[:len(p.prefix)] == p.prefix && s[len(p.prefix)] == '-') {
+				byRig[p.rig] = append(byRig[p.rig], s)
+				break
+			}
+		}
+	}
+	if len(byRig) == 0 {
+		return nil
+	}
+	rigNames := make([]string, 0, len(byRig))
+	for r := range byRig {
+		rigNames = append(rigNames, r)
+	}
+	sort.Strings(rigNames)
+	out := make([]proto.RigGroup, 0, len(rigNames))
+	for _, r := range rigNames {
+		members := byRig[r]
+		sort.Strings(members)
+		out = append(out, proto.RigGroup{Name: r, Sessions: members})
+	}
+	return out
 }
 
 // projectAgentStates lifts the per-agent raw status strings stored on
