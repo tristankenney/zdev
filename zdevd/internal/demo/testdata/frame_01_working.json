@@ -3,7 +3,7 @@
     "snapshot": {
         "v": 1,
         "type": "snapshot",
-        "schema": "phase4-v14",
+        "schema": "phase4-v15",
         "seq": 0,
         "sent_at": "2024-01-01T00:00:00Z",
         "sessions": [

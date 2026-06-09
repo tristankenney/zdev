@@ -1067,11 +1067,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v14 (bumped zd-e6e
-	// for CursorRow + CursorActive sidebar cursor fields).
-	t.Run("H_schema_version_is_phase4_v14", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v14" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v14")
+	// Test H: proto.SchemaVersion must be phase4-v15 (bumped zd-l2t for
+	// Snapshot.RigGroups — Gas Town rig grouping in the sidebar).
+	t.Run("H_schema_version_is_phase4_v15", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v15" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v15")
 		}
 	})
 }
