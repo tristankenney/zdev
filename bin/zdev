@@ -160,6 +160,9 @@ Usage:
   zdev triage                    Show the ranked attention queue
   zdev ack [--all|<project>]     Acknowledge statuses — like "read all"
                                  (tmux: bind -n M-r run-shell "zdev ack --all")
+  zdev notify {mute [DUR]|unmute|toggle|status}
+                                 Runtime mute for tier notification banners
+                                 (tmux: bind -n M-/ run-shell "zdev notify toggle")
   zdev doctor [--probe]          Diagnose the setup (--probe: live end-to-end test)
   zdev list                      Show configured vs running sessions
   zdev kill <project>...         Kill named sessions
@@ -421,6 +424,102 @@ cmd_ack() {
     else
         echo "zdev: acknowledged ${acked} session(s)"
     fi
+}
+
+cmd_notify() {
+    # zdev notify {mute [DURATION]|unmute|toggle|status}
+    #
+    # Runtime audio mute toggle for the tier notification banners. Writes
+    # an expiry timestamp to ~/.local/state/zdev/notify-muted-until (real
+    # path resolved by zdevd, which already owns DataDir() on darwin too);
+    # the running daemon's notifier wrapper reads the file on every fire,
+    # so no restart / proto bump / socket call is needed.
+    #
+    # Subcommands:
+    #   mute [30m|1h|2h|forever]  silence notifications (default 1h;
+    #                             "forever" = ~10 years).
+    #   unmute                    re-enable notifications immediately.
+    #   toggle                    if currently muted -> unmute; otherwise
+    #                             mute 1h. Used by the M-/ tmux binding.
+    #   status                    print the current state.
+    if ! command -v zdevd >/dev/null 2>&1; then
+        echo "zdev notify: zdevd not on PATH (run make -C zdevd install)" >&2
+        return 1
+    fi
+    local sub="${1:-status}"
+    case "$sub" in
+        mute)
+            local dur="${2:-1h}"
+            if [[ "$dur" == "forever" ]]; then
+                # ~10 years in seconds (315360000). Long enough to mean
+                # "permanently" without overflowing int64 on any platform.
+                dur="315360000"
+            fi
+            zdevd notify-mute "$dur"
+            ;;
+        unmute|off)
+            zdevd notify-mute 0
+            ;;
+        toggle)
+            if cmd_notify_is_muted; then
+                zdevd notify-mute 0
+            else
+                zdevd notify-mute 1h
+            fi
+            ;;
+        status|"")
+            if cmd_notify_is_muted; then
+                # Same human-readable line zdevd notify-mute emits on
+                # entry; printed here without rewriting the file.
+                local until
+                until=$(cmd_notify_until_hhmm)
+                echo "notifications: muted until ${until}"
+            else
+                echo "notifications: active"
+            fi
+            ;;
+        *)
+            echo "zdev notify: unknown subcommand '$sub' (want: mute, unmute, toggle, status)" >&2
+            return 2
+            ;;
+    esac
+}
+
+# Locate the mute sentinel without hardcoding the platform path — zdevd
+# resolves it consistently across darwin / linux. We rely on the fact
+# that `zdevd notify-mute` already prints "notifications: <state>" and
+# writes the file in the canonical location; checking is a plain stat
+# at the two known roots.
+cmd_notify_sentinel_path() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo "$HOME/Library/Application Support/zdev/notify-muted-until"
+    else
+        echo "${XDG_STATE_HOME:-$HOME/.local/state}/zdev/notify-muted-until"
+    fi
+}
+
+cmd_notify_is_muted() {
+    local path
+    path=$(cmd_notify_sentinel_path)
+    [[ -f "$path" ]] || return 1
+    local ts now
+    ts=$(tr -d '[:space:]' <"$path" 2>/dev/null) || return 1
+    [[ "$ts" =~ ^[0-9]+$ ]] || return 1
+    now=$(date +%s)
+    (( now < ts ))
+}
+
+cmd_notify_until_hhmm() {
+    local path ts
+    path=$(cmd_notify_sentinel_path)
+    ts=$(tr -d '[:space:]' <"$path" 2>/dev/null) || { echo "?"; return; }
+    [[ "$ts" =~ ^[0-9]+$ ]] || { echo "?"; return; }
+    # Stay portable: BSD `date -r` (darwin) and GNU `date -d @ts` (linux)
+    # both accept unix timestamps but with different flags. Try the BSD
+    # form first, fall back to GNU. If neither works, return the raw ts.
+    date -r "$ts" +%H:%M 2>/dev/null \
+        || date -d "@$ts" +%H:%M 2>/dev/null \
+        || echo "$ts"
 }
 
 # ===== Dispatch =====
