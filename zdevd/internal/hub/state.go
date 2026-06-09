@@ -338,6 +338,7 @@ type window struct {
 type pane struct {
 	ID    string
 	Title string // decoded
+	Cwd   string // last #{pane_current_path} (zd-bub)
 }
 
 // applyEvent mutates s per the event. Pure function. Zero I/O for state
@@ -478,6 +479,17 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 				}
 				recomputeAgents(s, sess.Name)
 			}
+		}
+	case tmuxctl.PaneCwdChanged:
+		// zd-bub: record the pane's working directory so consumers
+		// (renderer, audits) can read it from snapshot state without a
+		// second tmux query. cmd/zdevd separately attaches the cwd to the
+		// branch probe for unmanaged sessions; this case is the state
+		// projection so the pane carries its cwd for completeness.
+		if p, ok := s.panesByID[e.PaneID]; ok {
+			p.Cwd = e.Cwd
+		} else {
+			s.panesByID[e.PaneID] = &pane{ID: e.PaneID, Cwd: e.Cwd}
 		}
 	case tmuxctl.ClientSessionChanged:
 		// Track which session each client is currently viewing.

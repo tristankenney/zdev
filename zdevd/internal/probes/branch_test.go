@@ -351,3 +351,190 @@ func TestDetectLocalBranches_PassesNoOptionalLocks(t *testing.T) {
 		t.Error("git invocation in detectLocalBranches missing --no-optional-locks")
 	}
 }
+
+// TestSetDirOverride_RefreshUsesOverride verifies SetDirOverride redirects
+// Refresh to a dir outside the workspace tree (zd-bub: unmanaged-session
+// branch attribution). Without an override, the project key "gt-rig-name"
+// would resolve to a non-existent `workspace/gt-rig-name` and yield no VCS.
+func TestSetDirOverride_RefreshUsesOverride(t *testing.T) {
+	workspace := t.TempDir()
+	// Override target lives OUTSIDE workspace — simulates a polecat sandbox.
+	override := t.TempDir()
+	if err := os.Mkdir(filepath.Join(override, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var execDir string
+	var got tmuxctl.Event
+	p := NewBranchProbe(func(ev tmuxctl.Event) { got = ev }, workspace)
+	p.execFunc = func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+		execDir = dir
+		joined := strings.Join(args, " ")
+		if name == "git" && strings.Contains(joined, "rev-parse") {
+			return []byte("feature-x\n"), nil
+		}
+		if name == "git" && strings.Contains(joined, "status") {
+			return []byte(""), nil
+		}
+		return nil, errors.New("unexpected exec")
+	}
+
+	p.SetDirOverride("gt-rig-name", override)
+	if err := p.Refresh(context.Background(), "gt-rig-name"); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if execDir != override {
+		t.Errorf("Refresh shelled out in %q; want override %q", execDir, override)
+	}
+	dr, ok := got.(tmuxctl.DataRefresh)
+	if !ok {
+		t.Fatalf("got = %T; want DataRefresh", got)
+	}
+	if dr.Branch != "feature-x" {
+		t.Errorf("Branch = %q; want feature-x", dr.Branch)
+	}
+}
+
+// TestSetDirOverride_ChangeInvalidatesVCSCache verifies that switching an
+// override to a different dir clears the cached VCS detection for that key.
+// Without invalidation, a session that moved from a no-VCS dir to a repo
+// (or between VCS types) would keep reporting the prior result forever.
+func TestSetDirOverride_ChangeInvalidatesVCSCache(t *testing.T) {
+	workspace := t.TempDir()
+	noVCS := t.TempDir()
+	gitDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewBranchProbe(func(tmuxctl.Event) {}, workspace)
+
+	p.SetDirOverride("sess", noVCS)
+	if got := p.detectVCS(p.dirFor("sess"), "sess"); got != "" {
+		t.Errorf("detectVCS over no-VCS dir = %q; want \"\"", got)
+	}
+	// Cache must hold "" so a second call doesn't re-stat.
+	if got := p.detectVCS(p.dirFor("sess"), "sess"); got != "" {
+		t.Errorf("cached detectVCS = %q; want \"\"", got)
+	}
+
+	p.SetDirOverride("sess", gitDir)
+	if got := p.detectVCS(p.dirFor("sess"), "sess"); got != "git" {
+		t.Errorf("after override change, detectVCS = %q; want git (cache should have been invalidated)", got)
+	}
+}
+
+// TestSetDirOverride_EmptyClears verifies passing an empty dir clears the
+// override so the key falls back to workspace-joined resolution.
+func TestSetDirOverride_EmptyClears(t *testing.T) {
+	workspace := t.TempDir()
+	override := t.TempDir()
+
+	p := NewBranchProbe(func(tmuxctl.Event) {}, workspace)
+	p.SetDirOverride("sess", override)
+	if got := p.dirFor("sess"); got != override {
+		t.Fatalf("dirFor with override = %q; want %q", got, override)
+	}
+	p.SetDirOverride("sess", "")
+	if got, want := p.dirFor("sess"), filepath.Join(workspace, "sess"); got != want {
+		t.Errorf("dirFor after clear = %q; want %q", got, want)
+	}
+}
+
+// TestBranchProbe_SetDirOverride verifies that SetDirOverride pins an
+// unmanaged-session key to a working dir outside the workspace and that
+// Refresh resolves VCS + branch at that pinned dir (zd-bub). Without the
+// override, the default `workspace/<project>` join would point at no-VCS
+// (or worse, the wrong project) and silently return DataRefresh with
+// Branch="".
+func TestBranchProbe_SetDirOverride(t *testing.T) {
+	tmp := t.TempDir()
+	override := filepath.Join(tmp, "outside-workspace")
+	os.MkdirAll(filepath.Join(override, ".git"), 0o755)
+
+	var got tmuxctl.Event
+	// workspace points at tmp; the unmanaged session name 'gt-zdev-obsidian'
+	// has no `tmp/gt-zdev-obsidian` directory — without an override Refresh
+	// would resolve no VCS and return nil without emitting DataRefresh.
+	p := NewBranchProbe(func(ev tmuxctl.Event) { got = ev }, tmp)
+
+	gotDir := ""
+	p.execFunc = func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+		gotDir = dir
+		joined := strings.Join(args, " ")
+		if name == "git" && strings.Contains(joined, "rev-parse") {
+			return []byte("feature-x\n"), nil
+		}
+		if name == "git" && strings.Contains(joined, "status") {
+			return []byte(" M main.go\n"), nil
+		}
+		return nil, errors.New("unexpected exec")
+	}
+
+	p.SetDirOverride("gt-zdev-obsidian", override)
+	if err := p.Refresh(context.Background(), "gt-zdev-obsidian"); err != nil {
+		t.Fatal(err)
+	}
+	if gotDir != override {
+		t.Errorf("exec dir = %q; want override %q", gotDir, override)
+	}
+	dr, ok := got.(tmuxctl.DataRefresh)
+	if !ok {
+		t.Fatalf("got = %T; want DataRefresh", got)
+	}
+	if dr.Project != "gt-zdev-obsidian" {
+		t.Errorf("DataRefresh.Project = %q; want gt-zdev-obsidian", dr.Project)
+	}
+	if dr.Branch != "feature-x" {
+		t.Errorf("DataRefresh.Branch = %q; want feature-x", dr.Branch)
+	}
+	if dr.DirtyCount != 1 {
+		t.Errorf("DataRefresh.DirtyCount = %d; want 1", dr.DirtyCount)
+	}
+}
+
+// TestBranchProbe_SetDirOverride_ChangeInvalidatesCache verifies that
+// changing the override dir for the same key invalidates the VCS detection
+// cache for that key (zd-bub). A polecat starts in $HOME (no VCS), then
+// cd's into a repo: the second Refresh must re-detect VCS at the new dir,
+// not pin the empty cache entry from the first.
+func TestBranchProbe_SetDirOverride_ChangeInvalidatesCache(t *testing.T) {
+	tmp := t.TempDir()
+	noVCS := filepath.Join(tmp, "home")
+	withVCS := filepath.Join(tmp, "repo")
+	os.MkdirAll(noVCS, 0o755)
+	os.MkdirAll(filepath.Join(withVCS, ".git"), 0o755)
+
+	p := NewBranchProbe(func(ev tmuxctl.Event) {}, tmp)
+	p.execFunc = func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "rev-parse") {
+			return []byte("main\n"), nil
+		}
+		return []byte(""), nil
+	}
+
+	p.SetDirOverride("polecat", noVCS)
+	if err := p.Refresh(context.Background(), "polecat"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Switch override to a dir with .git — Refresh must re-detect VCS.
+	p.SetDirOverride("polecat", withVCS)
+	var calls atomic.Int32
+	p.execFunc = func(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+		calls.Add(1)
+		if dir != withVCS {
+			t.Errorf("exec dir = %q; want %q after override change", dir, withVCS)
+		}
+		if strings.Contains(strings.Join(args, " "), "rev-parse") {
+			return []byte("feature-x\n"), nil
+		}
+		return []byte(""), nil
+	}
+	if err := p.Refresh(context.Background(), "polecat"); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() == 0 {
+		t.Error("Refresh did not exec after override change — VCS cache was not invalidated")
+	}
+}

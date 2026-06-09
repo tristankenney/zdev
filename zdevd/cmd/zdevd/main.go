@@ -348,6 +348,25 @@ func run() error {
 	notifW := notif.NewWatcher(notifDir, submitEvent)
 	workspaceW := workspace.NewWatcher(workspaceDir, lister)
 
+	// handleCwdForUnmanaged pins a per-session dir override on the branch
+	// probe for sessions absent from the projects-file lister and schedules
+	// a branch refresh against that session name (zd-bub). Both supervisor
+	// submit paths call this; managed sessions are skipped because their
+	// dir is the canonical `workspace/<project>` and the pane cwd may be a
+	// transient subdirectory.
+	handleCwdForUnmanaged := func(e tmuxctl.PaneCwdChanged) {
+		if e.SessionName == "" || e.Cwd == "" {
+			return
+		}
+		for _, name := range lister.Names() {
+			if proto.SessionKey(name) == e.SessionName {
+				return // managed — SessionChanged already drives the probe
+			}
+		}
+		branchProbe.SetDirOverride(e.SessionName, e.Cwd)
+		sched.RefreshIfStale(ctx, branchProbe, e.SessionName, 60*time.Second)
+	}
+
 	// rawDefaultSubmit is the core submit function for the default-socket
 	// supervisor: forwards to the hub and schedules probe refreshes on
 	// tmux events that imply probe-relevance (Phase 3 D3-01).
@@ -393,6 +412,8 @@ func run() error {
 			// Pane title change implies agent state may have flipped; the
 			// hub.recomputeAgents handles that synchronously. Don't
 			// schedule probes here — title changes don't affect git/PR/lsof.
+		case tmuxctl.PaneCwdChanged:
+			handleCwdForUnmanaged(e)
 		}
 	}
 
@@ -461,7 +482,12 @@ func run() error {
 	// means GT_TOWN_ROOT is set, ZDEV_GT_TOWN_ROOT != off, and the daemon is
 	// NOT running inside the GT socket's tmux server.
 	if dedup != nil {
-		gtSubmit := dedup.wrapGTSubmit(func(ev tmuxctl.Event) { _ = h.Submit(ev) })
+		gtSubmit := dedup.wrapGTSubmit(func(ev tmuxctl.Event) {
+			_ = h.Submit(ev)
+			if e, ok := ev.(tmuxctl.PaneCwdChanged); ok {
+				handleCwdForUnmanaged(e)
+			}
+		})
 		gtSup := tmuxctl.NewSupervisor(gtSubmit, tmuxctl.WithSocketName(gtSock))
 		g.Go(func() error { return gtSup.Run(gctx) })
 		slog.Info("GT supervisor started", "gt_socket", gtSock)

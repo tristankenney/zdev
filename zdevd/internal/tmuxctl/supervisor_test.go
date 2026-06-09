@@ -91,6 +91,7 @@ func newTestSupervisor(submit func(Event), d dialer, conns ...*fakeConn) *Superv
 		dialer:             dl,
 		subscribedSessions: make(map[string]bool),
 		sessionNames:       make(map[string]string),
+		paneCwds:           make(map[string]string),
 	}
 }
 
@@ -278,7 +279,7 @@ func TestInterleavedSubscriptionChangedInsideBlock(t *testing.T) {
 		"%end 1714824002 3 0",
 		// list-panes response.
 		"%begin 1714824003 4 0",
-		"$0|@0|%0|placeholder",
+		"$0|@0|%0|placeholder|alpha|/tmp",
 		"%end 1714824003 4 0",
 		"",
 	}, "\n")
@@ -376,10 +377,10 @@ func TestStateQueryBootstrapEmitsSyntheticEvents(t *testing.T) {
 		"%end 1714824002 3 0",
 		// list-panes -a response.
 		"%begin 1714824003 4 0",
-		"$0|@0|%0|title-a-1",
-		"$0|@1|%1|title-a-2",
-		"$1|@2|%2|title-b-1",
-		"$1|@3|%3|title-b-2",
+		"$0|@0|%0|title-a-1|alpha|/tmp/a",
+		"$0|@1|%1|title-a-2|alpha|/tmp/a",
+		"$1|@2|%2|title-b-1|beta|/tmp/b",
+		"$1|@3|%3|title-b-2|beta|/tmp/b",
 		"%end 1714824003 4 0",
 		"",
 	}, "\n")
@@ -951,5 +952,81 @@ func TestPaneTitlePollIssuedPeriodically(t *testing.T) {
 	// Must NOT contain switch-client (removed).
 	if strings.Contains(w, "switch-client") {
 		t.Errorf("FORBIDDEN: switch-client in writes:\n%q", w)
+	}
+}
+
+// TestApplyPanesListPaneCwdChangedDedup verifies that applyPanesList emits
+// PaneCwdChanged only when a pane's cwd has changed since the prior poll
+// (zd-bub). The supervisor's paneCwds cache is the dedup point: identical
+// rows on consecutive polls must NOT regenerate events for managed and
+// unmanaged sessions alike (steady-state silence; cf. PaneTitleChanged
+// which the hub dedups instead).
+func TestApplyPanesListPaneCwdChangedDedup(t *testing.T) {
+	var got []PaneCwdChanged
+	sup := newTestSupervisor(func(ev Event) {
+		if e, ok := ev.(PaneCwdChanged); ok {
+			got = append(got, e)
+		}
+	}, nil)
+	// applyPanesList consults s.sessionNames to detect the watcher session;
+	// none of the sessions in this test match watcherSessionName, but we
+	// still seed names so the WindowAttach path runs uniformly.
+	sup.sessionNames["$0"] = "alpha"
+	sup.sessionNames["$1"] = "gt-zdev-obsidian"
+
+	first := [][]byte{
+		[]byte("$0|@0|%0|title-a|alpha|/work/alpha"),
+		[]byte("$1|@1|%1|shell|gt-zdev-obsidian|/work/zdev"),
+	}
+	sup.applyPanesList(first)
+	if len(got) != 2 {
+		t.Fatalf("first poll: got %d PaneCwdChanged, want 2: %+v", len(got), got)
+	}
+	if got[0].Cwd != "/work/alpha" || got[0].SessionName != "alpha" || got[0].PaneID != "%0" {
+		t.Errorf("first poll row 0: got %+v, want {alpha, %%0, /work/alpha}", got[0])
+	}
+	if got[1].Cwd != "/work/zdev" || got[1].SessionName != "gt-zdev-obsidian" || got[1].PaneID != "%1" {
+		t.Errorf("first poll row 1: got %+v, want {gt-zdev-obsidian, %%1, /work/zdev}", got[1])
+	}
+
+	// Re-poll with identical rows — no events should be emitted.
+	got = got[:0]
+	sup.applyPanesList(first)
+	if len(got) != 0 {
+		t.Errorf("second (identical) poll: got %d PaneCwdChanged, want 0: %+v", len(got), got)
+	}
+
+	// Change %1's cwd — only %1 should re-emit.
+	got = got[:0]
+	sup.applyPanesList([][]byte{
+		[]byte("$0|@0|%0|title-a|alpha|/work/alpha"),
+		[]byte("$1|@1|%1|shell|gt-zdev-obsidian|/work/zdev/polecats/obsidian"),
+	})
+	if len(got) != 1 {
+		t.Fatalf("changed-cwd poll: got %d PaneCwdChanged, want 1: %+v", len(got), got)
+	}
+	if got[0].PaneID != "%1" || got[0].Cwd != "/work/zdev/polecats/obsidian" {
+		t.Errorf("changed-cwd: got %+v, want %%1 → /work/zdev/polecats/obsidian", got[0])
+	}
+}
+
+// TestApplyPanesListSkipsWatcherCwd verifies the watcher session's panes do
+// not emit PaneCwdChanged (zd-bub). The watcher has no user-meaningful
+// working dir — its cwd would pollute the branch-probe override map for any
+// unmanaged-attribution lookup happening to share its session name.
+func TestApplyPanesListSkipsWatcherCwd(t *testing.T) {
+	var got []PaneCwdChanged
+	sup := newTestSupervisor(func(ev Event) {
+		if e, ok := ev.(PaneCwdChanged); ok {
+			got = append(got, e)
+		}
+	}, nil)
+	sup.sessionNames["$0"] = watcherSessionName
+
+	sup.applyPanesList([][]byte{
+		[]byte("$0|@0|%0|shell|" + watcherSessionName + "|/var/tmp/watcher"),
+	})
+	if len(got) != 0 {
+		t.Errorf("watcher row should not emit PaneCwdChanged, got %+v", got)
 	}
 }

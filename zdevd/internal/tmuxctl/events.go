@@ -207,6 +207,24 @@ type PaneCaptureReady struct {
 
 func (PaneCaptureReady) isEvent() {}
 
+// PaneCwdChanged is emitted by the supervisor's title-poll path when a
+// pane's #{pane_current_path} changes since the last list-panes -a poll
+// (zd-bub). SessionName is the dash-form tmux session name carried alongside
+// pane_current_path in the same 6-field row, so consumers can resolve a
+// session's working dir without a second tmux query.
+//
+// Used by cmd/zdevd to attach a per-session dir override on BranchProbe for
+// unmanaged sessions (sessions absent from the projects-file lister) — see
+// zd-4uo's deferred branch/dirty attribution. Hub's applyEvent stores Cwd
+// on the pane struct so future consumers can read it from state.
+type PaneCwdChanged struct {
+	SessionName string
+	PaneID      string
+	Cwd         string
+}
+
+func (PaneCwdChanged) isEvent() {}
+
 // CursorMove is submitted by the "zdevd cursor" subcommand via the socket
 // protocol. It drives the sidebar row-selection cursor (zd-e6e, phase4-v14).
 // Delta is +1 (M-j, move down), -1 (M-k, move up), or 0 (select — query

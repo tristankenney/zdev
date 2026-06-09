@@ -9,6 +9,45 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
+// TestApplyPaneCwdChanged verifies that PaneCwdChanged records the cwd on the
+// pane struct — both when the pane was previously known (from
+// WindowPaneChanged / PaneTitleChanged) and when the cwd arrives first
+// (the bootstrap-path race in which a poll observes a freshly-spawned pane
+// before any other event registers it). zd-bub.
+func TestApplyPaneCwdChanged(t *testing.T) {
+	t.Run("known pane updates cwd in place", func(t *testing.T) {
+		s := newState()
+		applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%1"}, nil)
+		applyEvent(s, tmuxctl.PaneTitleChanged{PaneID: "%1", Title: "shell"}, nil)
+		applyEvent(s, tmuxctl.PaneCwdChanged{SessionName: "alpha", PaneID: "%1", Cwd: "/home/me/repo"}, nil)
+		p := s.panesByID["%1"]
+		if p == nil {
+			t.Fatal("pane %1 missing after PaneCwdChanged")
+		}
+		if p.Cwd != "/home/me/repo" {
+			t.Errorf("Cwd = %q; want /home/me/repo", p.Cwd)
+		}
+		if p.Title != "shell" {
+			t.Errorf("Title clobbered by PaneCwdChanged: got %q", p.Title)
+		}
+	})
+
+	t.Run("unknown pane is registered with cwd only", func(t *testing.T) {
+		s := newState()
+		applyEvent(s, tmuxctl.PaneCwdChanged{SessionName: "alpha", PaneID: "%9", Cwd: "/srv/app"}, nil)
+		p := s.panesByID["%9"]
+		if p == nil {
+			t.Fatal("PaneCwdChanged did not register an unknown pane")
+		}
+		if p.Cwd != "/srv/app" {
+			t.Errorf("Cwd = %q; want /srv/app", p.Cwd)
+		}
+		if p.Title != "" {
+			t.Errorf("Title = %q; want \"\" on a cwd-only registration", p.Title)
+		}
+	})
+}
+
 // TestApplyDataRefresh verifies that DataRefresh populates branch/dirty/shell
 // fields on the matching project in the snapshot.
 func TestApplyDataRefresh(t *testing.T) {
@@ -1440,6 +1479,48 @@ func TestCursorMove(t *testing.T) {
 		}
 		if got := projectNameAtRow(s, 99); got != "" {
 			t.Errorf("projectNameAtRow(99) = %q; want \"\"", got)
+		}
+	})
+}
+
+// TestApplyEvent_PaneCwdChanged verifies that PaneCwdChanged records the
+// pane's working directory onto the pane struct in state (zd-bub). Both
+// existing-pane and discover-on-cwd paths must populate Cwd so consumers
+// reading from the snapshot don't need a second tmux query.
+func TestApplyEvent_PaneCwdChanged(t *testing.T) {
+	t.Run("updates_existing_pane", func(t *testing.T) {
+		s := newState()
+		s.panesByID["%5"] = &pane{ID: "%5", Title: "● claude"}
+		applyEvent(s, tmuxctl.PaneCwdChanged{
+			SessionName: "gt-zdev-obsidian",
+			PaneID:      "%5",
+			Cwd:         "/work/zdev/polecats/obsidian",
+		}, nil)
+		got := s.panesByID["%5"]
+		if got.Cwd != "/work/zdev/polecats/obsidian" {
+			t.Errorf("pane.Cwd = %q; want %q", got.Cwd, "/work/zdev/polecats/obsidian")
+		}
+		if got.Title != "● claude" {
+			t.Errorf("pane.Title clobbered: got %q; want %q", got.Title, "● claude")
+		}
+	})
+
+	t.Run("creates_pane_when_unknown", func(t *testing.T) {
+		s := newState()
+		applyEvent(s, tmuxctl.PaneCwdChanged{
+			SessionName: "gt-zdev-obsidian",
+			PaneID:      "%9",
+			Cwd:         "/work/zdev",
+		}, nil)
+		got, ok := s.panesByID["%9"]
+		if !ok {
+			t.Fatal("pane %9 should have been created from PaneCwdChanged")
+		}
+		if got.Cwd != "/work/zdev" {
+			t.Errorf("pane.Cwd = %q; want /work/zdev", got.Cwd)
+		}
+		if got.ID != "%9" {
+			t.Errorf("pane.ID = %q; want %%9", got.ID)
 		}
 	})
 }

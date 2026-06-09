@@ -54,6 +54,19 @@ type BranchProbe struct {
 	cacheMu sync.Mutex
 	cache   map[string]string // project → "jj" | "sl" | "git" | "" (empty = no VCS)
 
+	// dirOverrides maps a project key to a working directory that overrides
+	// the default `workspace/<project>` join (zd-bub). Used for unmanaged
+	// tmux sessions (e.g. polecat sessions `gt-<rig>-<name>`) whose project
+	// key is a session name with no on-disk equivalent under workspace —
+	// cmd/zdevd resolves the working dir from pane cwd via PaneCwdChanged
+	// and pins it here via SetDirOverride so Refresh can resolve VCS + branch.
+	//
+	// A changed override invalidates the VCS cache entry for that key so a
+	// polecat's cwd transition (e.g. from $HOME to a repo) is detected on
+	// the next Refresh rather than being pinned to the prior empty result.
+	overridesMu  sync.Mutex
+	dirOverrides map[string]string
+
 	// sem serializes branch-probe shellouts across projects. Mirrors the
 	// ARCH-08 size-1 semaphore on GHProbe. Without this, a burst of
 	// SessionChanged events fans out into N parallel `sl bookmark` /
@@ -66,13 +79,49 @@ type BranchProbe struct {
 // NewBranchProbe constructs a BranchProbe.
 func NewBranchProbe(submit func(tmuxctl.Event), workspace string) *BranchProbe {
 	return &BranchProbe{
-		submit:    submit,
-		workspace: workspace,
-		execFunc:  defaultExecInDir,
-		statFunc:  os.Stat,
-		cache:     make(map[string]string),
-		sem:       make(chan struct{}, 1),
+		submit:       submit,
+		workspace:    workspace,
+		execFunc:     defaultExecInDir,
+		statFunc:     os.Stat,
+		cache:        make(map[string]string),
+		dirOverrides: make(map[string]string),
+		sem:          make(chan struct{}, 1),
 	}
+}
+
+// SetDirOverride pins a working directory for a project key, overriding the
+// default `workspace/<project>` resolution (zd-bub). Calling with the same
+// dir is a no-op; calling with a different dir invalidates the VCS cache
+// entry for that key so the next Refresh rediscovers VCS at the new dir.
+// Passing an empty dir clears any prior override.
+func (b *BranchProbe) SetDirOverride(key, dir string) {
+	b.overridesMu.Lock()
+	prev := b.dirOverrides[key]
+	if dir == "" {
+		delete(b.dirOverrides, key)
+	} else {
+		b.dirOverrides[key] = dir
+	}
+	changed := prev != dir
+	b.overridesMu.Unlock()
+	if changed {
+		b.cacheMu.Lock()
+		delete(b.cache, key)
+		b.cacheMu.Unlock()
+	}
+}
+
+// dirFor returns the working directory for a project key — the override if
+// one is registered, otherwise the workspace-joined default. Returns "" only
+// when no override is set AND the workspace is empty.
+func (b *BranchProbe) dirFor(project string) string {
+	b.overridesMu.Lock()
+	override, ok := b.dirOverrides[project]
+	b.overridesMu.Unlock()
+	if ok {
+		return override
+	}
+	return filepath.Join(b.workspace, project)
 }
 
 func defaultExecInDir(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
@@ -91,7 +140,7 @@ func (b *BranchProbe) Refresh(ctx context.Context, project string) error {
 	ctx, cancel := context.WithTimeout(ctx, branchProbeTimeout)
 	defer cancel()
 
-	dir := filepath.Join(b.workspace, project)
+	dir := b.dirFor(project)
 	vcs := b.detectVCS(dir, project)
 	if vcs == "" {
 		return nil // no VCS → no chip

@@ -84,6 +84,13 @@ type Supervisor struct {
 	// session ID placeholder. Reset alongside subscribedSessions on each
 	// Dial so a stale cache from a previous connection cannot leak.
 	sessionNames map[string]string
+
+	// paneCwds caches the last #{pane_current_path} observed per pane (zd-bub).
+	// Used by applyPanesList to emit PaneCwdChanged only when the cwd has
+	// changed since the previous list-panes poll. Reset on each Dial alongside
+	// the other per-connection caches so a stale value from a prior connection
+	// cannot suppress a legitimate first-time emission.
+	paneCwds map[string]string
 }
 
 // dialer abstracts subprocess spawning so tests can inject a synthetic
@@ -165,6 +172,7 @@ func NewSupervisor(submit func(Event), opts ...SupervisorOption) *Supervisor {
 		dialer:             realDialer{},
 		subscribedSessions: make(map[string]bool),
 		sessionNames:       make(map[string]string),
+		paneCwds:           make(map[string]string),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -228,6 +236,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		// leak (sessions can be renamed between connections).
 		s.subscribedSessions = make(map[string]bool)
 		s.sessionNames = make(map[string]string)
+		s.paneCwds = make(map[string]string)
 
 		// State-query bootstrap on every Dial (OQ-3 = NO mitigation:
 		// tmux does NOT replay %window-add for pre-existing windows on
@@ -376,7 +385,7 @@ func (s *Supervisor) runStreamLoop(ctx context.Context, conn subprocessConn) err
 			// %begin/%end block; interpretBlock → applyPanesList emits
 			// PaneTitleChanged for each pane. The hub applies these
 			// idempotently (same title = no state change, no snapshot push).
-			if _, err := conn.Write([]byte("list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_title}'\n")); err != nil {
+			if _, err := conn.Write([]byte("list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_title}|#{session_name}|#{pane_current_path}'\n")); err != nil {
 				slog.Warn("tmuxctl: pane-title poll write failed", "err", err)
 			}
 			pollTimer.Reset(paneTitlePollInterval)
@@ -535,13 +544,13 @@ func (s *Supervisor) handleEvent(conn subprocessConn, ev Event) {
 // Row formats (each pipe-separated, one row per line):
 //   - list-sessions: `$<sessid>|<name>` (2 fields)
 //   - list-windows -a: `$<sessid>|@<winid>|<name>|<index>` (4 fields)
-//   - list-panes -a (title poll): `$<sessid>|@<winid>|%<paneid>|<title>` (4 fields)
+//   - list-panes -a (title+cwd poll, zd-bub): `$<sessid>|@<winid>|%<paneid>|<title>|<session_name>|<pane_current_path>` (6 fields)
 //   - list-panes -a (activity poll): `$<sessid>|@<winid>|<is-sidebar>|<last-render-ts>|<window_activity>|pa` (6 fields)
 //
 // We disambiguate by counting pipe-separated fields and inspecting the
-// id-prefix at field index 2 ($/@/% on field-3-zero-indexed disambiguates
-// list-windows vs list-panes for the 4-field case), and by the trailing
-// literal "pa" marker for the 6-field Architecture-B activity poll.
+// id-prefix at field index 2 (`%` for panes vs `@` for windows in the 4-
+// field case, `%` for the title+cwd poll vs a 0/1 bool for the activity
+// poll in the 6-field case).
 func (s *Supervisor) interpretBlock(conn subprocessConn, body []byte) {
 	if len(bytes.TrimSpace(body)) == 0 {
 		return // empty body = system block (initial attach %begin/%end pair)
@@ -572,18 +581,19 @@ func (s *Supervisor) interpretBlock(conn subprocessConn, body []byte) {
 			s.applyClientList(rows)
 		}
 	case 4:
-		// list-windows -a OR list-panes -a (title poll) — disambiguate by
-		// field[2] prefix (`@` for windows, `%` for panes).
+		// list-windows -a — `$<sessid>|@<winid>|<name>|<index>`.
+		// The 4-field list-panes title poll was extended to 6 fields in
+		// zd-bub; the 4-field shape is now windows-only.
+		s.applyWindowsList(rows)
+	case 6:
+		// Two 6-field shapes share this branch:
+		//   - title+cwd poll (zd-bub): field[2] is `%<paneid>`.
+		//   - Architecture B activity poll (260511-pk5): field[2] is the
+		//     `@is-sidebar` boolean and field[5] is the literal "pa" marker.
+		// Test the pane-id prefix first; fall back to the "pa" marker.
 		if len(fields[2]) > 0 && fields[2][0] == '%' {
 			s.applyPanesList(rows)
-		} else {
-			s.applyWindowsList(rows)
-		}
-	case 6:
-		// Architecture B (260511-pk5) pane-activity poll:
-		// `$<sessid>|@<winid>|<@is-sidebar>|<@last-render-ts>|<window_activity>|pa`
-		// Trailing literal "pa" marker disambiguates from any other 6-field shape.
-		if bytes.Equal(bytes.TrimSpace(fields[5]), []byte("pa")) {
+		} else if bytes.Equal(bytes.TrimSpace(fields[5]), []byte("pa")) {
 			s.applyPanesActivityList(rows)
 		}
 	default:
@@ -701,14 +711,17 @@ func (s *Supervisor) applyWindowsList(rows [][]byte) {
 func (s *Supervisor) applyPanesList(rows [][]byte) {
 	for _, r := range rows {
 		f := bytes.Split(r, []byte("|"))
-		if len(f) != 4 {
+		if len(f) != 6 {
 			continue
 		}
-		// f[0] = session id; f[1] = window id; f[2] = pane id; f[3] = title
+		// f[0] = session id; f[1] = window id; f[2] = pane id; f[3] = title;
+		// f[4] = session name; f[5] = pane current path (zd-bub).
 		sid := string(bytes.TrimSpace(f[0]))
 		wid := string(bytes.TrimSpace(f[1]))
 		pid := string(bytes.TrimSpace(f[2]))
 		title := string(bytes.TrimSpace(f[3]))
+		sessName := string(bytes.TrimSpace(f[4]))
+		cwd := string(bytes.TrimSpace(f[5]))
 		if pid == "" {
 			continue
 		}
@@ -737,6 +750,18 @@ func (s *Supervisor) applyPanesList(rows [][]byte) {
 		// mechanism for cross-session panes (see paneTitlePollInterval comment).
 		if title != "" {
 			s.submit(PaneTitleChanged{PaneID: pid, Title: title})
+		}
+		// zd-bub: emit PaneCwdChanged only when the cwd has actually changed
+		// since the previous list-panes poll. The supervisor caches the last
+		// observed cwd per pane (s.paneCwds, reset on each Dial) so the
+		// steady-state — most panes' cwd never changes — generates no events
+		// after the first poll. The watcher session is excluded for the same
+		// reason as PaneTitleChanged: it has no user-meaningful working dir.
+		if cwd != "" && sessName != "" && sessName != watcherSessionName {
+			if prev, seen := s.paneCwds[pid]; !seen || prev != cwd {
+				s.paneCwds[pid] = cwd
+				s.submit(PaneCwdChanged{SessionName: sessName, PaneID: pid, Cwd: cwd})
+			}
 		}
 	}
 }
@@ -919,7 +944,7 @@ func bootstrapStateQueries(conn subprocessConn) error {
 	cmds := []string{
 		"list-sessions -F '#{session_id}|#{session_name}'\n",
 		"list-windows -a -F '#{session_id}|#{window_id}|#{window_name}|#{window_index}'\n",
-		"list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_title}'\n",
+		"list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_title}|#{session_name}|#{pane_current_path}'\n",
 	}
 	for _, c := range cmds {
 		if _, err := conn.Write([]byte(c)); err != nil {

@@ -128,7 +128,7 @@ func (d *gtDedup) wrapDefaultSubmit(downstream func(tmuxctl.Event)) func(tmuxctl
 			}
 
 		case tmuxctl.WindowAdd, tmuxctl.WindowRenamed, tmuxctl.WindowAttach,
-			tmuxctl.WindowPaneChanged, tmuxctl.PaneTitleChanged:
+			tmuxctl.WindowPaneChanged, tmuxctl.PaneTitleChanged, tmuxctl.PaneCwdChanged:
 			if curSuppressed {
 				return
 			}

@@ -9,4 +9,5 @@ var (
 	_ Event = ProjectListChanged{}
 	_ Event = PaneCommandChanged{}
 	_ Event = ActivityRefresh{}
+	_ Event = PaneCwdChanged{}
 )
