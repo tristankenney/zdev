@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/demo"
+	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	socketpkg "github.com/tristankenney/zdev/zdevd/internal/socket"
 )
 
@@ -248,5 +249,101 @@ func TestDemoRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(body, `"schema"`) {
 		t.Errorf("response missing schema field: %q", body)
+	}
+}
+
+// TestNotifyMuteSubcmd_WritesSentinel: `zdevd notify-mute 60` writes a
+// future unix timestamp to hub.MutePath() and prints a human "muted
+// until HH:MM" confirmation. Routes through HOME so the test stays
+// hermetic on both platforms (XDG_STATE_HOME on linux, ~/Library on
+// darwin both derive from $HOME).
+func TestNotifyMuteSubcmd_WritesSentinel(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmpHome, ".local", "state"))
+
+	stdout := captureStdout(t, func() {
+		if rc := notifyMuteSubcmd([]string{"60"}); rc != 0 {
+			t.Fatalf("rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(stdout, "muted until ") {
+		t.Errorf("stdout = %q, want prefix \"muted until\"", stdout)
+	}
+
+	// File must exist and contain a timestamp ~60s in the future.
+	path := hub.MutePath()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read sentinel: %v", err)
+	}
+	got := strings.TrimSpace(string(b))
+	if got == "" {
+		t.Fatalf("sentinel empty")
+	}
+	// Don't assert exact value (race with Now()), just sanity.
+	if len(got) < 8 {
+		t.Errorf("sentinel %q looks too short to be a unix timestamp", got)
+	}
+}
+
+// TestNotifyMuteSubcmd_Unmute: `zdevd notify-mute 0` removes the
+// sentinel file, and is idempotent (calling it again with no file
+// present is still rc=0).
+func TestNotifyMuteSubcmd_Unmute(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmpHome, ".local", "state"))
+
+	// Seed: mute first, then unmute.
+	if rc := notifyMuteSubcmd([]string{"60"}); rc != 0 {
+		t.Fatalf("seed mute rc=%d", rc)
+	}
+	stdout := captureStdout(t, func() {
+		if rc := notifyMuteSubcmd([]string{"0"}); rc != 0 {
+			t.Fatalf("unmute rc = %d, want 0", rc)
+		}
+	})
+	if !strings.Contains(stdout, "notifications: active") {
+		t.Errorf("stdout = %q, want \"notifications: active\"", stdout)
+	}
+	if _, err := os.Stat(hub.MutePath()); !os.IsNotExist(err) {
+		t.Errorf("sentinel must be removed after unmute; stat err = %v", err)
+	}
+
+	// Idempotent: second unmute on already-absent file still succeeds.
+	if rc := notifyMuteSubcmd([]string{"0"}); rc != 0 {
+		t.Errorf("idempotent unmute rc=%d, want 0", rc)
+	}
+}
+
+// TestNotifyMuteSubcmd_AcceptsDurationString: "30m" / "2h" parse via
+// time.ParseDuration; bare integers stay supported.
+func TestNotifyMuteSubcmd_AcceptsDurationString(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmpHome, ".local", "state"))
+
+	for _, arg := range []string{"30m", "2h", "90"} {
+		captureStdout(t, func() {
+			if rc := notifyMuteSubcmd([]string{arg}); rc != 0 {
+				t.Errorf("%s: rc=%d, want 0", arg, rc)
+			}
+		})
+	}
+}
+
+// TestNotifyMuteSubcmd_BadInput: garbage durations exit rc=2 with a
+// usage-style error on stderr.
+func TestNotifyMuteSubcmd_BadInput(t *testing.T) {
+	var rc int
+	stderr := captureStderr(t, func() {
+		rc = notifyMuteSubcmd([]string{"not-a-duration"})
+	})
+	if rc != 2 {
+		t.Errorf("rc=%d, want 2", rc)
+	}
+	if !strings.Contains(stderr, "invalid duration") {
+		t.Errorf("stderr = %q, want \"invalid duration\"", stderr)
 	}
 }
