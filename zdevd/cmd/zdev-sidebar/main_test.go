@@ -22,8 +22,8 @@ type fakeClock struct {
 
 func newFakeClock(start time.Time) *fakeClock { return &fakeClock{t: start} }
 
-func (c *fakeClock) now() time.Time             { return c.t }
-func (c *fakeClock) advance(d time.Duration)    { c.t = c.t.Add(d) }
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 // dialResult is a scripted outcome for the fake dial function.
 type dialResult struct {
@@ -615,6 +615,102 @@ func TestRenderStampTick_ErrorResilience(t *testing.T) {
 
 	if n := callCount.Load(); n != 3 {
 		t.Errorf("expected 3 stamp calls after errors; got %d", n)
+	}
+}
+
+// ---- stampLastRender async-dispatch tests (zd-gec) ----
+
+// installStampStub swaps runStampSubprocessFn with stub for the duration of
+// the test. Returns a release function that unblocks the stub and drains the
+// stampSem so subsequent tests see a clean semaphore. Always called via
+// t.Cleanup to keep the package-level stampSem balanced even on test failure.
+func installStampStub(t *testing.T, stub func(ctx context.Context, paneID string, ts int64)) {
+	t.Helper()
+	orig := runStampSubprocessFn
+	runStampSubprocessFn = stub
+	t.Cleanup(func() {
+		runStampSubprocessFn = orig
+		// Drain: acquire + release the semaphore. Acquire blocks until any
+		// in-flight stamp goroutine releases its slot, so subsequent tests
+		// start with an empty stampSem regardless of how the test ended.
+		stampSem <- struct{}{}
+		<-stampSem
+	})
+}
+
+// TestStampLastRender_NonBlocking — the production stampLastRender must return
+// immediately, even if the underlying tmux subprocess is slow. Regression test
+// for the 500ms-per-stamp synchronous behavior that dropped renderer FPS to
+// <2Hz when tmux was busy serving supervisor polls.
+func TestStampLastRender_NonBlocking(t *testing.T) {
+	released := make(chan struct{})
+	installStampStub(t, func(ctx context.Context, paneID string, ts int64) {
+		// Block until the test releases us, simulating a stuck tmux subprocess.
+		<-released
+	})
+	// Release the stub before t.Cleanup drains the semaphore.
+	t.Cleanup(func() { close(released) })
+
+	ctx := context.Background()
+	start := time.Now()
+	for i := 0; i < 10; i++ {
+		stampLastRender(ctx, "%99", int64(i))
+	}
+	elapsed := time.Since(start)
+	if elapsed > 50*time.Millisecond {
+		t.Errorf("stampLastRender blocked for %v across 10 calls; want <50ms", elapsed)
+	}
+}
+
+// TestStampLastRender_SemaphoreDropsOverlap — while one stamp is in flight,
+// subsequent calls must not spawn additional subprocesses. The next stamp can
+// only fire after the in-flight one completes.
+func TestStampLastRender_SemaphoreDropsOverlap(t *testing.T) {
+	gate := make(chan struct{})
+	var started atomic.Int32
+	installStampStub(t, func(ctx context.Context, paneID string, ts int64) {
+		started.Add(1)
+		<-gate
+	})
+	t.Cleanup(func() { close(gate) })
+
+	ctx := context.Background()
+	// First call should acquire the semaphore and start the (blocked) subprocess.
+	stampLastRender(ctx, "%88", 1)
+	// Wait for the goroutine to enter the blocked subprocess.
+	deadline := time.Now().Add(time.Second)
+	for started.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if started.Load() != 1 {
+		t.Fatalf("first stampLastRender did not invoke the subprocess; started=%d", started.Load())
+	}
+
+	// Five rapid follow-up calls must be dropped — no new subprocess.
+	for i := 0; i < 5; i++ {
+		stampLastRender(ctx, "%88", int64(2+i))
+	}
+	// Brief wait to let any unwanted goroutines run.
+	time.Sleep(10 * time.Millisecond)
+	if got := started.Load(); got != 1 {
+		t.Errorf("expected 1 subprocess in flight; got %d (overlapping stamps not dropped)", got)
+	}
+}
+
+// TestStampLastRender_NoPaneSkips — paneID == "" must skip everything,
+// including semaphore acquisition. Matches the existing no-op contract for
+// renderers launched outside tmux.
+func TestStampLastRender_NoPaneSkips(t *testing.T) {
+	var called atomic.Int32
+	installStampStub(t, func(ctx context.Context, paneID string, ts int64) {
+		called.Add(1)
+	})
+
+	ctx := context.Background()
+	stampLastRender(ctx, "", 1)
+	time.Sleep(5 * time.Millisecond)
+	if got := called.Load(); got != 0 {
+		t.Errorf("stampLastRender with empty paneID spawned %d subprocesses; want 0", got)
 	}
 }
 

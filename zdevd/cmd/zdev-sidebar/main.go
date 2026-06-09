@@ -52,17 +52,25 @@ import (
 // Tests: swap to a recording closure via t.Cleanup.
 var stampLastRenderFn = stampLastRender
 
-// stampLastRender issues `tmux set-option -p -t <paneID> @last-render-ts <ts>`
-// via a short-lived subprocess. Fire-and-forget (D-08): any error is logged at
-// Warn and never propagates to the caller. The 500ms context timeout bounds the
-// subprocess so a sluggish tmux server cannot stall the render loop.
-//
-// When paneID is empty (renderer launched outside tmux — e.g., golden-fixture
-// capture or unit-test context) the call is a no-op.
-func stampLastRender(ctx context.Context, paneID string, ts int64) {
-	if paneID == "" {
-		return
-	}
+// stampSem caps in-flight stamp subprocesses per renderer process to one. The
+// stamp is fired on every painted frame (15fps when animating); when the tmux
+// server is busy serving the supervisor's list-panes -a polls, a single
+// `set-option` call can exhaust its 500ms timeout. Running stamps synchronously
+// would block the render loop for 500ms each, dropping effective FPS to <2Hz
+// (zd-gec dogfood: ~30 "signal: killed" warnings/min on a single pane). The
+// supervisor's activityPoll consumes @last-render-ts with a ±1s tolerance, so
+// dropping intermediate stamps while one is in flight is harmless — the next
+// painted frame will request another.
+var stampSem = make(chan struct{}, 1)
+
+// runStampSubprocessFn is the swappable backend that actually shells out to
+// tmux. Production wires runStampSubprocess (below). Tests inject a stub via
+// t.Cleanup to verify the async dispatch without spawning tmux.
+var runStampSubprocessFn = runStampSubprocess
+
+// runStampSubprocess executes the `tmux set-option` call with a 500ms bound.
+// Errors are logged at Warn and never propagate (D-08 fire-and-forget).
+func runStampSubprocess(ctx context.Context, paneID string, ts int64) {
 	sctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	if err := exec.CommandContext(sctx, "tmux",
@@ -71,6 +79,39 @@ func stampLastRender(ctx context.Context, paneID string, ts int64) {
 	).Run(); err != nil {
 		slog.Warn("zdev-sidebar: stamp @last-render-ts failed", "pane", paneID, "err", err)
 	}
+}
+
+// stampLastRender issues `tmux set-option -p -t <paneID> @last-render-ts <ts>`
+// via a short-lived subprocess. Fire-and-forget (D-08): any error is logged at
+// Warn and never propagates to the caller. The 500ms context timeout bounds the
+// subprocess so a sluggish tmux server cannot stall the render loop.
+//
+// Async (zd-gec): the call returns immediately. The subprocess runs in a
+// detached goroutine bounded by stampSem so a slow tmux cannot starve the
+// render loop nor accumulate unbounded subprocess workers. When the semaphore
+// is already taken, the request is dropped — the next painted frame will
+// request a fresh stamp anyway (the supervisor's pollPaneActivity uses a ±1s
+// tolerance, so missing intermediate stamps is harmless).
+//
+// When paneID is empty (renderer launched outside tmux — e.g., golden-fixture
+// capture or unit-test context) the call is a no-op.
+func stampLastRender(ctx context.Context, paneID string, ts int64) {
+	if paneID == "" {
+		return
+	}
+	select {
+	case stampSem <- struct{}{}:
+	default:
+		return // worker busy with a previous stamp; next frame will retry
+	}
+	// Capture the function reference here on the dispatching goroutine so a
+	// concurrent test swap of runStampSubprocessFn cannot race against the
+	// spawned goroutine's read.
+	run := runStampSubprocessFn
+	go func() {
+		defer func() { <-stampSem }()
+		run(ctx, paneID, ts)
+	}()
 }
 
 // selfTagIsSidebarFn is the production implementation of the
