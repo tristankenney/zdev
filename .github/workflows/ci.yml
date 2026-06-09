@@ -186,6 +186,19 @@ sys.exit(0 if gt_rows else 1)
           wait_in "death never reached triage"
           zdev ack --all
           wait_out "ack did not clear the death"
+      - name: cursor navigation (zd-e6e)
+        run: |
+          # `zdevd cursor +1` dials the daemon, mutates CursorRow in the
+          # snapshot, and returns the project name at the resulting row.
+          # CI just needs to know the command reaches the daemon, applies
+          # without error, and the daemon stays healthy afterwards.
+          zdevd cursor +1 >/dev/null \
+            || { echo "FAIL: zdevd cursor +1 errored"; exit 1; }
+          zdevd cursor -1 >/dev/null \
+            || { echo "FAIL: zdevd cursor -1 errored"; exit 1; }
+          zdevd diag >/dev/null \
+            || { echo "FAIL: daemon unhealthy after cursor moves"; exit 1; }
+          echo "ok: cursor navigation — +1/-1 round-trip + daemon healthy"
       - name: opencode lifecycle (adapter states → triage)
         run: |
           pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
