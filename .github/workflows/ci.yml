@@ -84,13 +84,27 @@ jobs:
       - name: install (non-interactive)
         run: |
           mkdir -p "$HOME/workspace/proj-a" "$HOME/.claude" "$HOME/.config/opencode"
-          ./install.sh < /dev/null
+          ./install.sh < /dev/null 2>&1 | tee /tmp/install.log
           echo 'proj-a' > "$HOME/.config/zdev/projects"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           # Hook + plugin installs must have landed.
           jq -e '.hooks.SessionEnd' "$HOME/.claude/settings.json" >/dev/null
           test -L "$HOME/.config/opencode/plugins/zdev-notify.js"
           test -L "$HOME/.config/opencode/plugin/zdev-notify.js"
+          # Linger detection (zd-55k): install.sh should detect linger
+          # state via loginctl and emit guidance when it's disabled.
+          # GitHub runners default to Linger=no, so the guidance MUST
+          # appear; if a future runner image flips that default, accept
+          # the enabled state but still confirm the loginctl call works.
+          linger_val=$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || echo "")
+          echo "loginctl Linger=$linger_val"
+          if [ "$linger_val" = "no" ]; then
+            grep -q "loginctl enable-linger" /tmp/install.log \
+              || { echo "FAIL: install.sh did not emit linger guidance with Linger=no"; exit 1; }
+            echo "ok: loginctl linger detection — guidance emitted for disabled linger"
+          else
+            echo "ok: loginctl linger detection — runner has Linger=$linger_val, no guidance needed"
+          fi
       - name: boot daemon + fleet
         run: |
           # ONE daemon, ONE tmux server, in a deterministic order.
