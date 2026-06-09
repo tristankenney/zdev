@@ -149,6 +149,58 @@ func TestSupervisorGTSocketAllowedWhenOnDifferentSocket(t *testing.T) {
 	}
 }
 
+// TestSupervisorEmitTagsSocketName_zd47u verifies that the s.emit helper
+// stamps s.socketName onto event types that carry a SocketName field
+// (SessionChanged, SessionRenamed, ClientListRefresh). Without this tag the
+// hub cannot tell GT-socket sessions apart from default-socket sessions and
+// paneCapturer would issue `tmux capture-pane -t %ID` against the wrong
+// socket — the symptom that motivated zd-47u.
+func TestSupervisorEmitTagsSocketName_zd47u(t *testing.T) {
+	var got []Event
+	sup := NewSupervisor(func(ev Event) { got = append(got, ev) }, WithSocketName("gt-zdev-abc"))
+
+	sup.emit(SessionChanged{ID: "$1", Name: "hq-mayor"})
+	sup.emit(SessionRenamed{ID: "$1", NewName: "hq-mayor-2"})
+	sup.emit(ClientListRefresh{ClientSessions: map[string]string{"/dev/ttys000": "hq-mayor"}})
+	// Non-socket events pass through unchanged.
+	sup.emit(WindowAdd{ID: "@1"})
+	// Pre-tagged events are not overwritten.
+	sup.emit(SessionChanged{ID: "$2", Name: "explicit", SocketName: "already-set"})
+
+	if len(got) != 5 {
+		t.Fatalf("emit count = %d; want 5", len(got))
+	}
+	if sc, ok := got[0].(SessionChanged); !ok || sc.SocketName != "gt-zdev-abc" {
+		t.Errorf("SessionChanged: SocketName = %q (ok=%v); want gt-zdev-abc", sc.SocketName, ok)
+	}
+	if sr, ok := got[1].(SessionRenamed); !ok || sr.SocketName != "gt-zdev-abc" {
+		t.Errorf("SessionRenamed: SocketName = %q (ok=%v); want gt-zdev-abc", sr.SocketName, ok)
+	}
+	if cl, ok := got[2].(ClientListRefresh); !ok || cl.SocketName != "gt-zdev-abc" {
+		t.Errorf("ClientListRefresh: SocketName = %q (ok=%v); want gt-zdev-abc", cl.SocketName, ok)
+	}
+	if _, ok := got[3].(WindowAdd); !ok {
+		t.Errorf("WindowAdd should pass through; got %T", got[3])
+	}
+	if sc, ok := got[4].(SessionChanged); !ok || sc.SocketName != "already-set" {
+		t.Errorf("pre-tagged SessionChanged: SocketName = %q; want already-set (no overwrite)", sc.SocketName)
+	}
+}
+
+// TestSupervisorEmitDefaultSocketLeavesEmptyTag verifies that a supervisor
+// without WithSocketName leaves SocketName empty — the hub treats empty as
+// "default tmux socket" (no -L flag in paneCapturer).
+func TestSupervisorEmitDefaultSocketLeavesEmptyTag_zd47u(t *testing.T) {
+	var got []Event
+	sup := NewSupervisor(func(ev Event) { got = append(got, ev) })
+
+	sup.emit(SessionChanged{ID: "$1", Name: "example-agora"})
+
+	if sc, ok := got[0].(SessionChanged); !ok || sc.SocketName != "" {
+		t.Errorf("default-socket SessionChanged: SocketName = %q; want empty", sc.SocketName)
+	}
+}
+
 // TestSupervisorPropagatesEvents verifies the supervisor pumps top-level
 // notifications through the submit callback. Uses the synthetic
 // `multiple-blocks-interleaved.bytes` fixture which produces 3 WindowAdd

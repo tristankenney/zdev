@@ -72,6 +72,15 @@ type Supervisor struct {
 	backoff *backoff.Backoff
 	dialer  dialer
 
+	// socketName tags every emitted event whose type carries a SocketName
+	// field (SessionChanged, SessionRenamed, ClientListRefresh) so the hub
+	// can attribute each session to the tmux socket it lives on (zd-47u).
+	// Empty when targeting the user's default socket; set by WithSocketName
+	// to the GT socket name when this supervisor drives the GT tmux server.
+	// All emissions go through s.emit, which injects this field before
+	// invoking the external submit callback.
+	socketName string
+
 	// subscribedSessions tracks which session IDs already have a
 	// per-session window-activity subscription installed on the CURRENT
 	// connection. Reset on every Dial.
@@ -143,8 +152,39 @@ func WithSocketName(name string) SupervisorOption {
 	return func(s *Supervisor) {
 		if name != "" {
 			s.dialer = socketDialer{socketName: name}
+			s.socketName = name
 		}
 	}
+}
+
+// emit forwards ev to s.submit after injecting s.socketName into the event
+// types that carry a SocketName field (zd-47u). The injection is only
+// performed when ev's SocketName is still empty so an event already tagged
+// upstream (e.g. by a test harness) is left untouched. Production sites
+// inside this file should call s.emit instead of s.submit so the hub can
+// attribute each session to its source tmux socket and so paneCapturer can
+// route capture-pane through `-L <socket>` for GT-socket panes.
+func (s *Supervisor) emit(ev Event) {
+	if s.socketName != "" {
+		switch e := ev.(type) {
+		case SessionChanged:
+			if e.SocketName == "" {
+				e.SocketName = s.socketName
+				ev = e
+			}
+		case SessionRenamed:
+			if e.SocketName == "" {
+				e.SocketName = s.socketName
+				ev = e
+			}
+		case ClientListRefresh:
+			if e.SocketName == "" {
+				e.SocketName = s.socketName
+				ev = e
+			}
+		}
+	}
+	s.submit(ev)
 }
 
 // withDialer is a test-only SupervisorOption used by supervisor_test.go to
@@ -531,7 +571,7 @@ func (s *Supervisor) handleEvent(conn subprocessConn, ev Event) {
 			slog.Warn("tmuxctl: re-query list-sessions failed", "err", err)
 		}
 	}
-	s.submit(ev)
+	s.emit(ev)
 }
 
 // interpretBlock attempts to parse the body of a %begin/%end block as one
@@ -630,7 +670,7 @@ func (s *Supervisor) applySessionsList(conn subprocessConn, rows [][]byte) {
 		if name == watcherSessionName {
 			continue
 		}
-		s.submit(SessionChanged{ID: sid, Name: name})
+		s.emit(SessionChanged{ID: sid, Name: name})
 		sessIDs = append(sessIDs, sid)
 	}
 	if err := s.ensureSessionSubscriptions(conn, sessIDs); err != nil {
@@ -670,10 +710,10 @@ func (s *Supervisor) applyWindowsList(rows [][]byte) {
 		if !ok {
 			name = sid
 		}
-		s.submit(SessionChanged{ID: sid, Name: name})
-		s.submit(WindowAdd{ID: wid})
+		s.emit(SessionChanged{ID: sid, Name: name})
+		s.emit(WindowAdd{ID: wid})
 		if wname != "" {
-			s.submit(WindowRenamed{ID: wid, NewName: wname})
+			s.emit(WindowRenamed{ID: wid, NewName: wname})
 		}
 	}
 }
@@ -732,12 +772,12 @@ func (s *Supervisor) applyPanesList(rows [][]byte) {
 		// and land in "$_unlinked"; this corrects them on every poll.
 		if sid != "" && wid != "" {
 			if name, ok := s.sessionNames[sid]; ok && name != watcherSessionName {
-				s.submit(SessionChanged{ID: sid, Name: name}) // ensure session exists in state
-				s.submit(WindowAttach{SessionID: sid, WindowID: wid})
+				s.emit(SessionChanged{ID: sid, Name: name}) // ensure session exists in state
+				s.emit(WindowAttach{SessionID: sid, WindowID: wid})
 			}
 		}
 		if wid != "" {
-			s.submit(WindowPaneChanged{WindowID: wid, PaneID: pid})
+			s.emit(WindowPaneChanged{WindowID: wid, PaneID: pid})
 		}
 		// Emit PaneTitleChanged from the bootstrap body for the initial snapshot.
 		// setPTYRaw (called in DialWithOptions after pty.Start) ensures the PTY
@@ -749,7 +789,7 @@ func (s *Supervisor) applyPanesList(rows [][]byte) {
 		// On periodic polls, this also serves as the title-change detection
 		// mechanism for cross-session panes (see paneTitlePollInterval comment).
 		if title != "" {
-			s.submit(PaneTitleChanged{PaneID: pid, Title: title})
+			s.emit(PaneTitleChanged{PaneID: pid, Title: title})
 		}
 		// zd-bub: emit PaneCwdChanged only when the cwd has actually changed
 		// since the previous list-panes poll. The supervisor caches the last
@@ -760,7 +800,7 @@ func (s *Supervisor) applyPanesList(rows [][]byte) {
 		if cwd != "" && sessName != "" && sessName != watcherSessionName {
 			if prev, seen := s.paneCwds[pid]; !seen || prev != cwd {
 				s.paneCwds[pid] = cwd
-				s.submit(PaneCwdChanged{SessionName: sessName, PaneID: pid, Cwd: cwd})
+				s.emit(PaneCwdChanged{SessionName: sessName, PaneID: pid, Cwd: cwd})
 			}
 		}
 	}
@@ -784,7 +824,7 @@ func (s *Supervisor) applyClientList(rows [][]byte) {
 		}
 		clients[client] = sessName
 	}
-	s.submit(ClientListRefresh{ClientSessions: clients})
+	s.emit(ClientListRefresh{ClientSessions: clients})
 }
 
 // applyPanesActivityList parses the 6-field pane-activity poll response
@@ -876,7 +916,7 @@ func (s *Supervisor) applyPanesActivityList(rows [][]byte) {
 			ts = rawMax // fallback: all windows excluded
 		}
 		if ts > 0 {
-			s.submit(ActivityRefresh{Session: sid, ActivityTS: ts})
+			s.emit(ActivityRefresh{Session: sid, ActivityTS: ts})
 		}
 	}
 }

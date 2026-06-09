@@ -829,7 +829,7 @@ func TestApplyAgent_PreservesPhase2Status(t *testing.T) {
 // paneCapturer is set to a stub that returns ("", nil) — override after calling.
 func buildTestState(sessionName string, paneIDs []string, paneTitles []string) *state {
 	s := newState()
-	s.paneCapturer = func(paneID string) (string, error) { return "", nil }
+	s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
 
 	s.sessions["$1"] = &session{
 		ID:   "$1",
@@ -863,7 +863,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		var capturedID string
 		var callCount int
 		stubResult := "waiting because of tool use\npermission required\n"
-		s.paneCapturer = func(paneID string) (string, error) {
+		s.paneCapturer = func(paneID, socketName string) (string, error) {
 			callCount++
 			capturedID = paneID
 			return stubResult, nil
@@ -892,7 +892,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		t.Run("no_visit_latches_wait_state", func(t *testing.T) {
 			s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
 			s.projectListNames = []string{"example-agora"}
-			s.paneCapturer = func(paneID string) (string, error) {
+			s.paneCapturer = func(paneID, socketName string) (string, error) {
 				return "some captured context\n", nil
 			}
 
@@ -927,7 +927,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		t.Run("visit_then_title_change_clears", func(t *testing.T) {
 			s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
 			s.projectListNames = []string{"example-agora"}
-			s.paneCapturer = func(paneID string) (string, error) {
+			s.paneCapturer = func(paneID, socketName string) (string, error) {
 				return "some captured context\n", nil
 			}
 
@@ -941,7 +941,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 			s.lastVisitTS["example-agora"] = s.projectData["example-agora"].WaitStartedTS + 1
 
 			var clearCallCount int
-			s.paneCapturer = func(paneID string) (string, error) {
+			s.paneCapturer = func(paneID, socketName string) (string, error) {
 				clearCallCount++ // should NOT be called on clear
 				return "", nil
 			}
@@ -968,7 +968,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		s := buildTestState("example-agora", []string{"%1"}, []string{"● claude"})
 
 		var callCount int
-		s.paneCapturer = func(paneID string) (string, error) {
+		s.paneCapturer = func(paneID, socketName string) (string, error) {
 			callCount++
 			return "context v1\n", nil
 		}
@@ -991,7 +991,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 	// Test D: capturer error path — WaitContext remains empty, no panic.
 	t.Run("D_capturer_error_leaves_wait_context_empty", func(t *testing.T) {
 		s := buildTestState("example-agora", []string{"%1"}, []string{"claude"})
-		s.paneCapturer = func(paneID string) (string, error) {
+		s.paneCapturer = func(paneID, socketName string) (string, error) {
 			return "", errors.New("boom")
 		}
 
@@ -1013,7 +1013,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		s := buildTestState("example-agora", []string{"%1", "%2"}, []string{"● claude", "● pi"})
 
 		var capturedID string
-		s.paneCapturer = func(paneID string) (string, error) {
+		s.paneCapturer = func(paneID, socketName string) (string, error) {
 			capturedID = paneID
 			return "captured\n", nil
 		}
@@ -1035,7 +1035,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		} {
 			s := buildTestState(sessName, []string{"%1"}, []string{"● claude"})
 			var called bool
-			s.paneCapturer = func(paneID string) (string, error) {
+			s.paneCapturer = func(paneID, socketName string) (string, error) {
 				called = true
 				return "captured\n", nil
 			}
@@ -1051,7 +1051,7 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 	// Test G: buildSnapshot wires WaitContext from projectData to proto.Project.
 	t.Run("G_buildSnapshot_wires_wait_context", func(t *testing.T) {
 		s := newState()
-		s.paneCapturer = func(paneID string) (string, error) { return "", nil }
+		s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
 		s.sessions["$1"] = &session{ID: "$1", Name: "example-agora", windows: make(map[string]*window)}
 		pd := s.projectData["example-agora"]
 		pd.WaitContext = "foo\nbar"
@@ -1187,7 +1187,7 @@ func findProject(projects []proto.Project, name string) *proto.Project {
 func TestBuildSnapshot_WaitAcknowledged_VisitPostDatesHighestTier(t *testing.T) {
 	now := time.Now().Unix()
 	s := newState()
-	s.paneCapturer = func(paneID string) (string, error) { return "", nil }
+	s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
 	s.projectListNames = []string{"foo/bar"}
 	pd := s.projectData["foo-bar"]
 	pd.WaitStartedTS = now - 600
@@ -1209,7 +1209,7 @@ func TestBuildSnapshot_WaitAcknowledged_VisitPostDatesHighestTier(t *testing.T) 
 func TestBuildSnapshot_WaitAcknowledged_NoVisit(t *testing.T) {
 	now := time.Now().Unix()
 	s := newState()
-	s.paneCapturer = func(paneID string) (string, error) { return "", nil }
+	s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
 	s.projectListNames = []string{"foo/bar"}
 	pd := s.projectData["foo-bar"]
 	pd.WaitStartedTS = now - 600
@@ -1234,7 +1234,7 @@ func TestBuildSnapshot_WaitAcknowledged_NoVisit(t *testing.T) {
 // in the wire snapshot.
 func TestBuildSnapshot_FiltersEmptyNameSession(t *testing.T) {
 	s := newState()
-	s.paneCapturer = func(paneID string) (string, error) { return "", nil }
+	s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
 	// One real session and one empty-name session.
 	s.sessions["$1"] = &session{ID: "$1", Name: "alpha", windows: make(map[string]*window)}
 	s.sessions["$2"] = &session{ID: "$2", Name: "", windows: make(map[string]*window)}
@@ -1318,7 +1318,7 @@ func TestBuildSnapshot_StaleWaitingTitleDemotedAfterVisit(t *testing.T) {
 func TestBuildSnapshot_WaitAcknowledged_NotWaiting(t *testing.T) {
 	now := time.Now().Unix()
 	s := newState()
-	s.paneCapturer = func(paneID string) (string, error) { return "", nil }
+	s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
 	s.projectListNames = []string{"foo/bar"}
 	// WaitStartedTS is 0 (the zero value — not waiting)
 	s.lastVisitTS["foo-bar"] = now - 30 // has a visit entry, but irrelevant
@@ -1521,6 +1521,77 @@ func TestApplyEvent_PaneCwdChanged(t *testing.T) {
 		}
 		if got.ID != "%9" {
 			t.Errorf("pane.ID = %q; want %%9", got.ID)
+		}
+	})
+}
+
+// TestSessionSocketAttribution_zd47u covers the socket-aware paneCapturer
+// plumbing: a SessionChanged event carrying SocketName tags the session in
+// sessionSocket, a subsequent recomputeAgents call must thread that socket
+// name through paneCapturer, and a default-socket session yields the empty
+// socket string (no -L flag).
+func TestSessionSocketAttribution_zd47u(t *testing.T) {
+	t.Run("gt_socket_session_routes_capture", func(t *testing.T) {
+		s := newState()
+		// Capture the socket name observed by the capturer so we can assert
+		// the lookup against sessionSocket actually plumbed through.
+		var observedSocket string
+		var calls int
+		s.paneCapturer = func(paneID, socketName string) (string, error) {
+			calls++
+			observedSocket = socketName
+			return "ctx\n", nil
+		}
+
+		// Daemon emits SessionChanged tagged with the GT socket name.
+		applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "hq-mayor", SocketName: "gt-abc123"}, nil)
+		if got := s.sessionSocket["hq-mayor"]; got != "gt-abc123" {
+			t.Fatalf("sessionSocket[hq-mayor] = %q; want gt-abc123", got)
+		}
+
+		// Wire a window+pane so recomputeAgents has something to walk.
+		s.sessions["$1"].windows["@1"] = &window{ID: "@1", panesIDs: map[string]struct{}{"%1": {}}}
+		s.panesByID["%1"] = &pane{ID: "%1", Title: "● claude"}
+
+		recomputeAgents(s, "hq-mayor")
+
+		if calls != 1 {
+			t.Fatalf("paneCapturer calls = %d; want 1", calls)
+		}
+		if observedSocket != "gt-abc123" {
+			t.Errorf("paneCapturer socketName = %q; want gt-abc123 — GT panes would fail without this", observedSocket)
+		}
+	})
+
+	t.Run("default_socket_session_yields_empty_socket", func(t *testing.T) {
+		s := newState()
+		var observedSocket string
+		s.paneCapturer = func(paneID, socketName string) (string, error) {
+			observedSocket = socketName
+			return "", nil
+		}
+
+		applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "example-agora", SocketName: ""}, nil)
+		s.sessions["$1"].windows["@1"] = &window{ID: "@1", panesIDs: map[string]struct{}{"%1": {}}}
+		s.panesByID["%1"] = &pane{ID: "%1", Title: "● claude"}
+
+		recomputeAgents(s, "example-agora")
+
+		if observedSocket != "" {
+			t.Errorf("paneCapturer socketName = %q; want empty (default socket)", observedSocket)
+		}
+	})
+
+	t.Run("rename_retags_and_drops_old_key", func(t *testing.T) {
+		s := newState()
+		applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "old-name", SocketName: "gt-abc"}, nil)
+		applyEvent(s, tmuxctl.SessionRenamed{ID: "$1", NewName: "new-name", SocketName: "gt-abc"}, nil)
+
+		if _, stale := s.sessionSocket["old-name"]; stale {
+			t.Error("sessionSocket[old-name] should be cleared after rename")
+		}
+		if got := s.sessionSocket["new-name"]; got != "gt-abc" {
+			t.Errorf("sessionSocket[new-name] = %q; want gt-abc", got)
 		}
 	})
 }

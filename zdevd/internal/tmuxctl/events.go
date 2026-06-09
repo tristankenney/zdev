@@ -10,8 +10,8 @@ type Event interface{ isEvent() }
 // because tmux IDs include the type prefix.
 
 type SessionsChanged struct{}                                  // %sessions-changed (no args)
-type SessionChanged struct{ ID, Name string }                  // %session-changed $0 main
-type SessionRenamed struct{ ID, NewName string }               // %session-renamed
+type SessionChanged struct{ ID, Name, SocketName string }      // %session-changed $0 main; SocketName tags the GT tmux socket (zd-47u), "" = default socket
+type SessionRenamed struct{ ID, NewName, SocketName string }   // %session-renamed; SocketName mirrors SessionChanged
 type SessionWindowChanged struct{ SessionID, WindowID string } // %session-window-changed
 type WindowAdd struct{ ID string }                             // %window-add @1
 type WindowClose struct{ ID string }                           // %window-close @1
@@ -26,6 +26,11 @@ type ClientDetached struct{ Client string }                    // %client-detach
 type ClientSessionChanged struct{ Client, SessionName string } // %client-session-changed
 type ClientListRefresh struct {                                // polled list-clients response
 	ClientSessions map[string]string // client_name → session_name (dash-form); zdevd-watcher excluded
+	// SocketName tags the tmux socket whose list-clients produced this map
+	// (zd-47u). Empty = default socket. The hub uses it to replace only the
+	// per-socket subset of clientSessions so a GT-socket refresh doesn't
+	// clobber default-socket clients (and vice versa).
+	SocketName string
 }
 type Exit struct{ Reason string } // %exit; supervisor uses this as a reconnect signal
 type ParseError struct {

@@ -341,15 +341,15 @@ func (h *Hub) Run(ctx context.Context) error {
 	// handles. capturer is captured by closure; it is set at newState and
 	// never mutated, so reading it from the worker goroutine is safe.
 	capturer := h.state.paneCapturer
-	h.state.asyncCapture = func(sessName, paneID string) {
+	h.state.asyncCapture = func(sessName, paneID, socketName string) {
 		if capturer == nil {
 			return
 		}
 		go func() {
-			text, err := capturer(paneID)
+			text, err := capturer(paneID, socketName)
 			if err != nil {
 				slog.Warn("hub: async capture-pane failed",
-					"err", err, "pane", paneID, "project", sessName)
+					"err", err, "pane", paneID, "project", sessName, "socket", socketName)
 				// Re-enter the hub so applyEvent can count consecutive
 				// failures and evict ghost panes after the threshold;
 				// without this, a stale pane reference (e.g. a session

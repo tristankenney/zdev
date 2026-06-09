@@ -165,6 +165,13 @@ func recomputeAgents(s *state, sessionName string) {
 		// during the bucket walk above.
 		capturePaneID := buckets[enteredWaiting].waitingPaneID
 		if capturePaneID != "" {
+			// zd-47u: route the capture through the session's source tmux
+			// socket. Default-socket sessions resolve to "" which yields a
+			// plain `tmux capture-pane …` (no -L flag); GT-socket sessions
+			// resolve to the GT socket name and the capturer prepends
+			// `-L <socket>`. Without this lookup, GT-socket capture fails
+			// against the default socket and WaitContext stays empty.
+			socketName := s.sessionSocket[sessionName]
 			if s.asyncCapture != nil {
 				// Production path: dispatch the capture off the hub
 				// goroutine. The worker re-enters via
@@ -175,15 +182,15 @@ func recomputeAgents(s *state, sessionName string) {
 				// + debounce) delay before the captured text appears
 				// in a snapshot, and replaces a 1.5s worst-case stall
 				// of the entire hub goroutine on every wait-start.
-				s.asyncCapture(sessionName, capturePaneID)
+				s.asyncCapture(sessionName, capturePaneID, socketName)
 			} else if s.paneCapturer != nil {
 				// Fallback (tests, hubs constructed without asyncCapture
 				// wiring): synchronous capture. Bounded by the 1.5s
 				// timeout inside realPaneCapture.
-				captured, cerr := s.paneCapturer(capturePaneID)
+				captured, cerr := s.paneCapturer(capturePaneID, socketName)
 				if cerr != nil {
 					slog.Warn("hub: capture-pane failed",
-						"err", cerr, "pane", capturePaneID, "project", sessionName)
+						"err", cerr, "pane", capturePaneID, "project", sessionName, "socket", socketName)
 				} else {
 					pd.WaitContext = captured
 				}

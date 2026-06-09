@@ -115,7 +115,12 @@ type state struct {
 	// Tests override with a stub function that returns a controlled string
 	// without spawning any subprocess. The function must be safe to call from
 	// the hub goroutine only.
-	paneCapturer func(paneID string) (string, error)
+	//
+	// socketName routes the subprocess through `tmux -L <socket>` so panes
+	// living on the Gas Town socket (hq-mayor, zd-* sessions, etc.) capture
+	// correctly (zd-47u). Empty = user's default socket. Looked up from
+	// state.sessionSocket at the call site in recomputeAgents.
+	paneCapturer func(paneID, socketName string) (string, error)
 
 	// asyncCapture, when non-nil, replaces the synchronous paneCapturer
 	// call in recomputeAgents with an off-goroutine dispatch that re-enters
@@ -123,7 +128,23 @@ type state struct {
 	// hub.Run before the event loop starts, then read-only — production
 	// only. Tests leave asyncCapture nil so recomputeAgents falls back to
 	// the synchronous paneCapturer path the existing tests already cover.
-	asyncCapture func(sessName, paneID string)
+	//
+	// socketName mirrors paneCapturer.socketName — the worker spawned by
+	// asyncCapture passes it through to the wrapped paneCapturer so GT-socket
+	// panes capture correctly.
+	asyncCapture func(sessName, paneID, socketName string)
+
+	// sessionSocket maps tmux session name (dash-form) → tmux socket name
+	// that owns the session (zd-47u). Populated by applyEvent on
+	// SessionChanged / SessionRenamed when the event's SocketName is
+	// non-empty (the GT supervisor tags every emission; the default-socket
+	// supervisor leaves it empty). recomputeAgents looks this up to route
+	// the capture-pane subprocess through `tmux -L <socket>` for GT-socket
+	// panes — without this, `tmux capture-pane -t %ID` against the default
+	// socket fails because the default socket doesn't know GT pane IDs.
+	// NOT persisted: the supervisor re-emits SessionChanged on every Dial,
+	// so the map repopulates within a few hundred ms of daemon start.
+	sessionSocket map[string]string
 
 	// paneCaptureFailures counts consecutive PaneCaptureFailed events per
 	// paneID. Cleared on success (PaneCaptureReady) or eviction. When the
@@ -286,6 +307,7 @@ func newState() *state {
 		prCounts:            make(map[string]prCount),
 		celebrateUntil:      make(map[string]int64),
 		paneCaptureFailures: make(map[string]int),
+		sessionSocket:       make(map[string]string),
 		agents:              agents.NewRegistry(agents.Builtin()),
 	}
 	s.paneCapturer = realPaneCapture
@@ -297,10 +319,21 @@ func newState() *state {
 // timeout prevents a hung tmux from blocking event processing indefinitely).
 // Returns the captured text on success, or ("", err) on failure.
 // This is the production default for state.paneCapturer.
-func realPaneCapture(paneID string) (string, error) {
+//
+// socketName routes the subprocess through `tmux -L <socket>` when non-empty
+// (zd-47u). Required for GT-socket panes — the user's default tmux socket
+// does not know about pane IDs created on the GT socket, so an unqualified
+// `tmux capture-pane -t %<paneID>` fails with "can't find pane". Empty =
+// default socket (no -L flag).
+func realPaneCapture(paneID, socketName string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-t", paneID, "-S", "-20").Output()
+	args := make([]string, 0, 8)
+	if socketName != "" {
+		args = append(args, "-L", socketName)
+	}
+	args = append(args, "capture-pane", "-p", "-t", paneID, "-S", "-20")
+	out, err := exec.CommandContext(ctx, "tmux", args...).Output()
 	if err != nil {
 		return "", err
 	}
@@ -370,6 +403,13 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		} else {
 			s.sessions[e.ID].Name = e.Name
 		}
+		// zd-47u: tag the session with its source tmux socket so
+		// recomputeAgents can route capture-pane through `tmux -L <socket>`
+		// for GT-socket panes. Always write — an empty SocketName from the
+		// default supervisor is the correct default-socket attribution.
+		if e.Name != "" {
+			s.sessionSocket[e.Name] = e.SocketName
+		}
 		// Recompute for the named session — catches the case where the
 		// session was just (re)named or a new session with pre-existing panes.
 		if e.Name != "" {
@@ -379,7 +419,9 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// session's name was known.
 		drainPendingActivity(s, e.ID, e.Name)
 	case tmuxctl.SessionRenamed:
+		var oldName string
 		if sess, ok := s.sessions[e.ID]; ok {
+			oldName = sess.Name
 			sess.Name = e.NewName
 		} else {
 			// Session unknown — create on rename for safety.
@@ -388,6 +430,15 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 				Name:    e.NewName,
 				windows: make(map[string]*window),
 			}
+		}
+		// zd-47u: re-tag socket attribution on the new name and drop the
+		// stale key. A rename keeps the session on the same socket, so the
+		// SocketName carried in the event is authoritative.
+		if e.NewName != "" {
+			s.sessionSocket[e.NewName] = e.SocketName
+		}
+		if oldName != "" && oldName != e.NewName {
+			delete(s.sessionSocket, oldName)
 		}
 		drainPendingActivity(s, e.ID, e.NewName)
 	case tmuxctl.SessionWindowChanged:
@@ -526,6 +577,15 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// Detect whether the map content actually changed before bumping
 		// clientSessionsSeq, so an idempotent 2s poll doesn't force a publish
 		// every cycle.
+		//
+		// TODO(zd-47u follow-up): when both supervisors poll in alternation
+		// they clobber each other's entries every 2s — PaneVisible flips
+		// false for the socket whose poll didn't fire most-recently and
+		// animation can briefly freeze. e.SocketName is now plumbed for the
+		// fix; the missing piece is socket-aware ClientSessionChanged /
+		// ClientDetached so a per-socket rebuild stays consistent. Filing a
+		// separate bead — out of scope for the paneCapturer fix.
+		_ = e.SocketName
 		changed := len(s.clientSessions) != len(e.ClientSessions)
 		if !changed {
 			for k, v := range e.ClientSessions {
