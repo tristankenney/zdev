@@ -186,6 +186,37 @@ sys.exit(0 if gt_rows else 1)
           wait_in "death never reached triage"
           zdev ack --all
           wait_out "ack did not clear the death"
+      - name: socket discovery fallback (zd-1x8)
+        run: |
+          # When XDG_RUNTIME_DIR is unset (plain SSH without PAM's
+          # pam_systemd, some containers), platform.SocketPath() computes
+          # a fallback that won't match the daemon's actual socket.
+          # platform.ResolveSocketPath() recovers by reading the
+          # discovery file at $HOME/.local/state/zdev/socket. Verify the
+          # daemon is reachable WITHOUT XDG_RUNTIME_DIR set — that's the
+          # whole point of the discovery-file path.
+          test -f "$HOME/.local/state/zdev/socket" \
+            || { echo "FAIL: discovery file missing — daemon never wrote it"; exit 1; }
+          ORIG_XDG="${XDG_RUNTIME_DIR:-}"
+          unset XDG_RUNTIME_DIR
+          # zdevd diag uses ResolveSocketPath; without the discovery
+          # fallback this would dial a non-existent socket and fail.
+          zdevd diag >/dev/null \
+            || { echo "FAIL: zdevd diag with XDG_RUNTIME_DIR unset"; exit 1; }
+          # zdev-notify writes to TMPDIR (no socket needed) but must
+          # still produce its timestamp file in the unset env.
+          pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
+          rm -f "${TMPDIR:-/tmp/}zdevd-notif/zdev-notif-proj-a.ts"
+          TMUX_PANE="$pane" zdev-notify claude waiting
+          for i in $(seq 1 10); do
+            test -f "${TMPDIR:-/tmp/}zdevd-notif/zdev-notif-proj-a.ts" && break
+            sleep 1
+          done
+          test -f "${TMPDIR:-/tmp/}zdevd-notif/zdev-notif-proj-a.ts" \
+            || { echo "FAIL: notify file not written with XDG_RUNTIME_DIR unset"; exit 1; }
+          if [ -n "$ORIG_XDG" ]; then export XDG_RUNTIME_DIR="$ORIG_XDG"; fi
+          zdev ack --all >/dev/null
+          echo "ok: socket discovery fallback — daemon reachable via discovery file"
       - name: cursor navigation (zd-e6e)
         run: |
           # `zdevd cursor +1` dials the daemon, mutates CursorRow in the
