@@ -522,6 +522,11 @@ case "$1" in
         cmd_ack "$@"
         exit 0
         ;;
+    notify)
+        shift
+        cmd_notify "$@"
+        exit 0
+        ;;
     doctor)
         shift
         exec "$(dirname "$(readlink "$0" 2>/dev/null || echo "$0")")/zdev-doctor" "$@"
