@@ -148,16 +148,12 @@ jobs:
           # ZDEV_SIDEBAR_UNMANAGED=show (set on the daemon) makes the row
           # appear in the snapshot — otherwise GT sessions are hidden from
           # `zdev-show list --json` for non-opt-in users.
+          check_gt() {
+            zdev-show list --json | python3 -c 'import sys,json; rows=json.load(sys.stdin); sys.exit(0 if any("gt-agent-1" in r.get("name","") for r in rows) else 1)'
+          }
           ok=0
           for i in $(seq 1 30); do
-            if zdev-show list --json | python3 -c "
-import sys, json
-rows = json.load(sys.stdin)
-gt_rows = [r for r in rows if 'gt-agent-1' in r.get('name','')]
-sys.exit(0 if gt_rows else 1)
-"; then
-              ok=1; break
-            fi
+            if check_gt; then ok=1; break; fi
             sleep 1
           done
           if [ "$ok" != "1" ]; then
