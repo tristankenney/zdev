@@ -252,3 +252,18 @@ type PaneCaptureFailed struct {
 }
 
 func (PaneCaptureFailed) isEvent() {}
+
+// GTRigMapChanged (zd-l2t, phase4-v15) carries the prefix→rig name mapping
+// read from ~/gt/rigs.json. The cmd/zdevd entry point reads the file at
+// startup and on fsnotify CREATE/WRITE/CHMOD events, then submits this
+// event so the hub goroutine can swap state.rigPrefixes atomically. An
+// empty Prefixes map clears the grouping (e.g., rigs.json deleted) —
+// buildSnapshot emits no RigGroups in that case so non-GT fleets see no
+// change. Keys are the configured prefix (e.g. "zd"); values are the
+// canonical rig name (e.g. "zdev"). Per-session membership is computed at
+// snapshot build time, not stored here.
+type GTRigMapChanged struct {
+	Prefixes map[string]string
+}
+
+func (GTRigMapChanged) isEvent() {}
