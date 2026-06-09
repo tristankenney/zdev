@@ -476,6 +476,14 @@ func run() error {
 	g.Go(func() error { return notifW.Run(gctx) })
 	g.Go(func() error { return workspaceW.Run(gctx) })
 
+	// Gas Town rigs.json watcher (zd-l2t): reads the prefix → rig map
+	// once at startup and re-reads on every edit. submitEvent routes
+	// into the hub which stores the map in state.rigPrefixes for the
+	// rig-group section headers. No-op when GT_TOWN_ROOT is unset
+	// (rigsJSONPath returns "" — runRigsWatcher waits on ctx and exits).
+	rigsPath := rigsJSONPath()
+	g.Go(func() error { return runRigsWatcher(gctx, rigsPath, submitEvent) })
+
 	// GT supervisor: second supervisor on the Gas Town socket. Surfaces GT
 	// rig sessions (hq-mayor, zd-quartz, etc.) as Unmanaged rows alongside
 	// the user's project sessions. Only started when dedup is non-nil, which
