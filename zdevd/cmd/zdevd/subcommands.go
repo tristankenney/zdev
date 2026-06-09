@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/demo"
 	"github.com/tristankenney/zdev/zdevd/internal/diag"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
+	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	socketpkg "github.com/tristankenney/zdev/zdevd/internal/socket"
 )
@@ -205,6 +208,83 @@ func cursorSubcmd(args []string) int {
 		fmt.Println(name)
 	}
 	return 0
+}
+
+// notifyMuteSubcmd implements `zdevd notify-mute [seconds]`. Writes a
+// unix-timestamp expiry to hub.MutePath() that the running daemon's
+// notifier wrapper reads before each fire (no restart, no socket
+// round-trip, no proto bump). `0` removes the sentinel file (unmute
+// immediately). Default seconds = 3600 (1 hour) — the most common
+// "quiet me for a meeting" duration.
+//
+// Exit codes: 0 ok, 2 usage. Designed for invocation from `zdev notify`
+// shell wrappers and tmux bindings, so a missing parent directory is
+// created (0700) rather than treated as an error.
+func notifyMuteSubcmd(args []string) int {
+	fs := flag.NewFlagSet("zdevd notify-mute", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	secs := int64(3600)
+	if fs.NArg() == 1 {
+		v, err := time.ParseDuration(fs.Arg(0))
+		if err != nil {
+			// Fallback: bare integer seconds. `zdevd notify-mute 90`
+			// is more natural than `zdevd notify-mute 90s` for the
+			// shell wrapper; `1h` / `30m` still work via the first
+			// parse branch.
+			n, ierr := parseSeconds(fs.Arg(0))
+			if ierr != nil {
+				fmt.Fprintf(os.Stderr, "zdevd notify-mute: invalid duration %q (want \"1h\", \"30m\", or integer seconds)\n", fs.Arg(0))
+				return 2
+			}
+			secs = n
+		} else {
+			secs = int64(v.Seconds())
+		}
+	} else if fs.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, "usage: zdevd notify-mute [duration]")
+		return 2
+	}
+
+	path := hub.MutePath()
+	if secs <= 0 {
+		// Unmute: remove the sentinel. Missing-file is success — the
+		// caller's intent ("notifications on") already holds.
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "zdevd notify-mute: %v\n", err)
+			return 1
+		}
+		fmt.Println("notifications: active")
+		return 0
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd notify-mute: mkdir: %v\n", err)
+		return 1
+	}
+	until := time.Now().Unix() + secs
+	if err := os.WriteFile(path, []byte(strconv.FormatInt(until, 10)+"\n"), 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd notify-mute: write: %v\n", err)
+		return 1
+	}
+	fmt.Printf("notifications: muted until %s\n", time.Unix(until, 0).Format("15:04"))
+	return 0
+}
+
+// parseSeconds accepts a bare integer (positive or zero) as a seconds
+// count. Separated from time.ParseDuration so `notify-mute 0` and
+// `notify-mute 90` both work without forcing the caller to type `0s`
+// / `90s`. Returns a usage-style error on negative or unparseable input.
+func parseSeconds(s string) (int64, error) {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("negative duration")
+	}
+	return n, nil
 }
 
 // formatEventHuman renders one Event as a `[HH:MM:SS] type k=v ...` line per
