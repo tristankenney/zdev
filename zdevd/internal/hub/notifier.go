@@ -34,9 +34,13 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/tristankenney/zdev/zdevd/internal/platform"
 )
 
 // Notification is the structured payload handed to the notify backend.
@@ -55,12 +59,63 @@ type Notification struct {
 // backends.
 const notifyTimeout = 1500 * time.Millisecond
 
+// MutePath returns the absolute path to the runtime-mute sentinel file.
+// Exposed for the `zdevd notify-mute` subcommand and for tests; the path
+// lives under platform.DataDir() (XDG_STATE_HOME/zdev on Linux,
+// ~/Library/Application Support/zdev on macOS) so it persists across
+// daemon restarts and is the same location both processes already use.
+func MutePath() string {
+	return filepath.Join(platform.DataDir(), "notify-muted-until")
+}
+
+// isNotifyMuted reports whether the mute sentinel at path holds a unix
+// timestamp still in the future relative to now. Missing file, unreadable
+// file, malformed contents, and expired timestamps all read as un-muted —
+// failure modes silently restore notifications rather than silence them.
+// Pure: caller threads the clock; no time.Now in the hot path.
+func isNotifyMuted(path string, now int64) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return false
+	}
+	return now < ts
+}
+
 // ResolveNotifier picks the notification backend for this process. It
 // returns the fire function, a short human description for the startup
 // log, and ok=false when notifications should be disabled (no backend
 // available). ZDEV_NOTIFY=0 is handled by the caller (cmd/zdevd), which
 // owns the opt-out; this function only resolves capability.
+//
+// The returned fire closure is wrapped with a runtime mute-guard that
+// reads MutePath() before each fire and silently drops notifications
+// while the sentinel timestamp is in the future. The check is one
+// os.ReadFile on a tiny file at the rare cadence of tier crossings —
+// no caching, no daemon restart required to flip state. time.Now lives
+// here in the I/O side, not in tierCheck's pure mutation core.
 func ResolveNotifier() (fire func(Notification), desc string, ok bool) {
+	inner, desc, ok := resolveBackend()
+	if !ok {
+		return nil, desc, false
+	}
+	mutePath := MutePath()
+	return func(n Notification) {
+		if isNotifyMuted(mutePath, time.Now().Unix()) {
+			return
+		}
+		inner(n)
+	}, desc, true
+}
+
+// resolveBackend picks the platform-specific notifier without the
+// mute-guard wrapper. Split out so the wrapper composition stays
+// readable and tests of the underlying backends don't have to thread
+// the sentinel file through every fixture.
+func resolveBackend() (fire func(Notification), desc string, ok bool) {
 	if cmd := os.Getenv("ZDEV_NOTIFY_CMD"); cmd != "" {
 		return ExecNotifier(cmd), "ZDEV_NOTIFY_CMD exec hook", true
 	}
@@ -156,4 +211,3 @@ func spawn(path string, args, env []string, n Notification) {
 		cancel()
 	}()
 }
-
