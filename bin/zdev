@@ -293,11 +293,6 @@ do_reap() {
         [[ "$sn" == "$current" ]] && continue
         # Skip favorites.
         is_favorite_session "$sn" && continue
-        # Gas Town sessions (hq-mayor, gt-<rig>-<polecat>) belong to the
-        # orchestrator — its Witness/Deacon own their lifecycle, and a
-        # polecat is by design never human-attached. Reaping one kills an
-        # agent mid-convoy.
-        case "$sn" in hq-*|gt-*) continue ;; esac
 
         # Idle = no attach AND no pane activity. The old attach-only ref
         # killed unattended sessions whose agents were actively WORKING
