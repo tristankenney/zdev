@@ -141,6 +141,7 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
 
 ## NEXT (~6 weeks)
 
+- **Agent Teams supervision (hybrid MVP)** *(replaces the killed Gas Town integration as the primary multi-agent target)* — Claude Code's Agent Teams ships in v2.1.169 behind `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` and hidden `--agent-teams`/`--teammate-mode` flags. zdev supervises via fsnotify on `~/.claude/teams/{name}/config.json`, then branches on each member's `tmuxPaneId`: real pane id → group panes under one sidebar entry (reusing the rig-grouping rendering from `zd-l2t`); literal `"in-process"` → render a `team:{name}` badge with member chips on the lead's pane (no panes to group; in-process is the headless default). Disk surface captured verbatim in `zd-dxj` notes from the `zd-amj` probe (2026-06-10). Effort: 3–5 days. Depends: none. Kill: Anthropic ships a first-party dashboard, or `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` leaves experimental with an incompatible layout.
 - **S2 cadence-capped fleet nudge + S4 Round burn-down popup** *(converged)* —
   one nudge per cadence window (count + ETA + "M-a to start a round"; 15m STUCK
   still pierces); the popup becomes a stateful jump→re-poll→advance loop with
