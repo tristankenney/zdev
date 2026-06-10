@@ -1,0 +1,203 @@
+# Agent Teams supervision — design + probe artifacts
+
+> Exported verbatim from Gas Town bead zd-dxj on 2026-06-10, before the town's
+> decommission. Spec authored from the zd-amj probe (Claude Code v2.1.170,
+> darwin-arm64). This file is the source of truth for the Agent Teams MVP
+> (ROADMAP → NEXT).
+
+DESCRIPTION
+zdev's primary multi-agent supervision target after the Gas Town pivot (zd-90s, shipped 2026-06-09). Probe (zd-amj, commit 9210ba4) confirmed the disk surface and produced concrete artifacts — see notes ("## 2026-06-10 — Probe artifacts") for the full schema dump, observed file layouts, and spawn-mode behavior.
+
+## Confirmed surface (installed Claude Code v2.1.169)
+
+- Env gate: CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 (env var or settings.json)
+- Team state on disk: ~/.claude/teams/{name}/config.json + inboxes/{member}.json + sibling ~/.claude/tasks/{name}/
+- Cleanup signal: ~/.claude/teams/{name}/ directory is rm -rf-equivalent removed on "Clean up the team"
+- Hidden CLI flags: --agent-teams, --teammate-mode (NOT in claude --help; confirmed via strings on the real binary)
+
+## Two backend modes — both must be handled
+
+| Mode        | tmuxPaneId in members[]            | Tmux panes per teammate? | In claude agents --json? |
+|-------------|------------------------------------|--------------------------|--------------------------|
+| in-process  | literal string "in-process"        | NO — render inside Claude's own swarm view | NO — only lead appears  |
+| tmux        | actual pane ID (presumed "%N" style; not confirmed in interactive run) | YES — one pane per teammate | likely yes (not confirmed) |
+
+In-process is the default in headless launches; tmux mode requires an interactive Claude UI to be chosen. Both modes are realistic in production.
+
+## MVP scope (hybrid)
+
+1. **Detection.** fsnotify watch on ~/.claude/teams/. On config.json create/change: parse and register the team. On directory removal: collapse the group immediately.
+2. **Lead identification.** Lead's record has agentType: "team-lead", tmuxPaneId: "", and leadSessionId matches its Claude Code session UUID — cross-reference against existing zdevd session state to map lead → tmux pane.
+3. **Hybrid rendering** keyed off each member's tmuxPaneId:
+   - **Real pane ID** → group those teammate panes under one sidebar entry. Reuse the rendering pattern from the recently-shipped GT rig grouping (zd-1pi) — only the data source differs.
+   - **"in-process" literal** → render a `team:{name}` badge on the lead's pane, with member chips read from members[] (names + colors). No additional panes to group.
+
+## Out of scope for MVP
+
+- Reading the shared task list at ~/.claude/tasks/{name}/.
+- Idle/waiting aggregation across teammates. Free upgrade path: inboxes/{lead}.json receives idle_notification messages from teammates — wire later.
+- Lead vs teammate visual distinction beyond which pane is the team's anchor.
+- Per-teammate model/agentType display on chips.
+
+## Pre-implementation verification (~5 min)
+
+Topaz did NOT confirm the exact tmuxPaneId format for tmux-mode teammates from inside a polecat (would have required spawning an interactive claude session). Before implementing the tmux-mode branch, run claude --agent-teams interactively once with --teammate-mode tmux and capture members[i].tmuxPaneId verbatim. Presumed format is the literal tmux #{pane_id} (e.g. "%42") based on binary strings, but not observed on disk.
+
+## Implementation notes
+
+- zdev's existing event loop is tmux-driven (tmux -CC), not filesystem-driven. Adding fsnotify on ~/.claude/teams/ is the only architectural delta. Polling would also work given the small number of expected teams.
+- Feature is experimental. Track CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS lifecycle — when it leaves experimental, the layout may stabilize or change.
+- All concrete schema/layout details (field names, file paths, sample inbox entries, cleanup semantics) are in the probe artifacts note.
+
+## Provenance
+
+- zd-90s (shipped) — kill Gas Town integration; cleared the slot for this work.
+- zd-amj (closed, 30-min probe) — captured the artifacts this spec is built on.
+
+Estimate: 3-5 days for MVP.
+
+
+NOTES
+## 2026-06-10 — Probe artifacts (zd-amj)
+
+Probed CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 via headless `claude -p`. Three teams created in disposable mktemp sandboxes; cleanup confirmed. Performed against installed Claude Code v2.1.170 on darwin-arm64.
+
+### 1. Enablement
+
+- Env var alone is sufficient: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude -p ...` worked. No `~/.claude/settings.json` change required.
+- Flag exists: `--teammate-mode <auto|tmux|in-process>` (accepted by the CLI option parser; binary strings: `qgq=["auto","tmux","in-process"]`).
+- Empirical behavior in headless `-p` mode: **all teammates spawn as `backendType: "in-process"` regardless of `--teammate-mode` value**. Even `--teammate-mode tmux` produced `backendType: "in-process"` and `tmuxPaneId: "in-process"` — headless has no UI to attach tmux panes to, so it silently falls back.
+- Implication for zdevd: detecting Agent Teams in tmux only makes sense for interactive Claude Code sessions. Headless/SDK-launched teams will never appear as tmux panes.
+
+### 2. config.json schema (verbatim from probe-team, in-process mode)
+
+```json
+{
+  "name": "probe-team",
+  "description": "standby investigation workers",
+  "createdAt": 1781043921309,
+  "leadAgentId": "team-lead@probe-team",
+  "leadSessionId": "48cc6317-c90c-4da4-b725-2e3f7e8a73a9",
+  "members": [
+    {
+      "agentId": "team-lead@probe-team",
+      "name": "team-lead",
+      "agentType": "team-lead",
+      "model": "claude-opus-4-7",
+      "joinedAt": 1781043921309,
+      "tmuxPaneId": "",
+      "cwd": "/private/var/folders/.../tmp.RY0Jr54SRM",
+      "subscriptions": []
+    },
+    {
+      "agentId": "probe-a@probe-team",
+      "name": "probe-a",
+      "color": "blue",
+      "joinedAt": 1781043938725,
+      "tmuxPaneId": "in-process",
+      "subscriptions": [],
+      "agentType": "general-purpose",
+      "model": "claude-opus-4-8",
+      "prompt": "role: standby; investigation worker; do nothing yet. ...",
+      "planModeRequired": false,
+      "cwd": "/private/var/folders/.../tmp.RY0Jr54SRM",
+      "backendType": "in-process"
+    },
+    {
+      "agentId": "probe-b@probe-team",
+      "name": "probe-b",
+      "color": "green",
+      "joinedAt": 1781043942322,
+      "tmuxPaneId": "in-process",
+      "subscriptions": [],
+      "agentType": "general-purpose",
+      "model": "claude-opus-4-8",
+      "prompt": "role: standby; investigation worker; do nothing yet. ...",
+      "planModeRequired": false,
+      "cwd": "/private/var/folders/.../tmp.RY0Jr54SRM",
+      "backendType": "in-process"
+    }
+  ]
+}
+```
+
+### 3. Schema observations
+
+**Top-level fields**: `name`, `description`, `createdAt` (ms unix), `leadAgentId`, `leadSessionId` (UUID — matches Claude Code session ID), `members` (array).
+
+**Member fields** (lead vs teammate differ):
+- Lead has: `agentId`, `name`, `agentType: "team-lead"`, `model`, `joinedAt`, `tmuxPaneId: ""` (empty string), `cwd`, `subscriptions: []`. **No `backendType` field on the lead.**
+- Teammates have: same base fields PLUS `color` (blue/green/...), `prompt`, `planModeRequired`, `backendType`, and `tmuxPaneId` is the **string `"in-process"`** (not empty) when backend is in-process.
+- `agentType` for teammates: `"general-purpose"` (other subagent types likely available — uses the standard subagent registry).
+- `model` differs: lead inherits parent model (claude-opus-4-7 in this run), teammates default to claude-opus-4-8.
+
+**Inferred tmux mode schema** (not directly observed because headless fell back to in-process): `tmuxPaneId` would presumably hold the tmux pane ID (e.g. `%42`) and `backendType: "tmux"`. Binary helpers like `createTeammatePaneWithLeader`, `createTeammatePaneExternal`, `createTeammatePaneInSwarmView` exist in the binary and reference distinct spawn paths.
+
+### 4. On-disk layout under ~/.claude/
+
+```
+~/.claude/teams/{team-name}/
+  config.json                      (the schema above)
+  inboxes/
+    team-lead.json                 (JSON array of received messages)
+    probe-a.json                   (each member gets one)
+    probe-b.json
+~/.claude/tasks/{team-name}/
+  .lock                            (empty lock file)
+  (task files appear here when leader dispatches tasks; was empty in our standby probe)
+```
+
+Sample `inboxes/team-lead.json` entry (idle notifications from teammates):
+```json
+[
+  { "from": "probe-a",
+    "text": "{\"type\":\"idle_notification\",\"from\":\"probe-a\",\"timestamp\":\"...\",\"idleReason\":\"available\"}",
+    "timestamp": "2026-06-09T22:25:45.298Z",
+    "color": "blue", "type": "message", "read": false }
+]
+```
+Teammate inboxes (`probe-a.json`, `probe-b.json`) were `[]` during our standby probe (no messages sent from lead).
+
+After `Clean up the team`: `~/.claude/teams/{name}/` directory is fully removed (`rm -rf`-equivalent). `~/.claude/tasks/{name}/` was also removed in our runs.
+
+### 5. Spawn mode observation (in-process)
+
+While `probe-team` was live with `backendType: "in-process"`:
+
+- **tmux panes** (`tmux list-panes -a -F '#{pane_pid} #{pane_title} #{pane_current_command}'`) showed only the pre-existing 3 zdev role panes (refinery, topaz, witness). **No new panes were created for probe-a/probe-b** — confirms in-process teammates do NOT create separate tmux panes.
+- **`claude agents --json`** (run from outer session while team was live) listed 11 entries — including the lead claude (pid 37311, session 48cc6317...) but **NOT** probe-a or probe-b. So in-process teammates do NOT appear as separate entries in `claude agents --json`. All entries have `"kind": "interactive"`; there is no `kind: "teammate"` distinguishing field at this level.
+- **`pgrep -af claude`** showed no `probe-team`-tagged or sandbox-cwd separate child processes for the teammates. Only the lead's claude process existed.
+
+So in in-process mode, teammates exist purely as logical entities inside the lead's process — they have entries in `config.json`, they appear in the swarm view UI (binary strings reference `createTeammatePaneInSwarmView`), and they exchange messages via `inboxes/*.json` files, but they have **no separate OS process, no separate tmux pane, no separate `claude agents` entry**.
+
+### 6. Default mode in headless (`-p`) launch
+
+Created `probe-default` team with **no `--teammate-mode` flag**, while the outer launch shell was inside a tmux session (TMUX env var set). Result: `backendType: "in-process"` for both teammates. Same outcome as explicit `--teammate-mode tmux`. The "auto" resolver effectively requires an interactive Claude UI to choose tmux; headless mode always lands on in-process.
+
+### 7. Implications for zd-dxj MVP
+
+1. **Detection seam — config.json watch is the right primitive.** Members and lead are reliably written to disk; teammate sessionId is not, but `agentId` and `name` are stable and unique per team. `leadSessionId` matches the lead's Claude Code session UUID, so we can cross-reference against existing zdevd session state.
+2. **Pane → teammate mapping** (per the spec's open question): for tmux-mode teams (interactive Claude sessions only), `members[i].tmuxPaneId` should hold the pane ID directly — no need to depend on the fragile pane-title convention. Inspect a real interactive team to confirm exact format (`%42` vs `1.2` etc.) before relying on it.
+3. **In-process teammates produce no panes.** The MVP scope note "render the lead with a team:{name} badge" is correct and necessary — there's nothing else observable in tmux for these teams. We can read `members[]` from `config.json` to render the badge contents (member names, colors) without any pane data.
+4. **Watcher**: fsnotify on `~/.claude/teams/` is cheap and reliable — `config.json` is written eagerly on team create, on each member join, and the directory tree is `rm -rf`'d on cleanup. Polling would also work given the small number of teams expected.
+5. **Cleanup semantics**: directory deletion is the cleanup signal. Lead pane may persist briefly after teams dir disappears — collapse the group immediately when `~/.claude/teams/{name}/` goes away rather than waiting for panes to die.
+6. **idle_notification messages** in `inboxes/team-lead.json` provide per-teammate availability signal if we later want to add teammate state to the chip. Out of MVP scope but a free upgrade path.
+
+### 8. Out-of-scope but captured for follow-up
+
+- `--teammate-mode tmux` in an interactive Claude session was NOT tested (would require spawning an interactive claude in a fresh tmux session — risky from inside this polecat). The exact format of `tmuxPaneId` for tmux-backend teammates remains unobserved on disk; binary strings imply it is the literal tmux pane id (`#{pane_id}` like `%42`).
+- `subscriptions[]` field on each member is always empty in our probes — purpose unknown.
+- `agentType` for teammates was always `general-purpose` — other agent types from the registry presumably selectable when creating the team (not tested).
+- `claude agents --json` does not surface teammates at all (in-process mode). Whether tmux-mode teammates appear there is unknown.
+
+— Probe by zdev/polecats/topaz, captured 2026-06-10
+
+LABELS: agent-teams, feature, supervision
+
+DEPENDS ON
+  → ✓ zd-90s: kill Gas Town integration in zdev (reaper exclusion + ROADMAP entries) ● P2
+  → ○ zd-wisp-bi7: mol-polecat-work ● P2
+
+DISCOVERED
+  ◊ ✓ zd-amj: probe: capture real Agent Teams config.json + observe spawn mode ● P2
+
