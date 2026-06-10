@@ -29,6 +29,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/teams"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
@@ -105,6 +106,12 @@ type state struct {
 	// or GT_TOWN_ROOT unset) — buildSnapshot then emits zero RigGroups and
 	// non-GT renderers see no behavioural change.
 	rigPrefixes map[string]string
+
+	// agentTeams is the full-replacement Claude Code Agent Teams snapshot
+	// from TeamsChanged (slice 3). Keyed by team name; swapped wholesale —
+	// the watcher owns change detection, the hub owns nothing but the
+	// latest truth. Empty when the experimental feature is unused.
+	agentTeams map[string]*teams.Team
 
 	// cursorRow is the index (into buildSnapshot's Projects slice) of the
 	// currently selected sidebar row. Only meaningful when cursorActive is
@@ -914,6 +921,12 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		if e.Delta != 0 {
 			s.cursorRow = ((s.cursorRow+e.Delta)%n + n) % n
 		}
+
+	case tmuxctl.TeamsChanged:
+		// Pure map swap, mirroring GTRigMapChanged: the watcher produces
+		// a fresh map per emission and we take ownership without copying.
+		// Nil/empty clears all team state (last team's dir was removed).
+		s.agentTeams = e.Teams
 
 	case tmuxctl.GTRigMapChanged:
 		// Pure map swap (zd-l2t, phase4-v15). The cmd/zdevd entry point

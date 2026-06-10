@@ -946,6 +946,32 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	if !rigGroupsEqual(a.RigGroups, b.RigGroups) {
 		return false
 	}
+	// TeamGroups (phase4-v16): team create/dissolve and member changes
+	// must publish. teamGroupsFor sorts by team name, so positional
+	// comparison is sufficient.
+	if !teamGroupsEqual(a.TeamGroups, b.TeamGroups) {
+		return false
+	}
+	return true
+}
+
+// teamGroupsEqual compares two TeamGroup slices element-wise; inputs are
+// pre-sorted by teamGroupsFor (team name outer; members in config order).
+func teamGroupsEqual(a, b []proto.TeamGroup) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].LeadProject != b[i].LeadProject ||
+			len(a[i].Members) != len(b[i].Members) {
+			return false
+		}
+		for j := range a[i].Members {
+			if a[i].Members[j] != b[i].Members[j] {
+				return false
+			}
+		}
+	}
 	return true
 }
 

@@ -126,7 +126,15 @@ import (
 // off, so non-GT fleets see zero change. A v14 renderer ignores the field
 // silently, so forward-compatible in practice; bumped for strict-equality
 // validation. Restart all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v15"
+//
+// phase4-v16 (Agent Teams MVP slice 3): adds Snapshot.TeamGroups — Claude
+// Code Agent Teams discovered under ~/.claude/teams/ via the slice-2
+// fsnotify watcher, with the lead resolved to a project row by cwd and
+// members carried as badge chips. Empty/omitempty when the experimental
+// feature is unused, so non-team fleets see zero change. Forward-
+// compatible in practice; bumped for strict-equality validation. Restart
+// all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v16"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -227,6 +235,11 @@ type Snapshot struct {
 	// integration is off or no sessions match any known prefix, so
 	// non-GT fleets observe zero change.
 	RigGroups []RigGroup `json:"rig_groups,omitempty"`
+
+	// TeamGroups (phase4-v16): Claude Code Agent Teams discovered under
+	// ~/.claude/teams/, sorted by name. Empty when the experimental
+	// feature is unused — non-team fleets see no change.
+	TeamGroups []TeamGroup `json:"team_groups,omitempty"`
 }
 
 // RigGroup (phase4-v15, zd-l2t) names a Gas Town rig and the canonical
@@ -237,6 +250,29 @@ type Snapshot struct {
 type RigGroup struct {
 	Name     string   `json:"name"`
 	Sessions []string `json:"sessions,omitempty"`
+}
+
+// TeamGroup (phase4-v16, Agent Teams MVP slice 3) is one Claude Code
+// agent team on the wire. LeadProject is the project row the badge
+// anchors to — resolved at snapshot build time from the lead's cwd via
+// the same pane-cwd attribution unmanaged sessions use; empty when the
+// lead's cwd maps to no known project (the renderer then skips the
+// badge; the team still appears in zdev-show). Members carries the
+// badge chips: in-process teammates have no pane and InProcess=true;
+// tmux-backend teammates carry their pane id so slice 4 can group them.
+type TeamGroup struct {
+	Name        string       `json:"name"`
+	LeadProject string       `json:"lead_project,omitempty"`
+	Members     []TeamMember `json:"members,omitempty"`
+}
+
+// TeamMember is one badge chip of a TeamGroup (the lead is excluded —
+// it IS the anchor row).
+type TeamMember struct {
+	Name      string `json:"name"`
+	Color     string `json:"color,omitempty"`
+	InProcess bool   `json:"in_process,omitempty"`
+	PaneID    string `json:"pane_id,omitempty"`
 }
 
 // Project is the per-row metadata in a Snapshot.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/teams"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
@@ -296,6 +297,10 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// their Gas Town rig per state.rigPrefixes. Nil when GT
 		// integration is off so non-GT fleets see no wire change.
 		RigGroups: rigGroupsFor(st.rigPrefixes, allNames),
+		// TeamGroups (phase4-v16): Agent Teams with the lead resolved to
+		// a project row by pane cwd. Computed per pass — team count is
+		// tiny (single digits) so no caching.
+		TeamGroups: teamGroupsFor(st),
 	}
 }
 
@@ -318,6 +323,92 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 // Determinism matters for snapshotEqualsCore (the publish-suppression gate
 // re-computes RigGroups every pass and would publish on every tick if
 // ordering flapped).
+// teamGroupsFor converts the hub's Agent Teams state to wire TeamGroups,
+// sorted by team name for deterministic output. The lead anchors to a
+// project row by cwd: the first session owning a pane whose Cwd equals
+// the lead's cwd wins (the lead runs INSIDE some tmux pane — its claude
+// session's cwd is that pane's cwd). No match → LeadProject "" and the
+// renderer skips the badge (the team still rides the wire for zdev-show).
+// The lead itself is excluded from Members — it IS the anchor.
+func teamGroupsFor(st *state) []proto.TeamGroup {
+	if len(st.agentTeams) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(st.agentTeams))
+	for n := range st.agentTeams {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]proto.TeamGroup, 0, len(names))
+	for _, n := range names {
+		t := st.agentTeams[n]
+		g := proto.TeamGroup{Name: t.Name}
+		if lead := t.Lead(); lead != nil && lead.CWD != "" {
+			g.LeadProject = projectByPaneCwd(st, lead.CWD)
+		}
+		for _, m := range t.Members {
+			if m.AgentType == "team-lead" {
+				continue
+			}
+			g.Members = append(g.Members, proto.TeamMember{
+				Name:      m.Name,
+				Color:     m.Color,
+				InProcess: m.TmuxPaneID == teams.InProcessPaneID,
+				PaneID: func() string {
+					if m.TmuxPaneID == teams.InProcessPaneID {
+						return ""
+					}
+					return m.TmuxPaneID
+				}(),
+			})
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// projectByPaneCwd returns the PROJECT ROW NAME anchoring dir: the first
+// real session (sorted for determinism; infrastructure sessions and the
+// $_unlinked bucket excluded — they'd otherwise win the race and name a
+// row that doesn't exist) owning a pane whose Cwd matches dir exactly.
+// Exact match only: prefix matching would mis-anchor teams running in
+// subdirectories of one project to a sibling worktree.
+//
+// Session names are dash-form but managed project rows are slash-form
+// (the SessionKey mapping) — the result is canonicalized back through
+// projectListNames so the renderer's `p.Name == LeadProject` comparison
+// works for managed projects; unmanaged sessions keep their session
+// name, which IS their row name.
+func projectByPaneCwd(st *state, dir string) string {
+	var names []string
+	for _, sess := range st.sessions {
+		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
+			continue
+		}
+		names = append(names, sess.Name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		sess, ok := sessionByName(st, name)
+		if !ok {
+			continue
+		}
+		for _, w := range sess.windows {
+			for pid := range w.panesIDs {
+				if p, ok := st.panesByID[pid]; ok && p.Cwd == dir {
+					for _, rowName := range st.projectListNames {
+						if proto.SessionKey(rowName) == name {
+							return rowName
+						}
+					}
+					return name
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func rigGroupsFor(prefixes map[string]string, sessions []string) []proto.RigGroup {
 	if len(prefixes) == 0 {
 		return nil

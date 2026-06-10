@@ -45,6 +45,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/projects"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/socket"
+	"github.com/tristankenney/zdev/zdevd/internal/teams"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 	"github.com/tristankenney/zdev/zdevd/internal/workspace"
 )
@@ -346,6 +347,13 @@ func run() error {
 	}
 	notifDir := notif.WatchDir(tmpParent)
 	notifW := notif.NewWatcher(notifDir, submitEvent)
+
+	// Agent Teams watcher (slice 3): the teams package is tmuxctl-free
+	// (import-cycle inversion documented in internal/teams/watcher.go),
+	// so the submit wrapping into the Event union happens here.
+	teamsW := teams.NewWatcher(teams.DefaultDir(), func(m map[string]*teams.Team) {
+		submitEvent(tmuxctl.TeamsChanged{Teams: m})
+	})
 	workspaceW := workspace.NewWatcher(workspaceDir, lister)
 
 	// handleCwdForUnmanaged pins a per-session dir override on the branch
@@ -474,6 +482,7 @@ func run() error {
 
 	// Phase 3 watchers — fsnotify-based, ctx-cancellable.
 	g.Go(func() error { return notifW.Run(gctx) })
+	g.Go(func() error { return teamsW.Run(gctx) })
 	g.Go(func() error { return workspaceW.Run(gctx) })
 
 	// Gas Town rigs.json watcher (zd-l2t): reads the prefix → rig map

@@ -11,8 +11,10 @@ package hub
 
 import (
 	"testing"
+	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/teams"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
@@ -147,5 +149,75 @@ func TestApplyEvent_WindowAttachMovesPanes(t *testing.T) {
 		if _, still := unlinked.windows["@1"]; still {
 			t.Error("window @1 still in $_unlinked after attach — duplicated, not moved")
 		}
+	}
+}
+
+// TestApplyEvent_TeamsChanged_SnapshotThreading (slice 3): the TeamsChanged
+// map swap reaches the wire as sorted TeamGroups, the lead anchors to the
+// session owning the pane whose cwd matches, in-process members carry no
+// pane id, and an empty map clears everything.
+func TestApplyEvent_TeamsChanged_SnapshotThreading(t *testing.T) {
+	now := int64(1714838460)
+	s := buildTestState("proj-a", []string{"%1"}, []string{"shell"})
+	s.projectListNames = []string{"proj-a"}
+	s.panesByID["%1"].Cwd = "/ws/proj-a"
+
+	applyEvent(s, tmuxctl.TeamsChanged{Teams: map[string]*teams.Team{
+		"alpha": {
+			Name: "alpha",
+			Members: []teams.Member{
+				{Name: "team-lead", AgentType: "team-lead", CWD: "/ws/proj-a"},
+				{Name: "worker-ip", AgentType: "general-purpose", Color: "blue", TmuxPaneID: teams.InProcessPaneID},
+				{Name: "worker-tm", AgentType: "general-purpose", Color: "green", TmuxPaneID: "%42"},
+			},
+		},
+	}}, nil)
+
+	snap := buildSnapshot(s, 1, time.Time{}, now, now*1000)
+	if len(snap.TeamGroups) != 1 {
+		t.Fatalf("TeamGroups = %+v; want 1 group", snap.TeamGroups)
+	}
+	g := snap.TeamGroups[0]
+	if g.Name != "alpha" || g.LeadProject != "proj-a" {
+		t.Fatalf("group = %+v; want alpha anchored to proj-a", g)
+	}
+	if len(g.Members) != 2 {
+		t.Fatalf("Members = %+v; want 2 (lead excluded)", g.Members)
+	}
+	if !g.Members[0].InProcess || g.Members[0].PaneID != "" {
+		t.Errorf("in-process member = %+v; want InProcess, no pane id", g.Members[0])
+	}
+	if g.Members[1].InProcess || g.Members[1].PaneID != "%42" {
+		t.Errorf("tmux member = %+v; want pane %%42", g.Members[1])
+	}
+
+	// Slash-form canonicalization (invariants review finding 2): a lead
+	// in a managed project must anchor to the SLASH-form row name, not
+	// the dash-form session name — the renderer compares against
+	// Project.Name.
+	s2 := buildTestState("zitcha-agora", []string{"%9"}, []string{"shell"})
+	s2.projectListNames = []string{"zitcha/agora"}
+	s2.panesByID["%9"].Cwd = "/ws/zitcha/agora"
+	// A filtered infrastructure session sharing the cwd and sorting
+	// FIRST must not steal the anchor (finding 1).
+	applyEvent(s2, tmuxctl.SessionChanged{ID: "$9", Name: "zdevd-watcher"}, nil)
+	applyEvent(s2, tmuxctl.WindowAdd{ID: "@9"}, nil)
+	applyEvent(s2, tmuxctl.WindowPaneChanged{WindowID: "@9", PaneID: "%8"}, nil)
+	s2.panesByID["%8"].Cwd = "/ws/zitcha/agora"
+	applyEvent(s2, tmuxctl.TeamsChanged{Teams: map[string]*teams.Team{
+		"beta": {Name: "beta", Members: []teams.Member{
+			{Name: "team-lead", AgentType: "team-lead", CWD: "/ws/zitcha/agora"},
+		}},
+	}}, nil)
+	snap2 := buildSnapshot(s2, 1, time.Time{}, now, now*1000)
+	if len(snap2.TeamGroups) != 1 || snap2.TeamGroups[0].LeadProject != "zitcha/agora" {
+		t.Fatalf("TeamGroups = %+v; want beta anchored to slash-form zitcha/agora", snap2.TeamGroups)
+	}
+
+	// Empty map clears (team dir removed).
+	applyEvent(s, tmuxctl.TeamsChanged{Teams: nil}, nil)
+	snap = buildSnapshot(s, 2, time.Time{}, now, now*1000)
+	if len(snap.TeamGroups) != 0 {
+		t.Fatalf("TeamGroups after clear = %+v; want empty", snap.TeamGroups)
 	}
 }
