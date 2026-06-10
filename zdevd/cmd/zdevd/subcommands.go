@@ -178,6 +178,21 @@ func cursorSubcmd(args []string) int {
 	fs := flag.NewFlagSet("zdevd cursor", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	socket := fs.String("socket", platform.ResolveSocketPath(), "path to zdevd unix socket")
+	// "-1" is a VALUE here, but flag.Parse eats any leading-dash arg as an
+	// unknown flag — so `zdevd cursor -1` printed usage and exited 2 while
+	// `+1` worked. (Latent since zd-e6e; caught the first time CI's smoke
+	// step actually exercised the -1 path.) Insert the conventional `--`
+	// terminator ahead of the delta wherever it appears, so
+	// `--socket PATH -1` works too.
+	for i, a := range args {
+		if a == "-1" || a == "+1" || a == "select" {
+			args = append(append(append([]string{}, args[:i]...), "--"), args[i:]...)
+			break
+		}
+		if a == "--" {
+			break
+		}
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
