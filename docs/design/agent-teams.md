@@ -298,3 +298,26 @@ but the wreckage itself answered questions:
 
 Remaining unknown (one more interactive run needed): the on-disk
 tmuxPaneId VALUE for a successfully-attached tmux teammate.
+
+## 2026-06-10 — live inbox samples (zdev-slice2 build team)
+
+Harvested from a real working team (the one implementing slice 2).
+Second known inbox message type, `shutdown_request` — lead→teammate,
+carries requestId + human-readable reason:
+
+```json
+{ "from": "team-lead",
+  "text": "{\"type\":\"shutdown_request\",\"requestId\":\"shutdown-<ms>@implementer\",\"from\":\"team-lead\",\"reason\":\"...\",\"timestamp\":\"...\"}",
+  "timestamp": "2026-06-10T04:36:01.285Z", "type": "message", "read": false }
+```
+
+Tier 2 implication: the inbox `text` field is itself JSON with a `type`
+discriminator (`idle_notification`, `shutdown_request`, ...) — parse it
+as such, and treat unknown types as opaque (fail-soft rule). A
+`shutdown_request` to ALL teammates is an early team-winding-down
+signal that precedes directory removal.
+
+Also observed: a headless lead chose to wind down its team and
+implement directly, citing the non-interactive session — teams may be
+SHORT-LIVED relative to the work; zdev must handle rapid
+create→dissolve cycles without flapping the sidebar group.

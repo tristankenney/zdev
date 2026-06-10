@@ -113,7 +113,11 @@ func TestSC3_NotifLatency_FileWrite(t *testing.T) {
 		}
 	})
 	if elapsed > sc3Budget {
-		t.Errorf("SC3 file-write latency = %v; budget = %v", elapsed, sc3Budget)
+		if sc3SLOStrict {
+			t.Errorf("SC3 file-write latency = %v; budget = %v", elapsed, sc3Budget)
+		} else {
+			t.Logf("SC3 file-write latency = %v exceeds budget %v (logged only; -tags live enforces)", elapsed, sc3Budget)
+		}
 	}
 	t.Logf("SC3 file-write latency = %v", elapsed)
 }
@@ -139,7 +143,11 @@ func TestSC3_NotifLatency_AppendMode(t *testing.T) {
 		}
 	})
 	if elapsed > sc3Budget {
-		t.Errorf("SC3 append-mode latency = %v; budget = %v", elapsed, sc3Budget)
+		if sc3SLOStrict {
+			t.Errorf("SC3 append-mode latency = %v; budget = %v", elapsed, sc3Budget)
+		} else {
+			t.Logf("SC3 append-mode latency = %v exceeds budget %v (logged only; -tags live enforces)", elapsed, sc3Budget)
+		}
 	}
 	t.Logf("SC3 append-mode latency = %v", elapsed)
 }
@@ -157,7 +165,11 @@ func TestSC3_NotifLatency_AtomicRename(t *testing.T) {
 		}
 	})
 	if elapsed > sc3Budget {
-		t.Errorf("SC3 atomic-rename latency = %v; budget = %v", elapsed, sc3Budget)
+		if sc3SLOStrict {
+			t.Errorf("SC3 atomic-rename latency = %v; budget = %v", elapsed, sc3Budget)
+		} else {
+			t.Logf("SC3 atomic-rename latency = %v exceeds budget %v (logged only; -tags live enforces)", elapsed, sc3Budget)
+		}
 	}
 	t.Logf("SC3 atomic-rename latency = %v", elapsed)
 }
@@ -205,8 +217,13 @@ func TestSC3_NotifLatency_CpOver(t *testing.T) {
 		}
 		second := write("delta2", 1714838900, cpOver)
 		if second > sc3Budget {
-			t.Errorf("SC3 cp-over latency = %v then %v; budget = %v (both samples breached)",
-				elapsed, second, sc3Budget)
+			if sc3SLOStrict {
+				t.Errorf("SC3 cp-over latency = %v then %v; budget = %v (both samples breached)",
+					elapsed, second, sc3Budget)
+			} else {
+				t.Logf("SC3 cp-over latency = %v then %v exceeds budget %v (logged only; -tags live enforces)",
+					elapsed, second, sc3Budget)
+			}
 		} else {
 			t.Logf("SC3 cp-over: first sample %v (load spike), retry %v within budget", elapsed, second)
 		}
