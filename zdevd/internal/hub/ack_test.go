@@ -190,6 +190,18 @@ func TestApplyEvent_TeamsChanged_SnapshotThreading(t *testing.T) {
 	if g.Members[1].InProcess || g.Members[1].PaneID != "%42" {
 		t.Errorf("tmux member = %+v; want pane %%42", g.Members[1])
 	}
+	// v18: the tmux member's pane shows a waiting title → Waiting=true;
+	// the in-process member (no pane) stays false.
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%42"}, nil)
+	applyEvent(s, tmuxctl.PaneTitleChanged{PaneID: "%42", Title: "● claude"}, nil)
+	snap = buildSnapshot(s, 10, time.Time{}, now, now*1000)
+	g = snap.TeamGroups[0]
+	if !g.Members[1].Waiting {
+		t.Errorf("tmux member with waiting pane title = %+v; want Waiting", g.Members[1])
+	}
+	if g.Members[0].Waiting {
+		t.Errorf("in-process member must never be Waiting: %+v", g.Members[0])
+	}
 
 	// Slash-form canonicalization (invariants review finding 2): a lead
 	// in a managed project must anchor to the SLASH-form row name, not

@@ -139,7 +139,11 @@ import (
 // idle_notification messages in the team lead's inbox — the first
 // teammate-attention signal for in-process teams (no panes, no hooks).
 // Restart all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v17"
+//
+// phase4-v18 (Agent Teams): adds TeamMember.Waiting — a tmux-backend
+// teammate whose pane title classifies as waiting renders as a red badge
+// bullet. Restart all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v18"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -282,6 +286,11 @@ type TeamMember struct {
 	// lead-inbox message is an idle_notification — the teammate is
 	// available and waiting for tasking. Renders as a hollow bullet.
 	Idle bool `json:"idle,omitempty"`
+	// Waiting (phase4-v18) is true when a tmux-backend member's pane
+	// title classifies as waiting — the teammate is blocked on input.
+	// Renders as a red bullet. Always false for in-process members
+	// (no pane; their signal is Idle).
+	Waiting bool `json:"waiting,omitempty"`
 }
 
 // Project is the per-row metadata in a Snapshot.

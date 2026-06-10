@@ -164,6 +164,11 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup) {
 		if !ok {
 			c = Dim
 		}
+		if m.Waiting {
+			// Blocked on input outranks the member's identity color —
+			// same red the row markers use for waiting.
+			c = RedPulse
+		}
 		buf.WriteString(c)
 		if m.Idle {
 			// Hollow bullet: available, awaiting tasking (Tier 2a).

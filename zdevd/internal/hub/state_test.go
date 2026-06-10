@@ -1067,11 +1067,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v17 (bumped zd-l2t for
+	// Test H: proto.SchemaVersion must be phase4-v18 (bumped zd-l2t for
 	// Snapshot.RigGroups — Gas Town rig grouping in the sidebar).
 	t.Run("H_schema_version_is_phase4_v16", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v17" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v17")
+		if proto.SchemaVersion != "phase4-v18" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v18")
 		}
 	})
 }

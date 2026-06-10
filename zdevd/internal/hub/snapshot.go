@@ -350,10 +350,20 @@ func teamGroupsFor(st *state) []proto.TeamGroup {
 			if m.AgentType == "team-lead" {
 				continue
 			}
+			// Waiting (v18): a tmux-backend member's pane title is the
+			// same signal the session-level derivation reads — classify
+			// it per member so the badge can pinpoint WHO is blocked.
+			waiting := false
+			if m.TmuxPaneID != "" && m.TmuxPaneID != teams.InProcessPaneID {
+				if pn, ok := st.panesByID[m.TmuxPaneID]; ok {
+					waiting = tmuxctl.ClassifyPaneTitle(pn.Title) == tmuxctl.StatusWaiting
+				}
+			}
 			g.Members = append(g.Members, proto.TeamMember{
 				Name:      m.Name,
 				Color:     m.Color,
 				Idle:      t.MemberIdle[m.Name],
+				Waiting:   waiting,
 				InProcess: m.TmuxPaneID == teams.InProcessPaneID,
 				PaneID: func() string {
 					if m.TmuxPaneID == teams.InProcessPaneID {

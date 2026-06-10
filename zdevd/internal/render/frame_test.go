@@ -1678,6 +1678,7 @@ func TestRender_TeamBadge(t *testing.T) {
 			Members: []proto.TeamMember{
 				{Name: "impl", Color: "blue", InProcess: true},
 				{Name: "rev", Color: "chartreuse"}, // unknown → Dim
+				{Name: "blk", Color: "green", Waiting: true},
 			},
 		}},
 	}
@@ -1693,6 +1694,9 @@ func TestRender_TeamBadge(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte(Dim+"•")) {
 		t.Errorf("unknown color must fall back to Dim bullet")
+	}
+	if !bytes.Contains(out, []byte(RedPulse+"•")) {
+		t.Errorf("waiting member must render a red bullet")
 	}
 	// beta's row must not carry the badge: badge bytes appear exactly once.
 	if bytes.Count(out, []byte("⊛")) != 1 {
