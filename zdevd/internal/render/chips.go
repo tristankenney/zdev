@@ -124,6 +124,52 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 	}
 }
 
+// teamMemberColors maps Agent Teams member colors (the config.json
+// "color" field — blue/green/... assigned by Claude Code at join time)
+// to xterm-256 foreground codes. Unknown colors render Dim — fail-soft,
+// the chip still counts the member.
+var teamMemberColors = map[string]string{
+	"blue":   "\x1b[38;5;75m",
+	"green":  "\x1b[38;5;114m",
+	"yellow": "\x1b[38;5;221m",
+	"red":    "\x1b[38;5;203m",
+	"purple": "\x1b[38;5;135m",
+	"orange": "\x1b[38;5;215m",
+	"pink":   "\x1b[38;5;212m",
+	"cyan":   "\x1b[38;5;80m",
+}
+
+// chipTeamBadge composes the Agent Teams badge for a lead's row
+// (phase4-v16, MVP slice 4): dim "⊛ <name>" + one colored bullet per
+// teammate. In-process teammates are exactly as real as tmux ones here —
+// the badge is the ONLY surface they have (no pane, no hooks). Name
+// truncated to 10 runes; a 4-member team costs ~17 cells total.
+func chipTeamBadge(buf *bytes.Buffer, groups []*proto.TeamGroup) {
+	for _, g := range groups {
+		chipOneTeamBadge(buf, g)
+	}
+}
+
+func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup) {
+	if g == nil {
+		return
+	}
+	buf.WriteString(" ")
+	buf.WriteString(Dim)
+	buf.WriteString("⊛")
+	buf.WriteString(truncateRunes(g.Name, 10))
+	buf.WriteString(Reset)
+	for _, m := range g.Members {
+		c, ok := teamMemberColors[m.Color]
+		if !ok {
+			c = Dim
+		}
+		buf.WriteString(c)
+		buf.WriteString("•")
+		buf.WriteString(Reset)
+	}
+}
+
 // MoodFor returns the fleet-mood ANSI color per VIS-04 / PD-06. Since
 // the header row's removal (dogfood: "the zdev projects header doesn't
 // add anything" — the pane border already names the pane), the DIVIDER

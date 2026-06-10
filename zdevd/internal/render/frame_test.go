@@ -1662,3 +1662,40 @@ func TestRender_OffMode_NoStaleDim(t *testing.T) {
 		t.Errorf("off mode: demote divider must NOT appear\n%q", out)
 	}
 }
+
+// TestRender_TeamBadge (phase4-v16, slice 4): the lead's row carries the
+// "⊛name" badge with one colored bullet per teammate; rows that lead no
+// team are unchanged; an unknown member color falls back to Dim.
+func TestRender_TeamBadge(t *testing.T) {
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "alpha", Status: "alive"},
+			{Name: "beta", Status: "alive"},
+		},
+		TeamGroups: []proto.TeamGroup{{
+			Name:        "slice2",
+			LeadProject: "alpha",
+			Members: []proto.TeamMember{
+				{Name: "impl", Color: "blue", InProcess: true},
+				{Name: "rev", Color: "chartreuse"}, // unknown → Dim
+			},
+		}},
+	}
+	anim := NewAnimator()
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+
+	if !bytes.Contains(out, []byte("⊛slice2")) {
+		t.Fatalf("missing team badge in output\n%q", out)
+	}
+	if !bytes.Contains(out, []byte(teamMemberColors["blue"]+"•")) {
+		t.Errorf("missing blue member bullet")
+	}
+	if !bytes.Contains(out, []byte(Dim+"•")) {
+		t.Errorf("unknown color must fall back to Dim bullet")
+	}
+	// beta's row must not carry the badge: badge bytes appear exactly once.
+	if bytes.Count(out, []byte("⊛")) != 1 {
+		t.Errorf("badge rendered %d times; want exactly 1 (lead row only)", bytes.Count(out, []byte("⊛")))
+	}
+}

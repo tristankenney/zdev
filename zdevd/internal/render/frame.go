@@ -142,6 +142,17 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// is preserved; the section is the ranking surface.
 	renderTriageSection(&buf, snap, width, animator, nowFn)
 
+	// Team badge lookup (phase4-v16, slice 4): lead project row → its
+	// team. Rendered inline on the lead's row so click-row math is
+	// untouched; multiple teams led from one row concatenate.
+	teamsByLead := make(map[string][]*proto.TeamGroup, len(snap.TeamGroups))
+	for i := range snap.TeamGroups {
+		g := &snap.TeamGroups[i]
+		if g.LeadProject != "" {
+			teamsByLead[g.LeadProject] = append(teamsByLead[g.LeadProject], g)
+		}
+	}
+
 	// Per-project rows.
 	//
 	// renderProject writes one project's row(s) and tallies it into the
@@ -177,10 +188,10 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		// Non-current urgent projects now render as 1 compact row with the red ▌
 		// prefix migrated into renderCompactRow.
 		if isCurrent {
-			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent)
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name])
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 		} else {
-			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor)
+			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name])
 		}
 	}
 
@@ -530,7 +541,7 @@ func joinNonEmpty(dst *bytes.Buffer, subs []*bytes.Buffer, sep string) {
 //	urgent=true          → {RedBorder}▌{Reset}" " (foreground-only red; no bg state to leak)
 //	urgent=false+current → {BreathColorForProject}▌{Reset}" " (per-project breath bar, VIS-03)
 //	otherwise            → "  " (2-space indent)
-func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent bool) {
+func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent bool, teamGroups []*proto.TeamGroup) {
 	isCurrent := p.Name == current && current != ""
 	switch {
 	case urgent:
@@ -577,6 +588,9 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	if isCurrent {
 		buf.WriteString(Reset)
 	}
+	// Agent Teams badge (phase4-v16, slice 4) — same placement as the
+	// compact row: after the name, before line-clear.
+	chipTeamBadge(buf, teamGroups)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
 }
@@ -678,7 +692,7 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 // No branch, ports, shell-cmd, agent chips, or celebrate chip — those are
 // scanning noise on a non-current row. Only attention-worthy signals surface.
 // Per planner decision PD-02: name soft-cap at max(width-14, 10) runes.
-func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool) {
+func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool, teamGroups []*proto.TeamGroup) {
 	switch {
 	case urgent:
 		buf.WriteString(RedBorder)
@@ -722,6 +736,11 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 
 	// Inline alerts: PR/CI fail, PR pend, dirty count.
 	chipInlineAlerts(buf, p)
+
+	// Agent Teams badge (phase4-v16, slice 4): the lead's row carries
+	// "⊛name" + a colored bullet per teammate — for in-process teams
+	// this is the members' ONLY surface.
+	chipTeamBadge(buf, teamGroups)
 
 	// Wait-age (compact form: no "! " prefix; chipWaitAge with "! " is for
 	// current-session agent domain row only — compact rows use the tiered inline form).
