@@ -331,3 +331,23 @@ a stale member record (no pane for tmux backend, no recent inbox
 traffic for in-process) is the Tier-2 orphan-detection signal at the
 CONFIG level, complementing the orphaned-process detection from the
 second probe.
+
+## 2026-06-10 — tmux-mode CONFIRMED (interactive probe, closes the open question)
+
+Driven via send-keys against an interactive `claude --teammate-mode tmux`:
+
+1. **tmuxPaneId is the literal `#{pane_id}`** — observed `"%65"`,
+   `backendType: "tmux"`. (The record is briefly empty mid-join; the
+   pane id lands after spawn — readers must tolerate the gap.)
+2. **Teammate panes live INSIDE the lead's session**, as separate
+   `claude -p --teammate-mode tmux` processes with agent-shaped pane
+   titles (`⠂ general-purpose`). Consequence: zdev's existing
+   session-level title classification ALREADY aggregates tmux
+   teammates into the lead session's attention — a waiting teammate
+   pulses the session row with zero new code. "Pane grouping" reduces
+   to per-member state on the badge: classify each PaneID's title via
+   the existing registry and render waiting members as pulsing
+   bullets (future v18; TeamMember.PaneID is already on the wire).
+3. Tier 2a (inbox idle, hollow bullets) shipped phase4-v17 the same
+   day — both backends now have a teammate-state signal: inboxes for
+   in-process, pane titles for tmux.
