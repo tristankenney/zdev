@@ -1,5 +1,7 @@
 package tmuxctl
 
+import "github.com/tristankenney/zdev/zdevd/internal/teams"
+
 // Event is the closed interface for parsed control-mode notifications.
 // Concrete types satisfy it via an unexported isEvent() method, which
 // prevents foreign packages from synthesizing arbitrary events.
@@ -267,3 +269,24 @@ type GTRigMapChanged struct {
 }
 
 func (GTRigMapChanged) isEvent() {}
+
+// TeamsChanged (Agent Teams MVP) carries a full-replacement snapshot of the
+// Claude Code Agent Teams discovered under ~/.claude/teams/, keyed by team
+// name. The teams.Watcher rescans the directory on every relevant fsnotify
+// event and submits this event; cmd/zdevd wires the watcher into the hub in
+// slice 3. The map is a complete snapshot, not a delta: the hub replaces all
+// team state with Teams wholesale, so a team that vanished from disk simply
+// stops appearing here. An empty or nil map means no teams exist — the hub
+// clears all team state (e.g., the last team's directory was rm -rf'd on
+// "Clean up the team"). Membership/pane grouping is computed at snapshot
+// build time, not stored on the event.
+//
+// This event lives in tmuxctl (rather than teams) so it can join the closed
+// Event union; the import goes tmuxctl→teams (teams imports only stdlib, so
+// there is no cycle), which is why the watcher itself cannot reference this
+// type — see internal/teams/watcher.go for that inversion.
+type TeamsChanged struct {
+	Teams map[string]*teams.Team
+}
+
+func (TeamsChanged) isEvent() {}
