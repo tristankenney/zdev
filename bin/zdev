@@ -646,7 +646,7 @@ done
 
 for PROJECT in "$@"; do
     SESSION=$(session_name "$PROJECT")
-    if tmux has-session -t "$SESSION" 2>/dev/null; then
+    if tmux has-session -t "=$SESSION" 2>/dev/null; then
         echo "Session '$SESSION' already running"
     else
         echo "Starting session '$SESSION'..."
@@ -656,7 +656,7 @@ done
 
 TARGET=$(session_name "$1")
 if [[ -n "${TMUX:-}" ]]; then
-    exec tmux switch-client -t "$TARGET"
+    exec tmux switch-client -t "=$TARGET"
 else
-    exec tmux attach-session -t "$TARGET"
+    exec tmux attach-session -t "=$TARGET"
 fi
