@@ -201,3 +201,100 @@ DEPENDS ON
 DISCOVERED
   ◊ ✓ zd-amj: probe: capture real Agent Teams config.json + observe spawn mode ● P2
 
+
+---
+
+# Beyond the MVP — deeper integration tiers (2026-06-10)
+
+The MVP (detection + grouping + badge) only makes teams *visible*. The
+probe surfaced three richer seams that map directly onto zdev's core
+competency — attention — plus one onto the planned S3 review gauge.
+
+## Tier 2 — teammate attention from inboxes (the big one)
+
+In-process teammates have NO pane, NO hooks, NO process — but they DO
+write `idle_notification` messages into `inboxes/team-lead.json`
+(observed: `{"type":"idle_notification","from":"probe-a","idleReason":
+"available"}`). That is a per-teammate availability signal on disk,
+fsnotify-able, in a directory we are already watching for Tier 1.
+
+- An idle teammate on a team with unassigned tasks = the TEAM is
+  blocked on its lead → surface as a wait on the lead's row (the same
+  ● semantics as a human-facing question, because the remedy is the
+  same: go nudge the lead).
+- Inbox messages also carry teammate→lead questions; if a message text
+  parses as a question/permission shape, AnswerCost classification
+  applies unchanged.
+- This restores zdev's value for HEADLESS teams — which are always
+  in-process, i.e. the common case — where tmux-title classification
+  has nothing to read.
+
+## Tier 3 — team task-list progress chip
+
+`~/.claude/tasks/{name}/` holds the shared task list (empty in the
+standby probe; live-task schema captured below when the 2026-06-10
+task-lifecycle probe lands). A `3/7 tasks` chip on the team's group
+header gives the burn-down at a glance; done==total with an idle lead
+is "team finished — review me" (◆ semantics at team granularity).
+
+## Tier 4 — teams in triage
+
+Once Tiers 2-3 exist, the triage queue gets team-aware entries:
+- class: team blocked (idle teammates + unassigned tasks) ranks with
+  decision waits;
+- gist: "team zdev-probe2: 2 idle, 4/7 tasks" instead of a pane scrape;
+- `zdev next` jumps to the LEAD's pane (the only actionable surface).
+
+## Tier 5 — S3 hook
+
+A finished team's output is branches/commits in the members' cwds. The
+team's cwd set (members[].cwd) feeds the S3 review-gauge grouping the
+same way rig repos did — "team X produced 3 ready-to-land branches".
+
+## Sequencing
+
+Tier 2 rides the SAME watcher as Tier 1 (one fsnotify root). Proposed
+order: MVP slices (watcher → hub → render) land first with the badge;
+Tier 2 immediately after (inbox parse + lead-row wait synthesis);
+Tier 3 when the task schema below is confirmed; Tier 4 falls out of
+2+3; Tier 5 belongs to the S3 build.
+
+## Open risks
+
+- Inbox files are message QUEUES; the read-cursor problem (which
+  messages has zdev already seen) needs a per-file offset or
+  timestamp watermark in hub state — same shape as WaitNotifiedTiers.
+- All of this is double-experimental: the feature is gated AND the
+  schema is unversioned. Every parser must fail soft (the Tier 1
+  torn-read rule generalizes).
+
+## 2026-06-10 — second probe (task-lifecycle attempt): partial findings
+
+The follow-up probe (create team → dispatch tasks → leave artifacts)
+half-failed — the lead produced no output and no team survived on disk —
+but the wreckage itself answered questions:
+
+1. **Teammate spawn mechanism observed**: a teammate materialized as a
+   SEPARATE `claude -p --output-format json --dangerously-skip-permissions
+   --teammate-mode tmux` OS process. tmux-mode teammates are full headless
+   claude processes (not threads in the lead), which means zdev's existing
+   per-pane title classification + hooks apply to them UNCHANGED once they
+   sit in real panes. The orphan we found was parented to launchd with NO
+   pane — the lead exited (or died) without reaping it. **Teams can leak
+   orphaned teammate processes**; a zdev "orphaned teammate" detector
+   (process exists, team dir gone) is a Tier 2 candidate signal.
+2. **`~/.claude/tasks/` is shared infrastructure, not team-only**: it
+   holds one UUID dir per Claude Code session (the standard task-list
+   store). Team task dirs (`tasks/{team-name}/`) sit BESIDE dozens of
+   session dirs — Tier 3 must key strictly by known team names from
+   `teams/`, never by scanning `tasks/` itself.
+3. **Auto-mode is environment-sensitive**: contrary to the first probe
+   (always in-process headlessly), this run attempted a tmux-backend
+   teammate — the difference is the probe ran with $TMUX set (inside the
+   operator's session) vs the first probe's clean sandboxes. So BOTH
+   backends occur in practice depending on launch context, reinforcing the
+   hybrid MVP design.
+4. Cleanup confirmed aggressive: the failed run left teams/ empty.
+
+Remaining unknown (one more interactive run needed): the on-disk
+tmuxPaneId VALUE for a successfully-attached tmux teammate.
