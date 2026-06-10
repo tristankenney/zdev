@@ -114,3 +114,33 @@ func TestLoadAll(t *testing.T) {
 		t.Fatalf("LoadAll(missing) = %v; want empty", got)
 	}
 }
+
+// TestParseLeadInbox (Tier 2a): last message per member wins — an
+// idle_notification marks idle; any later non-idle message from the same
+// member clears it; junk and missing inboxes fail soft.
+func TestParseLeadInbox(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "t")
+	os.MkdirAll(filepath.Join(dir, "inboxes"), 0o755)
+	inbox := `[
+	 {"from":"a","text":"{\"type\":\"idle_notification\",\"from\":\"a\",\"idleReason\":\"available\"}"},
+	 {"from":"b","text":"{\"type\":\"idle_notification\",\"from\":\"b\"}"},
+	 {"from":"b","text":"{\"type\":\"task_result\",\"from\":\"b\"}"},
+	 {"from":"c","text":"not json at all"}
+	]`
+	os.WriteFile(filepath.Join(dir, "inboxes", "team-lead.json"), []byte(inbox), 0o644)
+
+	idle := parseLeadInbox(dir)
+	if !idle["a"] {
+		t.Error("a declared idle and nothing superseded it; want idle")
+	}
+	if idle["b"] {
+		t.Error("b's task_result must supersede its idle_notification")
+	}
+	if idle["c"] {
+		t.Error("unparseable text must not mark idle")
+	}
+	if parseLeadInbox(filepath.Join(root, "absent")) != nil {
+		t.Error("missing inbox must return nil")
+	}
+}

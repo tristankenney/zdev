@@ -135,6 +135,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 					w.addSubdir(fsw, ev.Name)
 				}
 			}
+			// inboxes/ created inside an already-watched team dir (it
+			// appears on the first teammate message, after team create):
+			// arm its watch so idle-state rewrites are seen (Tier 2a).
+			if ev.Op&fsnotify.Create != 0 && filepath.Base(ev.Name) == "inboxes" {
+				if fi, serr := os.Stat(ev.Name); serr == nil && fi.IsDir() {
+					if err := fsw.Add(ev.Name); err != nil {
+						slog.Warn("teams: watch inboxes failed; idle states may lag", "dir", ev.Name, "err", err)
+					}
+				}
+			}
 			// (Re)arm the debounce timer.
 			if !timer.Stop() {
 				select {
@@ -160,12 +170,24 @@ func (w *Watcher) Run(ctx context.Context) error {
 	}
 }
 
-// addSubdir adds a watch on a team subdirectory, treating failures as soft.
-// The directory may have been rm -rf'd between the event that prompted this
-// call and the Add (Agent Teams cleanup removes the whole tree at once), so a
-// failure here is expected churn, not an error worth surfacing.
+// addSubdir adds watches on a team subdirectory AND its inboxes/
+// directory (Tier 2a: teammate idle_notification messages land in
+// inboxes/team-lead.json, one level below the team dir — non-recursive
+// fsnotify needs the explicit watch or idle-state changes go unseen).
+// inboxes/ may not exist yet at team-create time; the team-dir watch
+// sees its Create and the event loop routes back here. Failures are
+// soft: the directory may have been rm -rf'd between the event that
+// prompted this call and the Add (cleanup removes the whole tree), so a
+// failure is expected churn, not an error worth surfacing.
 func (w *Watcher) addSubdir(fsw *fsnotify.Watcher, dir string) {
 	if err := fsw.Add(dir); err != nil {
 		slog.Warn("teams: watch team subdir failed (likely removed); skipping", "dir", dir, "err", err)
+		return
+	}
+	inboxes := filepath.Join(dir, "inboxes")
+	if fi, err := os.Stat(inboxes); err == nil && fi.IsDir() {
+		if err := fsw.Add(inboxes); err != nil {
+			slog.Warn("teams: watch inboxes failed; idle states may lag", "dir", inboxes, "err", err)
+		}
 	}
 }

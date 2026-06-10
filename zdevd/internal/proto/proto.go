@@ -134,7 +134,12 @@ import (
 // feature is unused, so non-team fleets see zero change. Forward-
 // compatible in practice; bumped for strict-equality validation. Restart
 // all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v16"
+//
+// phase4-v17 (Agent Teams Tier 2a): adds TeamMember.Idle, derived from
+// idle_notification messages in the team lead's inbox — the first
+// teammate-attention signal for in-process teams (no panes, no hooks).
+// Restart all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v17"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -273,6 +278,10 @@ type TeamMember struct {
 	Color     string `json:"color,omitempty"`
 	InProcess bool   `json:"in_process,omitempty"`
 	PaneID    string `json:"pane_id,omitempty"`
+	// Idle (phase4-v17, Tier 2a) is true when the member's latest
+	// lead-inbox message is an idle_notification — the teammate is
+	// available and waiting for tasking. Renders as a hollow bullet.
+	Idle bool `json:"idle,omitempty"`
 }
 
 // Project is the per-row metadata in a Snapshot.

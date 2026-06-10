@@ -165,7 +165,12 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup) {
 			c = Dim
 		}
 		buf.WriteString(c)
-		buf.WriteString("•")
+		if m.Idle {
+			// Hollow bullet: available, awaiting tasking (Tier 2a).
+			buf.WriteString("◦")
+		} else {
+			buf.WriteString("•")
+		}
 		buf.WriteString(Reset)
 	}
 }

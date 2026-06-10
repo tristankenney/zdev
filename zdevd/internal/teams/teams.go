@@ -43,6 +43,15 @@ type Team struct {
 	LeadAgentID   string   `json:"leadAgentId"`
 	LeadSessionID string   `json:"leadSessionId"`
 	Members       []Member `json:"members"`
+
+	// MemberIdle (Tier 2a, docs/design/agent-teams.md) is derived from
+	// the lead's inbox, NOT config.json: teammates push idle_notification
+	// messages there, and the LAST message per member wins (a later
+	// task assignment doesn't retract it on disk, but a teammate going
+	// busy→idle→busy emits fresh notifications, so last-wins tracks the
+	// newest declared state). Nil when the inbox is missing/unreadable —
+	// fail-soft, the badge just shows all members solid.
+	MemberIdle map[string]bool `json:"-"`
 }
 
 // Lead returns the team-lead member, or nil if the config carries none
@@ -86,6 +95,60 @@ func DefaultDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".claude", "teams")
 }
 
+// inboxMessage mirrors one element of inboxes/<member>.json. The text
+// field is ITSELF JSON with a "type" discriminator (idle_notification,
+// shutdown_request, ... — live-captured samples in the design doc);
+// unknown types are ignored per the fail-soft rule.
+type inboxMessage struct {
+	From string `json:"from"`
+	Text string `json:"text"`
+}
+
+// parseLeadInbox reads inboxes/team-lead.json beside configPath and
+// returns the latest idle state per sender. Any error → nil (best
+// effort; the inbox is an enrichment, never a gate).
+func parseLeadInbox(teamDir string) map[string]bool {
+	b, err := os.ReadFile(filepath.Join(teamDir, "inboxes", "team-lead.json"))
+	if err != nil {
+		return nil
+	}
+	var msgs []inboxMessage
+	if err := json.Unmarshal(b, &msgs); err != nil {
+		return nil
+	}
+	var idle map[string]bool
+	for _, m := range msgs {
+		var inner struct {
+			Type string `json:"type"`
+			From string `json:"from"`
+		}
+		if json.Unmarshal([]byte(m.Text), &inner) != nil {
+			continue
+		}
+		from := inner.From
+		if from == "" {
+			from = m.From
+		}
+		if from == "" {
+			continue
+		}
+		switch inner.Type {
+		case "idle_notification":
+			if idle == nil {
+				idle = make(map[string]bool)
+			}
+			idle[from] = true
+		default:
+			// Any non-idle message FROM a member (a question, a result,
+			// a shutdown ack) supersedes its idle declaration.
+			if idle != nil {
+				delete(idle, from)
+			}
+		}
+	}
+	return idle
+}
+
 // LoadTeam parses one team's config.json. A missing file, unparseable
 // JSON, or an empty team name returns (nil, error) — the watcher treats
 // every error as "not a (complete) team yet" and waits for the next
@@ -103,6 +166,7 @@ func LoadTeam(configPath string) (*Team, error) {
 	if t.Name == "" {
 		return nil, errEmptyName
 	}
+	t.MemberIdle = parseLeadInbox(filepath.Dir(configPath))
 	return &t, nil
 }
 

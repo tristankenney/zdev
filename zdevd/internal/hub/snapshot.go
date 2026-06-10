@@ -353,6 +353,7 @@ func teamGroupsFor(st *state) []proto.TeamGroup {
 			g.Members = append(g.Members, proto.TeamMember{
 				Name:      m.Name,
 				Color:     m.Color,
+				Idle:      t.MemberIdle[m.Name],
 				InProcess: m.TmuxPaneID == teams.InProcessPaneID,
 				PaneID: func() string {
 					if m.TmuxPaneID == teams.InProcessPaneID {
