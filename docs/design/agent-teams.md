@@ -321,3 +321,13 @@ Also observed: a headless lead chose to wind down its team and
 implement directly, citing the non-interactive session — teams may be
 SHORT-LIVED relative to the work; zdev must handle rapid
 create→dissolve cycles without flapping the sidebar group.
+
+## 2026-06-10 — build-team postmortem finding (zdev-slice2 lead)
+
+Teammate shutdown does NOT remove its member record from config.json —
+the lead had to prune the dead teammate manually before team cleanup
+would proceed. So members[] can contain entries whose agent is gone:
+a stale member record (no pane for tmux backend, no recent inbox
+traffic for in-process) is the Tier-2 orphan-detection signal at the
+CONFIG level, complementing the orphaned-process detection from the
+second probe.
