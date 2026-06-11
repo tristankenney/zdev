@@ -1,0 +1,122 @@
+# opencode upstream-drift canary.
+#
+# Every other gate in this repo tests the opencode adapter SYNTHETICALLY:
+# scripts/test-opencode-plugin.mjs stubs Bun's $ and drives the hook with
+# hand-built events; agent-smoke fires zdev-notify directly. Those prove
+# OUR mapping but can't see upstream drift — if opencode renames
+# session.idle, changes the plugin factory signature, or moves the plugin
+# directory, every per-push gate stays green while the integration dies
+# silently (exactly the UTM dogfood failure mode, 2026-06).
+#
+# This workflow installs the LATEST real opencode, points it at the
+# repo's actual plugin file, and replaces ~/.local/bin/zdev-notify with a
+# recording shim. The plugin notifies "alive" at load time, so a bare TUI
+# boot — no model, no API key — must produce `opencode alive` in the
+# shim log. That single line proves the full chain: installer → plugin
+# discovery → factory contract ({ $ }) → Bun shellout → our binary path.
+#
+# Canary, not gate: scheduled weekly (plus manual dispatch), never run on
+# push. A failure means upstream moved, not that a commit broke something.
+name: opencode-canary
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install latest opencode
+        run: |
+          set -e
+          curl -fsSL https://opencode.ai/install | bash
+          # The installer's target has moved before; resolve rather than
+          # assume, and fail loudly if none of the known locations hit.
+          for c in "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode" \
+                   "$(command -v opencode 2>/dev/null || true)"; do
+            if [ -n "$c" ] && [ -x "$c" ]; then
+              dirname "$c" >> "$GITHUB_PATH"
+              echo "found: $c"
+              exit 0
+            fi
+          done
+          echo "FAIL: opencode binary not found after install"
+          exit 1
+
+      - name: version + plugin + shim setup
+        run: |
+          set -e
+          opencode --version
+          # Plugin: symlink the repo's REAL adapter into both directories
+          # zdev-install-hooks targets (current plugins/ and legacy
+          # plugin/) so the canary also notices a directory-layout move.
+          mkdir -p "$HOME/.config/opencode/plugins" "$HOME/.config/opencode/plugin"
+          ln -sf "$GITHUB_WORKSPACE/config/opencode/zdev-notify.js" \
+            "$HOME/.config/opencode/plugins/zdev-notify.js"
+          ln -sf "$GITHUB_WORKSPACE/config/opencode/zdev-notify.js" \
+            "$HOME/.config/opencode/plugin/zdev-notify.js"
+          # Recording shim at the exact path the plugin shells out to —
+          # no daemon needed; the canary asserts on recorded argv.
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/zdev-notify" <<'EOF'
+          #!/usr/bin/env bash
+          echo "$*" >> /tmp/zdev-notify-canary.log
+          EOF
+          chmod +x "$HOME/.local/bin/zdev-notify"
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends tmux
+
+      - name: boot TUI, assert plugin load fires `opencode alive`
+        run: |
+          set -e
+          tmux new-session -d -s canary -x 200 -y 50 'opencode'
+          ok=0
+          for i in $(seq 1 60); do
+            if grep -q "^opencode alive$" /tmp/zdev-notify-canary.log 2>/dev/null; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          if [ "$ok" != "1" ]; then
+            echo "FAIL: plugin never fired 'opencode alive' within 120s —"
+            echo "upstream opencode likely changed plugin discovery or the"
+            echo "factory contract. TUI state and log below."
+            echo "=== shim log ==="; cat /tmp/zdev-notify-canary.log 2>/dev/null || echo "(empty)"
+            echo "=== tui pane ==="; tmux capture-pane -t canary -p || true
+            exit 1
+          fi
+          echo "ok: real opencode loaded the adapter and reached zdev-notify"
+
+      - name: attempt prompt submit (event-hook probe, best effort)
+        run: |
+          # The event hook ({ event: { type, properties } } shape) only
+          # provably still works if a real event traverses it. A prompt
+          # submission fires tui.command.execute/prompt.submit → "clear"
+          # WITHOUT needing a model to answer (the submit precedes the
+          # provider call). First-run TUI chrome (auth/theme pickers) can
+          # swallow keystrokes, so a miss here is reported, not fatal —
+          # promote to a hard assert once a few runs prove it stable.
+          tmux send-keys -t canary "hello canary" Enter || true
+          ok=0
+          for i in $(seq 1 15); do
+            if grep -q "^opencode clear$" /tmp/zdev-notify-canary.log 2>/dev/null; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          if [ "$ok" = "1" ]; then
+            echo "ok: event hook fired on prompt submit (opencode clear)"
+          else
+            echo "warn: no 'opencode clear' after submit — TUI chrome may"
+            echo "have eaten the keystrokes; event-hook drift NOT verified"
+            echo "this run. Pane state:"
+            tmux capture-pane -t canary -p || true
+          fi
+
+      - name: full shim log
+        if: always()
+        run: cat /tmp/zdev-notify-canary.log 2>/dev/null || echo "(no notify calls recorded)"
