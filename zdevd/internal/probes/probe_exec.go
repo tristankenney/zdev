@@ -3,9 +3,53 @@ package probes
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
 )
+
+// backgroundPrefix returns an argv prefix that demotes probe subprocesses to
+// background priority, or nil when no demotion tool is available (or the
+// operator opted out via ZDEVD_PROBE_BACKGROUND=off).
+//
+// 260611 perf-hunt: the branch probe's `sl` calls ran in 77% of 1s wall-clock
+// samples (individual calls up to 14s on big sapling worktrees) at the same
+// scheduling priority as the operator's interactive shell — the probes were
+// the terminal-lag mechanism, not the daemon's own CPU. Probe results are
+// async and staleness-tolerant by design, so they should always lose the
+// contest for CPU and disk against the human.
+//
+// macOS: `taskpolicy -b` puts the child (and descendants) in the background
+// QoS band, which throttles I/O as well as CPU — sapling's lag pressure is
+// substantially disk. Elsewhere: plain POSIX `nice -n 10`. Both exec the
+// target in-place (same PID), so CommandContext's timeout kill and ExitError
+// stderr capture behave exactly as before.
+var backgroundPrefix = sync.OnceValue(func() []string {
+	if os.Getenv("ZDEVD_PROBE_BACKGROUND") == "off" {
+		return nil
+	}
+	if runtime.GOOS == "darwin" {
+		if p, err := exec.LookPath("taskpolicy"); err == nil {
+			return []string{p, "-b"}
+		}
+	}
+	if p, err := exec.LookPath("nice"); err == nil {
+		return []string{p, "-n", "10"}
+	}
+	return nil
+})
+
+// withBackground prepends the background-priority wrapper to a probe argv.
+func withBackground(name string, args []string) (string, []string) {
+	prefix := backgroundPrefix()
+	if len(prefix) == 0 {
+		return name, args
+	}
+	full := append(append([]string{}, prefix[1:]...), name)
+	return prefix[0], append(full, args...)
+}
 
 // augmentExecError unwraps *exec.ExitError to surface captured stderr in
 // the returned error's message. Probes pass errors to slog via the "err"

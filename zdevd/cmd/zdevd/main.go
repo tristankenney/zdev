@@ -407,7 +407,14 @@ func run() error {
 			// multiple project probes were running in parallel as the user
 			// navigated sessions, eating CPU and contributing to typing lag.
 			// Branch + dirty count tolerate up-to-1-minute staleness.
-			sched.RefreshIfStale(ctx, branchProbe, probeKey, 60*time.Second)
+			//
+			// 260611 perf-hunt: 60s → 180s. Even serialized and gated, an sl
+			// subprocess was alive in ~77% of 1s wall-clock samples (single
+			// calls up to 14s on agora worktrees) — at 60s staleness the
+			// size-1 sem queue never drained on a 10-project fleet. Branch
+			// chips tolerate minutes of staleness; subprocess demotion
+			// (withBackground) handles the contention that remains.
+			sched.RefreshIfStale(ctx, branchProbe, probeKey, 180*time.Second)
 			sched.RefreshIfStale(ctx, ghProbe, probeKey, 5*time.Minute)
 			sched.RefreshIfStale(ctx, ciProbe, probeKey, 5*time.Minute)
 			sched.RefreshIfStale(ctx, lsofProbe, "", 10*time.Second)

@@ -102,6 +102,7 @@ func NewGHProbe(submit func(tmuxctl.Event), resolver RepoResolver, workspace str
 }
 
 func defaultExec(ctx context.Context, name string, args ...string) ([]byte, error) {
+	name, args = withBackground(name, args)
 	out, err := exec.CommandContext(ctx, name, args...).Output()
 	return out, augmentExecError(err)
 }

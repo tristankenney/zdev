@@ -125,6 +125,7 @@ func (b *BranchProbe) dirFor(project string) string {
 }
 
 func defaultExecInDir(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+	name, args = withBackground(name, args)
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
