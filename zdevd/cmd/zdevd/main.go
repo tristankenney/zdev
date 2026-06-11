@@ -171,7 +171,6 @@ func run() error {
 	}
 
 	tmuxSocket := os.Getenv("ZDEVD_TMUX_SOCKET")
-	gtSock := gtSocketName()
 
 	slog.Info("zdevd starting (Phase 4)",
 		"socket", *socketFlag,
@@ -186,7 +185,6 @@ func run() error {
 		"workspace", cfg.Workspace,
 		"width", cfg.Width,
 		"tmux_socket", tmuxSocket,
-		"gt_socket", gtSock,
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(),
@@ -432,26 +430,7 @@ func run() error {
 		}
 	}
 
-	// When GT integration is active, wrap the default-socket submit with
-	// dedup suppression so sessions already claimed by the GT socket are
-	// not duplicated in the sidebar. The dedup is nil when GT is disabled
-	// (GT_TOWN_ROOT unset or ZDEV_GT_TOWN_ROOT=off) or when the daemon
-	// itself is running inside the GT socket's tmux server.
-	var dedup *gtDedup
-	if gtSock != "" {
-		if isInsideGTSocket(gtSock) {
-			slog.Info("GT supervisor disabled: daemon running inside GT tmux socket", "gt_socket", gtSock)
-		} else {
-			dedup = newGTDedup()
-		}
-	}
-
-	defaultSubmit := rawDefaultSubmit
-	if dedup != nil {
-		defaultSubmit = dedup.wrapDefaultSubmit(rawDefaultSubmit)
-	}
-
-	sup := tmuxctl.NewSupervisor(defaultSubmit, tmuxctl.WithSocketName(tmuxSocket))
+	sup := tmuxctl.NewSupervisor(rawDefaultSubmit, tmuxctl.WithSocketName(tmuxSocket))
 
 	// Phase 4 (D4-10): daemon-start marker. Submitted BEFORE the eventlog
 	// goroutine starts draining — Plan 01's cap=16 buffer absorbs the event
@@ -491,31 +470,6 @@ func run() error {
 	g.Go(func() error { return notifW.Run(gctx) })
 	g.Go(func() error { return teamsW.Run(gctx) })
 	g.Go(func() error { return workspaceW.Run(gctx) })
-
-	// Gas Town rigs.json watcher (zd-l2t): reads the prefix → rig map
-	// once at startup and re-reads on every edit. submitEvent routes
-	// into the hub which stores the map in state.rigPrefixes for the
-	// rig-group section headers. No-op when GT_TOWN_ROOT is unset
-	// (rigsJSONPath returns "" — runRigsWatcher waits on ctx and exits).
-	rigsPath := rigsJSONPath()
-	g.Go(func() error { return runRigsWatcher(gctx, rigsPath, submitEvent) })
-
-	// GT supervisor: second supervisor on the Gas Town socket. Surfaces GT
-	// rig sessions (hq-mayor, zd-quartz, etc.) as Unmanaged rows alongside
-	// the user's project sessions. Only started when dedup is non-nil, which
-	// means GT_TOWN_ROOT is set, ZDEV_GT_TOWN_ROOT != off, and the daemon is
-	// NOT running inside the GT socket's tmux server.
-	if dedup != nil {
-		gtSubmit := dedup.wrapGTSubmit(func(ev tmuxctl.Event) {
-			_ = h.Submit(ev)
-			if e, ok := ev.(tmuxctl.PaneCwdChanged); ok {
-				handleCwdForUnmanaged(e)
-			}
-		})
-		gtSup := tmuxctl.NewSupervisor(gtSubmit, tmuxctl.WithSocketName(gtSock))
-		g.Go(func() error { return gtSup.Run(gctx) })
-		slog.Info("GT supervisor started", "gt_socket", gtSock)
-	}
 
 	wErr := g.Wait()
 
