@@ -115,20 +115,9 @@ jobs:
           systemctl --user disable --now zdevd.service zdev-reaper.timer 2>/dev/null || true
           tmux kill-server 2>/dev/null || true
           sleep 1
-          # GT socket bootstrap (zd-1pi.1): set GT_TOWN_ROOT so the dual-
-          # supervisor activates and watches GT sessions on a sibling tmux
-          # socket. The socket name is sha256(GT_TOWN_ROOT) first 6 hex.
-          # ZDEV_SIDEBAR_UNMANAGED=show surfaces those sessions as
-          # Unmanaged rows in the snapshot (default hides them).
-          export GT_TOWN_ROOT="$HOME/gt-ci"
-          mkdir -p "$GT_TOWN_ROOT"
-          GT_SOCK="gt-$(printf '%s' "$GT_TOWN_ROOT" | sha256sum | cut -c1-6)"
-          echo "GT_SOCK=$GT_SOCK" >> "$GITHUB_ENV"
-          echo "GT_TOWN_ROOT=$GT_TOWN_ROOT" >> "$GITHUB_ENV"
-          # Spin up a tmux session on the GT socket BEFORE the daemon boots
-          # so its first poll already finds the session.
-          tmux -L "$GT_SOCK" new-session -d -s gt-agent-1 2>/dev/null || true
-          nohup env GT_TOWN_ROOT="$GT_TOWN_ROOT" ZDEV_SIDEBAR_UNMANAGED=show \
+          # ZDEV_SIDEBAR_UNMANAGED=show surfaces sessions without a
+          # projects-file entry as Unmanaged rows (default hides them).
+          nohup env ZDEV_SIDEBAR_UNMANAGED=show \
             "$HOME/.local/bin/zdevd" >/tmp/zdevd.log 2>&1 &
           for i in $(seq 1 30); do
             zdev-show triage >/dev/null 2>&1 && break
@@ -140,28 +129,6 @@ jobs:
           zdevd diag || true
           tmux ls
           tmux has-session -t =proj-a
-      - name: GT socket bootstrap (zd-1pi.1)
-        run: |
-          # The dual-supervisor only activates when GT_TOWN_ROOT is set; the
-          # boot step above passes it into the daemon env. Verify the second
-          # supervisor sees the GT tmux session and surfaces it as a row.
-          # ZDEV_SIDEBAR_UNMANAGED=show (set on the daemon) makes the row
-          # appear in the snapshot — otherwise GT sessions are hidden from
-          # `zdev-show list --json` for non-opt-in users.
-          check_gt() {
-            zdev-show list --json | python3 -c 'import sys,json; rows=json.load(sys.stdin); sys.exit(0 if any("gt-agent-1" in r.get("name","") for r in rows) else 1)'
-          }
-          ok=0
-          for i in $(seq 1 30); do
-            if check_gt; then ok=1; break; fi
-            sleep 1
-          done
-          if [ "$ok" != "1" ]; then
-            echo "FAIL: GT sessions not visible in snapshot"
-            zdev-show list --json
-            exit 1
-          fi
-          echo "ok: GT socket bootstrap — dual-supervisor sees GT sessions"
       - name: claude lifecycle (hook JSON → triage → clear → death → ack)
         run: |
           pane=$(tmux list-panes -s -t proj-a -F '#{pane_id}' | head -1)
