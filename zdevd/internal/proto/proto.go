@@ -118,14 +118,8 @@ import (
 // is forward-compatible in practice, but bumped for strict-equality validation.
 // Restart all zdev-sidebar-render instances after deploying.
 //
-// phase4-v15 (zd-l2t): adds Snapshot.RigGroups — the Gas Town rig grouping
-// for the sidebar. When the daemon sees ~/gt/rigs.json (GT_TOWN_ROOT set),
-// it reads the prefix→rig map and groups sessions whose names start with a
-// known prefix under that rig. The renderer emits a `── <rig> ──` section
-// header above each group's rows. Empty/omitempty when GT integration is
-// off, so non-GT fleets see zero change. A v14 renderer ignores the field
-// silently, so forward-compatible in practice; bumped for strict-equality
-// validation. Restart all zdev-sidebar-render instances after deploying.
+// phase4-v15 (zd-l2t): added Snapshot.RigGroups, the Gas Town rig grouping
+// (removed in v19 — see below).
 //
 // phase4-v16 (Agent Teams MVP slice 3): adds Snapshot.TeamGroups — Claude
 // Code Agent Teams discovered under ~/.claude/teams/ via the slice-2
@@ -143,7 +137,13 @@ import (
 // phase4-v18 (Agent Teams): adds TeamMember.Waiting — a tmux-backend
 // teammate whose pane title classifies as waiting renders as a red badge
 // bullet. Restart all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v18"
+//
+// phase4-v19: removes Snapshot.RigGroups and the RigGroup type. Gas Town
+// was decommissioned 2026-06-10/11; the rig grouping had no producer left
+// (the daemon's GT supervisor and rigs.json watcher are deleted). Agent
+// Teams (TeamGroups) is the successor surface for agent-fleet grouping.
+// Restart all zdev-sidebar-render instances after deploying.
+const SchemaVersion = "phase4-v19"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -236,29 +236,10 @@ type Snapshot struct {
 	// to false when there are no projects to navigate. The renderer only
 	// draws the ▶ cursor glyph when this is true.
 	CursorActive bool `json:"cursor_active,omitempty"`
-	// RigGroups (phase4-v15, zd-l2t) carries the Gas Town rig grouping
-	// for the sidebar. Each group names a rig and lists the session names
-	// (canonical, matching Projects[].Name) that belong to it — derived
-	// from ~/gt/rigs.json prefix→rig mapping applied to the current
-	// session list. Ordered by rig name. Empty (omitempty) when GT
-	// integration is off or no sessions match any known prefix, so
-	// non-GT fleets observe zero change.
-	RigGroups []RigGroup `json:"rig_groups,omitempty"`
-
 	// TeamGroups (phase4-v16): Claude Code Agent Teams discovered under
 	// ~/.claude/teams/, sorted by name. Empty when the experimental
 	// feature is unused — non-team fleets see no change.
 	TeamGroups []TeamGroup `json:"team_groups,omitempty"`
-}
-
-// RigGroup (phase4-v15, zd-l2t) names a Gas Town rig and the canonical
-// session names that belong to it. The renderer uses Name as the section
-// header label and Sessions for membership lookup when emitting headers
-// above the matching project rows. The hub builds this on every
-// buildSnapshot pass from state.rigPrefixes and the current session list.
-type RigGroup struct {
-	Name     string   `json:"name"`
-	Sessions []string `json:"sessions,omitempty"`
 }
 
 // TeamGroup (phase4-v16, Agent Teams MVP slice 3) is one Claude Code

@@ -99,14 +99,6 @@ type state struct {
 	// Run starts; read-only throughout Run.
 	showUnmanaged bool
 
-	// rigPrefixes is the Gas Town prefix→rig name map last published via
-	// GTRigMapChanged (zd-l2t). buildSnapshot scans session names for any
-	// matching `<prefix>-` (or exactly `<prefix>`) and groups them into
-	// snap.RigGroups. Empty when GT integration is off (rigs.json absent
-	// or GT_TOWN_ROOT unset) — buildSnapshot then emits zero RigGroups and
-	// non-GT renderers see no behavioural change.
-	rigPrefixes map[string]string
-
 	// agentTeams is the full-replacement Claude Code Agent Teams snapshot
 	// from TeamsChanged (slice 3). Keyed by team name; swapped wholesale —
 	// the watcher owns change detection, the hub owns nothing but the
@@ -934,22 +926,11 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		}
 
 	case tmuxctl.TeamsChanged:
-		// Pure map swap, mirroring GTRigMapChanged: the watcher produces
-		// a fresh map per emission and we take ownership without copying.
-		// Nil/empty clears all team state (last team's dir was removed).
+		// Pure map swap: the watcher produces a fresh map per emission and
+		// we take ownership without copying, so the hub goroutine has the
+		// only reference. Nil/empty clears all team state (last team's dir
+		// was removed).
 		s.agentTeams = e.Teams
-
-	case tmuxctl.GTRigMapChanged:
-		// Pure map swap (zd-l2t, phase4-v15). The cmd/zdevd entry point
-		// produces a fresh map per fsnotify tick and submits it; we take
-		// ownership here without copying so the hub goroutine has the
-		// only reference. Nil/empty clears the grouping (rigs.json removed
-		// or unreadable).
-		if len(e.Prefixes) == 0 {
-			s.rigPrefixes = nil
-		} else {
-			s.rigPrefixes = e.Prefixes
-		}
 	}
 }
 

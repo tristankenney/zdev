@@ -66,11 +66,6 @@ var fixtureCases = []struct {
 	// VIS-17: daemon healthy with diag fields present but below threshold →
 	// no degraded row (same frame as a snapshot with no diag fields at all).
 	{"VIS-17-daemon-healthy", "vis-17", 0, 0, ""},
-	// VIS-18 (zd-l2t, phase4-v15): RigGroups populated → section headers
-	// appear above each rig's rows ("── hq ──", "── zdev ──"). One rig has
-	// a waiting member, so the footer carries a "zdev ●" attention rollup
-	// alongside the standard waiting bucket.
-	{"VIS-18-rig-groups", "vis-18", 0, 0, ""},
 	// cursor-active-row-0: CursorActive=true, CursorRow=0 → first row prefixed with ▶.
 	{"cursor-active-row-0", "cursor-active-row-0", 0, 0, ""},
 	// cursor-inactive: CursorActive=false → pixel-identical to a snapshot with no cursor fields.

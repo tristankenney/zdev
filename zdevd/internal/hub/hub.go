@@ -938,14 +938,6 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	if a.CursorRow != b.CursorRow || a.CursorActive != b.CursorActive {
 		return false
 	}
-	// RigGroups (phase4-v15, zd-l2t): group membership changes (rigs.json
-	// edits, new polecat sessions joining a known prefix) MUST trigger a
-	// publish so the renderer's section headers stay in sync. rigGroupsFor
-	// produces a deterministic (sorted) shape so byte-identical state
-	// hashes the same way every pass — no idle-CPU regression.
-	if !rigGroupsEqual(a.RigGroups, b.RigGroups) {
-		return false
-	}
 	// TeamGroups (phase4-v16): team create/dissolve and member changes
 	// must publish. teamGroupsFor sorts by team name, so positional
 	// comparison is sufficient.
@@ -968,29 +960,6 @@ func teamGroupsEqual(a, b []proto.TeamGroup) bool {
 		}
 		for j := range a[i].Members {
 			if a[i].Members[j] != b[i].Members[j] {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// rigGroupsEqual compares two RigGroup slices element-wise. The slices are
-// produced by rigGroupsFor and so are always pre-sorted (rig name outer,
-// session name inner); a positional walk is sufficient.
-func rigGroupsEqual(a, b []proto.RigGroup) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Name != b[i].Name {
-			return false
-		}
-		if len(a[i].Sessions) != len(b[i].Sessions) {
-			return false
-		}
-		for j := range a[i].Sessions {
-			if a[i].Sessions[j] != b[i].Sessions[j] {
 				return false
 			}
 		}
