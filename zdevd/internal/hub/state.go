@@ -464,7 +464,18 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// Add to the current session by default. Phase 2 simplification:
 		// %window-add fires for the attached session. If we don't know the
 		// current session, attach to a synthetic placeholder session.
-		attachWindow(s, s.currentSessionID, e.ID)
+		//
+		// CLAIM, not move: currentSessionID is a pinned global that
+		// interleaved event streams (bootstrap blocks, %notifications,
+		// the 5s poll) race over, so this path may attach the window to
+		// the WRONG session. Under attachWindow's move semantics that
+		// mistake STOLE the window from its real owner every poll cycle,
+		// ping-ponging ownership between session pairs — thousands of
+		// alive↔absent flips per hour (dogfood recording, 2026-06-11).
+		// Only the explicit WindowAttach (which carries its own session
+		// id from the same poll row) may move between real sessions;
+		// this path claims only unowned or $_unlinked windows.
+		claimWindow(s, s.currentSessionID, e.ID)
 		// Window membership changed — recompute for all sessions.
 		for _, sess := range s.sessions {
 			recomputeAgents(s, sess.Name)
@@ -1083,6 +1094,23 @@ func sessionContainsWindow(sess *session, winID string) bool {
 // recomputeAgents has moved to internal/hub/agents.go (staff-review PR #4).
 
 // attachWindow adds a window to a session, creating the session if absent.
+// claimWindow is attachWindow minus the theft: it adopts a window that
+// no REAL session owns (fresh, or parked in $_unlinked), but never moves
+// one that a real session already holds — the caller's session id came
+// from the racy currentSessionID pin, not from authoritative per-row
+// data. See the WindowAdd case for the ping-pong this prevents.
+func claimWindow(s *state, sessID, winID string) {
+	for osid, osess := range s.sessions {
+		if osid == "$_unlinked" || osid == sessID {
+			continue
+		}
+		if _, ok := osess.windows[winID]; ok {
+			return // a real session owns it; leave ownership alone
+		}
+	}
+	attachWindow(s, sessID, winID)
+}
+
 func attachWindow(s *state, sessID, winID string) {
 	sess, ok := s.sessions[sessID]
 	if !ok {

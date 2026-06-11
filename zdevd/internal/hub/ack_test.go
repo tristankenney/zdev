@@ -233,3 +233,44 @@ func TestApplyEvent_TeamsChanged_SnapshotThreading(t *testing.T) {
 		t.Fatalf("TeamGroups after clear = %+v; want empty", snap.TeamGroups)
 	}
 }
+
+// TestApplyEvent_WindowAddDoesNotSteal pins the ping-pong fix (dogfood
+// 2026-06-11: thousands of alive↔absent flips/hour): WindowAdd attaches
+// via the racy currentSessionID pin, so it must NEVER move a window a
+// real session already owns — only the explicit WindowAttach may.
+func TestApplyEvent_WindowAddDoesNotSteal(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "owner"}, nil)
+	applyEvent(s, tmuxctl.WindowAdd{ID: "@1"}, nil)
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%1"}, nil)
+
+	// Another session becomes "current"; a racy WindowAdd for @1 fires.
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$2", Name: "thief"}, nil)
+	applyEvent(s, tmuxctl.WindowAdd{ID: "@1"}, nil)
+
+	owner, _ := sessionByName(s, "owner")
+	if _, ok := owner.windows["@1"]; !ok {
+		t.Fatal("WindowAdd stole @1 from its owner — alive/absent ping-pong regression")
+	}
+	thief, _ := sessionByName(s, "thief")
+	if thief != nil {
+		if _, ok := thief.windows["@1"]; ok {
+			t.Fatal("@1 duplicated into the thief session")
+		}
+	}
+
+	// The explicit, authoritative path still moves.
+	applyEvent(s, tmuxctl.WindowAttach{SessionID: "$2", WindowID: "@1"}, nil)
+	thief, _ = sessionByName(s, "thief")
+	if _, ok := thief.windows["@1"]; !ok {
+		t.Fatal("explicit WindowAttach must still move the window")
+	}
+	// And the $_unlinked adoption path still works through WindowAdd.
+	applyEvent(s, tmuxctl.UnlinkedWindowAdd{ID: "@9"}, nil)
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "owner"}, nil)
+	applyEvent(s, tmuxctl.WindowAdd{ID: "@9"}, nil)
+	owner, _ = sessionByName(s, "owner")
+	if _, ok := owner.windows["@9"]; !ok {
+		t.Fatal("WindowAdd must still adopt from $_unlinked")
+	}
+}
