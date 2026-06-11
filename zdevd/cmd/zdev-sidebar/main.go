@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -62,6 +63,11 @@ var stampLastRenderFn = stampLastRender
 // dropping intermediate stamps while one is in flight is harmless — the next
 // painted frame will request another.
 var stampSem = make(chan struct{}, 1)
+
+// lastStampTS is the unix second most recently dispatched (or skipped as a
+// duplicate) by stampLastRender. Atomic only for the test seam — production
+// calls all come from the single render-loop goroutine.
+var lastStampTS atomic.Int64
 
 // runStampSubprocessFn is the swappable backend that actually shells out to
 // tmux. Production wires runStampSubprocess (below). Tests inject a stub via
@@ -95,8 +101,18 @@ func runStampSubprocess(ctx context.Context, paneID string, ts int64) {
 //
 // When paneID is empty (renderer launched outside tmux — e.g., golden-fixture
 // capture or unit-test context) the call is a no-op.
+//
+// Same-second dedup (260611 perf-hunt): ts has unix-second granularity, so the
+// 15fps animation path requested up to 15 stamps/sec that all wrote the SAME
+// value — each one a fork+exec hitting tmux's single-threaded input loop right
+// alongside the user's keystrokes. Skipping repeats of the last-dispatched
+// second caps the subprocess rate at 1Hz per renderer with no observable
+// change (the supervisor reads the option with ±1s tolerance).
 func stampLastRender(ctx context.Context, paneID string, ts int64) {
 	if paneID == "" {
+		return
+	}
+	if lastStampTS.Swap(ts) == ts {
 		return
 	}
 	select {
