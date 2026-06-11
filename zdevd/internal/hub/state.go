@@ -23,6 +23,7 @@ import (
 	"context"
 	"log/slog"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -365,8 +366,47 @@ func shouldSkipSession(name string) bool {
 type session struct {
 	ID             string
 	Name           string
+	Socket         string             // source tmux socket ("" = default); set by SessionChanged/SessionRenamed
 	activeWindowID string             // last %session-window-changed
 	windows        map[string]*window // keyed by `@<id>`
+}
+
+// betterSessionRecord picks which of two session records should represent
+// a name when both claim it. Collisions are transient (a ghost record
+// pending its SessionsListed prune, racing the recreated session), but the
+// status derivation must be DETERMINISTIC in the window: random
+// map-iteration winners turned one ghost into thousands of
+// absent↔waiting eventlog flips and visible sidebar bouncing (dogfood
+// 2026-06-12). The record with windows wins (a windowless record derives
+// "absent" and is almost certainly the ghost); ties go to the highest
+// numeric ID — tmux session IDs increase monotonically, so newest wins.
+func betterSessionRecord(a, b *session) *session {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if len(a.windows) != len(b.windows) {
+		if len(a.windows) > len(b.windows) {
+			return a
+		}
+		return b
+	}
+	if sessionIDNum(a.ID) >= sessionIDNum(b.ID) {
+		return a
+	}
+	return b
+}
+
+// sessionIDNum parses the numeric part of a `$N` session ID; -1 when the
+// ID isn't in that shape (synthetic test IDs sort below real ones).
+func sessionIDNum(id string) int64 {
+	n, err := strconv.ParseInt(strings.TrimPrefix(id, "$"), 10, 64)
+	if err != nil {
+		return -1
+	}
+	return n
 }
 
 type window struct {
@@ -405,10 +445,12 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			s.sessions[e.ID] = &session{
 				ID:      e.ID,
 				Name:    e.Name,
+				Socket:  e.SocketName,
 				windows: make(map[string]*window),
 			}
 		} else {
 			s.sessions[e.ID].Name = e.Name
+			s.sessions[e.ID].Socket = e.SocketName
 		}
 		// zd-47u: tag the session with its source tmux socket so
 		// recomputeAgents can route capture-pane through `tmux -L <socket>`
@@ -430,11 +472,13 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		if sess, ok := s.sessions[e.ID]; ok {
 			oldName = sess.Name
 			sess.Name = e.NewName
+			sess.Socket = e.SocketName
 		} else {
 			// Session unknown — create on rename for safety.
 			s.sessions[e.ID] = &session{
 				ID:      e.ID,
 				Name:    e.NewName,
+				Socket:  e.SocketName,
 				windows: make(map[string]*window),
 			}
 		}
@@ -931,6 +975,55 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// only reference. Nil/empty clears all team state (last team's dir
 		// was removed).
 		s.agentTeams = e.Teams
+
+	case tmuxctl.SessionsListed:
+		// Authoritative prune: list-sessions is ground truth for what
+		// exists on the event's socket RIGHT NOW. Everything else only
+		// ADDS session records, so a killed session lingered forever and
+		// a same-name recreate left two records sharing one name — whose
+		// random map-iteration winner flapped the derived status on every
+		// processed event (dogfood 2026-06-12, zitcha/infra).
+		//
+		// Scope by the RECORD's socket attribution (invariants review F1:
+		// the sessionSocket map is name-keyed and last-writer-wins, so a
+		// cross-socket name collision would misprune a live session).
+		// Records that were never named by their socket's list/notification
+		// (Name == ID, created by attachWindow when a window references a
+		// session before its list arrives) have unknown attribution — skip
+		// them; they become prunable once named. $_unlinked is the hub's
+		// own parking lot, not a tmux session — never pruned.
+		listed := make(map[string]struct{}, len(e.IDs))
+		for _, id := range e.IDs {
+			listed[id] = struct{}{}
+		}
+		for id, sess := range s.sessions {
+			if id == "$_unlinked" {
+				continue
+			}
+			if _, ok := listed[id]; ok {
+				continue
+			}
+			if sess.Name == sess.ID {
+				continue // never named — socket unknown
+			}
+			if sess.Socket != e.SocketName {
+				continue
+			}
+			// Detach windows through the established teardown so
+			// panesByID/paneCaptureFailures entries die with the record
+			// (invariants review F2: pane objects are revived BY ID on
+			// later events, so an orphaned entry can resurrect a stale
+			// title onto a recycled %N after a tmux server restart).
+			for wid := range sess.windows {
+				detachWindow(s, wid)
+			}
+			delete(s.sessions, id)
+			delete(s.pendingActivityTS, id)
+			// Recompute so AgentStates clears when this was the name's
+			// only record (or re-derives from the surviving live record
+			// on a same-name recreate).
+			recomputeAgents(s, sess.Name)
+		}
 	}
 }
 
@@ -1034,12 +1127,18 @@ func isWaitAcknowledged(s *state, dashName string, waitStartedTS, now int64) boo
 // sessionByName finds the session with the given name among s.sessions.
 // Returns (session, true) if found, (nil, false) otherwise.
 func sessionByName(s *state, name string) (*session, bool) {
+	// Same-name collisions (a ghost record racing its SessionsListed
+	// prune) resolve via betterSessionRecord, NOT first map hit — a
+	// random winner here flapped recomputeAgents' AgentStates and
+	// re-dispatched asyncCapture at event rate (invariants review F3,
+	// same dogfood bug as the snapshot-side flap).
+	var best *session
 	for _, sess := range s.sessions {
 		if sess.Name == name {
-			return sess, true
+			best = betterSessionRecord(best, sess)
 		}
 	}
-	return nil, false
+	return best, best != nil
 }
 
 // sessionForPane returns the name of the session that owns paneID, or ""

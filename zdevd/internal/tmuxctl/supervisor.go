@@ -177,6 +177,11 @@ func (s *Supervisor) emit(ev Event) {
 				e.SocketName = s.socketName
 				ev = e
 			}
+		case SessionsListed:
+			if e.SocketName == "" {
+				e.SocketName = s.socketName
+				ev = e
+			}
 		case ClientListRefresh:
 			if e.SocketName == "" {
 				e.SocketName = s.socketName
@@ -650,6 +655,7 @@ func (s *Supervisor) interpretBlock(conn subprocessConn, body []byte) {
 // window-activity subscriptions for any newly-discovered session IDs.
 func (s *Supervisor) applySessionsList(conn subprocessConn, rows [][]byte) {
 	var sessIDs []string
+	var listed []string
 	for _, r := range rows {
 		f := bytes.Split(r, []byte("|"))
 		if len(f) != 2 {
@@ -664,6 +670,10 @@ func (s *Supervisor) applySessionsList(conn subprocessConn, rows [][]byte) {
 		// for sessions we don't emit events for. Without this, the watcher
 		// session's ID (e.g. "$4") becomes the project name in the snapshot.
 		s.sessionNames[sid] = name
+		// The prune set carries EVERY listed ID (watcher included): it
+		// states what exists on the socket, independent of what the hub
+		// chooses to surface.
+		listed = append(listed, sid)
 		// D2-05: skip event emission for zdevd-watcher — buildSnapshot
 		// filters it, but the name must still be cached (above) so
 		// applyWindowsList doesn't fall back to the raw session ID.
@@ -672,6 +682,14 @@ func (s *Supervisor) applySessionsList(conn subprocessConn, rows [][]byte) {
 		}
 		s.emit(SessionChanged{ID: sid, Name: name})
 		sessIDs = append(sessIDs, sid)
+	}
+	// Authoritative prune AFTER the adds so a rename/recreate settles in
+	// one batch. Guarded on non-empty: a transiently empty/garbled
+	// list-sessions response must not nuke the whole session table (cf.
+	// the inotify empty-read race from the Linux adoption day) — an
+	// actually-empty tmux server has nothing to flap anyway.
+	if len(listed) > 0 {
+		s.emit(SessionsListed{IDs: listed})
 	}
 	if err := s.ensureSessionSubscriptions(conn, sessIDs); err != nil {
 		slog.Warn("tmuxctl: ensureSessionSubscriptions failed", "err", err)

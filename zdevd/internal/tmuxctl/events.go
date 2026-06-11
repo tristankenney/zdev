@@ -15,6 +15,20 @@ type SessionsChanged struct{}                                  // %sessions-chan
 type SessionChanged struct{ ID, Name, SocketName string }      // %session-changed $0 main; SocketName tags the GT tmux socket (zd-47u), "" = default socket
 type SessionRenamed struct{ ID, NewName, SocketName string }   // %session-renamed; SocketName mirrors SessionChanged
 type SessionWindowChanged struct{ SessionID, WindowID string } // %session-window-changed
+
+// SessionsListed carries the authoritative session-ID set from one
+// list-sessions poll. The hub prunes its session records against it:
+// applySessionsList only ever ADDS (via SessionChanged), so without a
+// prune a killed session's record lingered forever, and recreating a
+// session with the same name produced TWO records sharing one name —
+// whose random map-iteration winner flapped the derived status on every
+// processed event (dogfood 2026-06-12: zitcha/infra absent↔waiting,
+// thousands of flips/hour). SocketName scopes the prune: a list from
+// one socket says nothing about sessions on another.
+type SessionsListed struct {
+	SocketName string
+	IDs        []string
+}
 type WindowAdd struct{ ID string }                             // %window-add @1
 type WindowClose struct{ ID string }                           // %window-close @1
 type WindowRenamed struct{ ID, NewName string }                // %window-renamed @1 newname
@@ -46,6 +60,7 @@ type ParseError struct {
 func (SessionsChanged) isEvent()       {}
 func (SessionChanged) isEvent()        {}
 func (SessionRenamed) isEvent()        {}
+func (SessionsListed) isEvent()        {}
 func (SessionWindowChanged) isEvent()  {}
 func (WindowAdd) isEvent()             {}
 func (WindowClose) isEvent()           {}

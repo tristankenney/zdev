@@ -274,3 +274,144 @@ func TestApplyEvent_WindowAddDoesNotSteal(t *testing.T) {
 		t.Fatal("WindowAdd must still adopt from $_unlinked")
 	}
 }
+
+// TestApplyEvent_SessionsListedPrunesGhosts covers the ghost-session prune
+// (dogfood 2026-06-12): killed sessions previously lingered in
+// state.sessions forever because nothing ever removed them, and recreating
+// a session with the same name yielded two records sharing one name.
+func TestApplyEvent_SessionsListedPrunesGhosts(t *testing.T) {
+	s := newState()
+	// Ghost: an old zitcha-infra ($5) whose tmux session has been killed.
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$5", Name: "zitcha-infra"}, nil)
+	// Recreate: the live session ($7), plus an unrelated survivor ($6).
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$6", Name: "other"}, nil)
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$7", Name: "zitcha-infra"}, nil)
+	// $_unlinked parking lot must never be pruned.
+	applyEvent(s, tmuxctl.UnlinkedWindowAdd{ID: "@9"}, nil)
+
+	applyEvent(s, tmuxctl.SessionsListed{IDs: []string{"$6", "$7"}}, nil)
+
+	if _, ok := s.sessions["$5"]; ok {
+		t.Fatal("ghost $5 survived the SessionsListed prune")
+	}
+	if _, ok := s.sessions["$6"]; !ok {
+		t.Fatal("listed session $6 was wrongly pruned")
+	}
+	if _, ok := s.sessions["$7"]; !ok {
+		t.Fatal("listed session $7 was wrongly pruned")
+	}
+	if _, ok := s.sessions["$_unlinked"]; !ok {
+		t.Fatal("$_unlinked parking lot was pruned")
+	}
+
+	// Socket scoping: a list from another socket must not prune default-
+	// socket sessions.
+	applyEvent(s, tmuxctl.SessionsListed{SocketName: "elsewhere", IDs: []string{"$99"}}, nil)
+	if _, ok := s.sessions["$7"]; !ok {
+		t.Fatal("a foreign socket's SessionsListed pruned a default-socket session")
+	}
+}
+
+// TestSnapshotStatuses_GhostCollisionDeterministic pins the deterministic
+// same-name winner (dogfood 2026-06-12): with a windowless ghost and a
+// live waiting session both named zitcha-infra, the derived status must be
+// stable across repeated derivations — the random map-iteration winner
+// flipped absent↔waiting thousands of times per hour in the eventlog and
+// bounced the sidebar row.
+func TestSnapshotStatuses_GhostCollisionDeterministic(t *testing.T) {
+	s := newState()
+	// Live session first or last must not matter; build ghost AFTER the
+	// live one so insertion order can't mask a fix that relies on it.
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$7", Name: "zitcha-infra"}, nil)
+	applyEvent(s, tmuxctl.WindowAdd{ID: "@1"}, nil)
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%1"}, nil)
+	applyEvent(s, tmuxctl.PaneTitleChanged{PaneID: "%1", Title: "✳ Thinking…"}, nil)
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$5", Name: "zitcha-infra"}, nil)
+
+	want := snapshotStatuses(s)["zitcha-infra"]
+	if want == "absent" {
+		t.Fatalf("collision winner derived %q — the windowless ghost won", want)
+	}
+	for i := 0; i < 100; i++ {
+		got := snapshotStatuses(s)["zitcha-infra"]
+		if got != want {
+			t.Fatalf("iteration %d: status flapped %q -> %q (nondeterministic collision winner)", i, want, got)
+		}
+	}
+
+	// buildSnapshot must agree with itself too (same collision, separate code path).
+	now := int64(1700000000)
+	first := buildSnapshot(s, 1, time.Unix(now, 0), now, now*1000)
+	var firstStatus string
+	for _, p := range first.Projects {
+		if p.Name == "zitcha-infra" {
+			firstStatus = p.Status
+		}
+	}
+	if firstStatus == "" || firstStatus == "absent" {
+		t.Fatalf("buildSnapshot derived %q for the collided name", firstStatus)
+	}
+	for i := 0; i < 100; i++ {
+		snap := buildSnapshot(s, int64(i+2), time.Unix(now, 0), now, now*1000)
+		for _, p := range snap.Projects {
+			if p.Name == "zitcha-infra" && p.Status != firstStatus {
+				t.Fatalf("iteration %d: buildSnapshot status flapped %q -> %q", i, firstStatus, p.Status)
+			}
+		}
+	}
+}
+
+// TestApplyEvent_SessionsListedPruneScoping covers the invariants-review F1
+// paths: (a) a never-named record (attachWindow-created, Name == ID) has
+// unknown socket attribution and must survive any prune; (b) a live
+// foreign-socket session sharing a NAME with a default-socket session must
+// survive the default socket's SessionsListed (the name-keyed
+// sessionSocket map is last-writer-wins and would have mispruned it).
+// Also pins F2: pruning detaches windows through detachWindow so
+// panesByID entries die with the record instead of resurrecting a stale
+// title onto a recycled pane ID.
+func TestApplyEvent_SessionsListedPruneScoping(t *testing.T) {
+	s := newState()
+	// (a) attachWindow-shaped record: window references session $9 before
+	// its socket's list names it.
+	applyEvent(s, tmuxctl.WindowAttach{SessionID: "$9", WindowID: "@90"}, nil)
+	// (b) same name on two sockets; the foreign SessionChanged arrives
+	// LAST so the name-keyed sessionSocket map points at "gt" — the exact
+	// last-writer-wins ordering that broke the name-keyed scoping.
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$3", Name: "shared"}, nil)
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$4", Name: "shared", SocketName: "gt"}, nil)
+	// A default-socket ghost that SHOULD be pruned, with a titled pane
+	// whose panesByID entry must die with it.
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$5", Name: "ghosted"}, nil)
+	applyEvent(s, tmuxctl.WindowAdd{ID: "@50"}, nil)
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@50", PaneID: "%50"}, nil)
+	applyEvent(s, tmuxctl.PaneTitleChanged{PaneID: "%50", Title: "✳ stale"}, nil)
+
+	// Default-socket list: $3 lives, $5 gone, $9/$4 not its business.
+	applyEvent(s, tmuxctl.SessionsListed{IDs: []string{"$3"}}, nil)
+
+	if _, ok := s.sessions["$9"]; !ok {
+		t.Fatal("never-named record $9 (unknown socket) was pruned")
+	}
+	if _, ok := s.sessions["$4"]; !ok {
+		t.Fatal("live foreign-socket session $4 was pruned by the default socket's list")
+	}
+	if _, ok := s.sessions["$3"]; !ok {
+		t.Fatal("listed default-socket session $3 was wrongly pruned")
+	}
+	if _, ok := s.sessions["$5"]; ok {
+		t.Fatal("default-socket ghost $5 survived the prune")
+	}
+	if _, ok := s.panesByID["%50"]; ok {
+		t.Fatal("pruned session's pane %50 left a panesByID residue — stale-title resurrection hazard")
+	}
+
+	// The foreign socket's own list prunes its own ghost.
+	applyEvent(s, tmuxctl.SessionsListed{SocketName: "gt", IDs: []string{"$99"}}, nil)
+	if _, ok := s.sessions["$4"]; ok {
+		t.Fatal("foreign-socket list failed to prune its own vanished session $4")
+	}
+	if _, ok := s.sessions["$3"]; !ok {
+		t.Fatal("foreign-socket list pruned a default-socket session")
+	}
+}

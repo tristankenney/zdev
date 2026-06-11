@@ -46,7 +46,10 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		if sess.ID == "$_unlinked" {
 			continue // Phase 2 simplification
 		}
-		nameToSession[sess.Name] = sess
+		// Same-name collisions (a ghost record racing its
+		// SessionsListed prune) must resolve deterministically — random
+		// map-iteration winners flapped row status (dogfood 2026-06-12).
+		nameToSession[sess.Name] = betterSessionRecord(nameToSession[sess.Name], sess)
 	}
 
 	// DATA-10: project list is the canonical row source (D-03 — slash-form

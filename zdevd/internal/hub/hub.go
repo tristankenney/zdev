@@ -717,6 +717,7 @@ func snapshotStatuses(s *state) map[string]string {
 	// test/control sessions (raw-events-*, sub-test-*, test-control-*) via
 	// shouldSkipSession — these are infrastructure, not real projects, and
 	// shouldn't emit state-change events to the eventlog.
+	byName := make(map[string]*session, len(s.sessions))
 	for _, sess := range s.sessions {
 		if sess.Name == "" {
 			continue
@@ -727,7 +728,15 @@ func snapshotStatuses(s *state) map[string]string {
 		if sess.ID == "$_unlinked" {
 			continue
 		}
-		out[sess.Name] = deriveStatus(s, sess)
+		// Same-name collisions (a ghost record racing its SessionsListed
+		// prune) must resolve deterministically: the before/after diff in
+		// emitStateChanges runs TWICE per processed event, so a random
+		// map-iteration winner emitted spurious state-change flips at
+		// event rate (dogfood 2026-06-12, zitcha/infra: thousands/hour).
+		byName[sess.Name] = betterSessionRecord(byName[sess.Name], sess)
+	}
+	for name, sess := range byName {
+		out[name] = deriveStatus(s, sess)
 	}
 	// Workspace projects: normalize slash-form project names to dash-form so
 	// "example/backend" and "example-backend" resolve to the same status key.
