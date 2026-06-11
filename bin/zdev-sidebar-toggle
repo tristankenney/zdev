@@ -107,14 +107,17 @@ process_window() {
     tmux resize-pane -t "$sb" -x "$WIDTH" 2>/dev/null || true
     local win_w others n each
     win_w=$(tmux display-message -p -t "$window_id" '#{window_width}' 2>/dev/null) || return 0
-    # Left-to-right non-sidebar panes; resizing in that order pushes the
-    # remainder rightward without disturbing already-set widths.
+    # Equalize COLUMNS, not panes: agent-team teammates split
+    # VERTICALLY, so several panes share one pane_left. Treating each
+    # stacked pane as its own width-slot computed each=(w-50)/5 ≈ 59,
+    # crushed the whole stack into a 59-col column, and the sidebar
+    # ballooned to fill the rest (dogfood screenshot, 2026-06-11).
+    # One representative pane per distinct pane_left; resizing it sizes
+    # the column.
     others=$(tmux list-panes -t "$window_id" -F '#{pane_left} #{pane_id} #{@is-sidebar}' 2>/dev/null \
-      | sort -n | awk '$3!="1"{print $2}')
+      | sort -n | awk '$3!="1" && !seen[$1]++ {print $2}')
     n=$(printf '%s\n' "$others" | grep -c . || true)
     [ "$n" -lt 2 ] && return 0
-    # Usable width = window minus sidebar minus one border column per
-    # divider (panes-1 dividers for sidebar + n others).
     each=$(( (win_w - WIDTH - n) / n ))
     [ "$each" -lt 10 ] && return 0
     printf '%s\n' "$others" | sed '$d' | while read -r p; do
