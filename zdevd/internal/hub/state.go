@@ -1043,7 +1043,7 @@ func countVisibleProjects(s *state) int {
 		n++
 	}
 	for _, sess := range s.sessions {
-		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
+		if skipForIndex(sess) {
 			continue
 		}
 		if _, ok := seen[sess.Name]; ok {
@@ -1127,17 +1127,13 @@ func isWaitAcknowledged(s *state, dashName string, waitStartedTS, now int64) boo
 // sessionByName finds the session with the given name among s.sessions.
 // Returns (session, true) if found, (nil, false) otherwise.
 func sessionByName(s *state, name string) (*session, bool) {
-	// Same-name collisions (a ghost record racing its SessionsListed
-	// prune) resolve via betterSessionRecord, NOT first map hit — a
+	// Routed through the session index so the same-name collision winner
+	// (a ghost record racing its SessionsListed prune) and the skip rules
+	// are resolved identically here and at every other lookup site — a
 	// random winner here flapped recomputeAgents' AgentStates and
-	// re-dispatched asyncCapture at event rate (invariants review F3,
-	// same dogfood bug as the snapshot-side flap).
-	var best *session
-	for _, sess := range s.sessions {
-		if sess.Name == name {
-			best = betterSessionRecord(best, sess)
-		}
-	}
+	// re-dispatched asyncCapture at event rate (invariants review F3, same
+	// dogfood bug as the snapshot-side flap). See sessindex.go.
+	best := buildSessionIndex(s).lookup(name)
 	return best, best != nil
 }
 

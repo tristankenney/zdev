@@ -713,30 +713,16 @@ func (h *Hub) emit(ev eventlog.Event) {
 // before/after by value via emitStateChanges.
 func snapshotStatuses(s *state) map[string]string {
 	out := make(map[string]string, len(s.sessions)+len(s.projectListNames))
-	// Sessions in the tmux model. Filter out zdevd-watcher and synthetic
-	// test/control sessions (raw-events-*, sub-test-*, test-control-*) via
-	// shouldSkipSession — these are infrastructure, not real projects, and
-	// shouldn't emit state-change events to the eventlog.
-	byName := make(map[string]*session, len(s.sessions))
-	for _, sess := range s.sessions {
-		if sess.Name == "" {
-			continue
-		}
-		if shouldSkipSession(sess.Name) {
-			continue
-		}
-		if sess.ID == "$_unlinked" {
-			continue
-		}
-		// Same-name collisions (a ghost record racing its SessionsListed
-		// prune) must resolve deterministically: the before/after diff in
-		// emitStateChanges runs TWICE per processed event, so a random
-		// map-iteration winner emitted spurious state-change flips at
-		// event rate (dogfood 2026-06-12, zitcha/infra: thousands/hour).
-		byName[sess.Name] = betterSessionRecord(byName[sess.Name], sess)
-	}
-	for name, sess := range byName {
-		out[name] = deriveStatus(s, sess)
+	// Sessions in the tmux model. The session index applies the skip rules
+	// (zdevd-watcher and synthetic raw-events-*/sub-test-*/test-control-*
+	// infrastructure, empty names, $_unlinked) and resolves same-name
+	// collisions deterministically — the before/after diff in
+	// emitStateChanges runs TWICE per processed event, so a random
+	// map-iteration winner emitted spurious state-change flips at event
+	// rate (dogfood 2026-06-12, zitcha/infra: thousands/hour). See sessindex.go.
+	ix := buildSessionIndex(s)
+	for _, name := range ix.sortedNames() {
+		out[name] = deriveStatus(s, ix.lookup(name))
 	}
 	// Workspace projects: normalize slash-form project names to dash-form so
 	// "example/backend" and "example-backend" resolve to the same status key.

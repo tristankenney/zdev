@@ -31,33 +31,20 @@ import (
 // rather than now*1000 so callers/tests can drive dwell timing precisely
 // without disturbing the second-resolution wait/tier logic.
 func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *proto.Snapshot {
-	nameToSession := make(map[string]*session, len(st.sessions))
-	for _, sess := range st.sessions {
-		if sess.Name == "" {
-			// Empty-name sessions appear when a SessionChanged event arrives
-			// during tmux bootstrap before SessionRenamed binds a name. The
-			// record stays in state.sessions keyed by ID for later rename,
-			// but it must not surface as a blank sidebar row.
-			continue
-		}
-		if sess.Name == "zdevd-watcher" {
-			continue // D2-05 filter
-		}
-		if sess.ID == "$_unlinked" {
-			continue // Phase 2 simplification
-		}
-		// Same-name collisions (a ghost record racing its
-		// SessionsListed prune) must resolve deterministically — random
-		// map-iteration winners flapped row status (dogfood 2026-06-12).
-		nameToSession[sess.Name] = betterSessionRecord(nameToSession[sess.Name], sess)
-	}
+	// sessIndex owns name→session resolution: the empty-name / watcher /
+	// synthetic / $_unlinked skip rules, the deterministic same-name
+	// collision winner (a ghost record racing its SessionsListed prune must
+	// not flap row status via random map iteration — dogfood 2026-06-12),
+	// and the slash/dash canonicalization used by lookupProject. See
+	// sessindex.go.
+	sessIndex := buildSessionIndex(st)
 
 	// DATA-10: project list is the canonical row source (D-03 — slash-form
 	// names). UNION with session-only entries so unlinked tmux sessions still
 	// surface. Slash-form project entries suppress their dash-form session
 	// twins so "example/backend" and "example-backend" never both appear.
-	seen := make(map[string]struct{}, len(st.projectListNames)+len(nameToSession))
-	names := make([]string, 0, len(st.projectListNames)+len(nameToSession))
+	seen := make(map[string]struct{}, len(st.projectListNames)+len(st.sessions))
+	names := make([]string, 0, len(st.projectListNames)+len(st.sessions))
 
 	// Pass 1: project list names (slash-form canonical, D-03)
 	for _, n := range st.projectListNames {
@@ -81,7 +68,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 	// exactly — zero behaviour change when the feature is disabled.
 	var unmanagedNames []string
 	for _, sess := range st.sessions {
-		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
+		if skipForIndex(sess) {
 			continue
 		}
 		if _, ok := seen[sess.Name]; ok {
@@ -126,7 +113,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// because it works on titles; carve it out up-front. When absent,
 		// the wire Status is "absent" and Attention is the zero value
 		// (AttIdle); the renderer treats absent as a dim row.
-		sess := nameToSession[dataKey]
+		sess := sessIndex.lookupProject(n)
 		absent := sess == nil || len(sess.windows) == 0
 
 		// Single-source-of-truth: DeriveAttention reads pane titles +
@@ -371,17 +358,14 @@ func teamGroupsFor(st *state) []proto.TeamGroup {
 // works for managed projects; unmanaged sessions keep their session
 // name, which IS their row name.
 func projectByPaneCwd(st *state, dir string) string {
-	var names []string
-	for _, sess := range st.sessions {
-		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
-			continue
-		}
-		names = append(names, sess.Name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		sess, ok := sessionByName(st, name)
-		if !ok {
+	// The session index owns the skip rules and the deterministic collision
+	// winner; sortedNames gives the stable first-match order (an
+	// infrastructure session sorting first must never win the anchor — that
+	// was the slice-3 finding pinned by TestApplyEvent_TeamsChanged_SnapshotThreading).
+	ix := buildSessionIndex(st)
+	for _, name := range ix.sortedNames() {
+		sess := ix.lookup(name)
+		if sess == nil {
 			continue
 		}
 		for _, w := range sess.windows {
@@ -516,7 +500,7 @@ func projectNameAtRow(st *state, row int) string {
 
 	var unmanagedNames []string
 	for _, sess := range st.sessions {
-		if sess.Name == "" || shouldSkipSession(sess.Name) || sess.ID == "$_unlinked" {
+		if skipForIndex(sess) {
 			continue
 		}
 		if _, ok := seen[sess.Name]; ok {
