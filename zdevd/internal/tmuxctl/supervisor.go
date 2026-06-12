@@ -182,6 +182,16 @@ func (s *Supervisor) emit(ev Event) {
 				e.SocketName = s.socketName
 				ev = e
 			}
+		case WindowsListed:
+			if e.SocketName == "" {
+				e.SocketName = s.socketName
+				ev = e
+			}
+		case PanesListed:
+			if e.SocketName == "" {
+				e.SocketName = s.socketName
+				ev = e
+			}
 		case ClientListRefresh:
 			if e.SocketName == "" {
 				e.SocketName = s.socketName
@@ -706,6 +716,7 @@ func (s *Supervisor) applySessionsList(conn subprocessConn, rows [][]byte) {
 // notification when they attach. For Phase 2's purposes this is fine —
 // the snapshot reflects the steady state once notifications stabilize.
 func (s *Supervisor) applyWindowsList(rows [][]byte) {
+	var listed []string
 	for _, r := range rows {
 		f := bytes.Split(r, []byte("|"))
 		if len(f) != 4 {
@@ -733,6 +744,16 @@ func (s *Supervisor) applyWindowsList(rows [][]byte) {
 		if wname != "" {
 			s.emit(WindowRenamed{ID: wid, NewName: wname})
 		}
+		listed = append(listed, wid)
+	}
+	// Authoritative reconcile AFTER the adds (mirrors applySessionsList's
+	// SessionsListed): list-windows -a is ground truth for what exists on
+	// this socket, so a window the hub holds but the list omits was closed
+	// while we weren't listening (OQ-3: tmux never replays %window-close).
+	// Guarded on non-empty so a transiently garbled response can't tear the
+	// window model down — an actually-empty server has no windows to flap.
+	if len(listed) > 0 {
+		s.emit(WindowsListed{IDs: listed})
 	}
 }
 
@@ -767,6 +788,7 @@ func (s *Supervisor) applyWindowsList(rows [][]byte) {
 // window_activity subscriptions (ensureSessionSubscriptions, called from
 // applySessionsList) use session-ID targets which DO work cross-session.
 func (s *Supervisor) applyPanesList(rows [][]byte) {
+	var listed []string
 	for _, r := range rows {
 		f := bytes.Split(r, []byte("|"))
 		if len(f) != 6 {
@@ -783,6 +805,7 @@ func (s *Supervisor) applyPanesList(rows [][]byte) {
 		if pid == "" {
 			continue
 		}
+		listed = append(listed, pid)
 		// Re-associate the window with its real session using WindowAttach,
 		// which calls attachWindow(sessionID, windowID) directly — no
 		// currentSessionID involved, so no race with concurrent tmux events.
@@ -821,6 +844,13 @@ func (s *Supervisor) applyPanesList(rows [][]byte) {
 				s.emit(PaneCwdChanged{SessionName: sessName, PaneID: pid, Cwd: cwd})
 			}
 		}
+	}
+	// Authoritative pane reconcile AFTER the adds: a pane absent from
+	// list-panes -a is gone, and leaving its record behind resurrects a
+	// stale title onto a recycled %N. Guarded on non-empty for the same
+	// reason as WindowsListed — a garbled response must not nuke the model.
+	if len(listed) > 0 {
+		s.emit(PanesListed{IDs: listed})
 	}
 }
 

@@ -29,6 +29,32 @@ type SessionsListed struct {
 	SocketName string
 	IDs        []string
 }
+
+// WindowsListed carries the authoritative window-ID set from one
+// list-windows -a poll. Windows are otherwise add-only (WindowAdd /
+// WindowAttach never remove), so a %window-close missed across a
+// control-mode reconnect left a stale window classifying a dead agent
+// forever — tmux does NOT replay notifications (OQ-3). The hub reconciles:
+// a window owned by a socket-matching session and absent from this list is
+// torn down (OQ-3 generalization of the SessionsListed prune). SocketName
+// scopes the reconcile exactly as it does for SessionsListed; a window's
+// socket is inherited from its owning session's record.
+type WindowsListed struct {
+	SocketName string
+	IDs        []string
+}
+
+// PanesListed carries the authoritative pane-ID set from one list-panes -a
+// poll. Panes, like windows, are add-only (WindowPaneChanged); a pane that
+// vanishes without a notification lingers and resurrects a stale title onto
+// a recycled %N. The hub prunes panes absent from this list via detachPane,
+// scoped by socket. The pane list is also the only authority that may prove
+// a $_unlinked-parked window gone (list-windows -a legitimately omits
+// unlinked windows, so WindowsListed must never prune them).
+type PanesListed struct {
+	SocketName string
+	IDs        []string
+}
 type WindowAdd struct{ ID string }                             // %window-add @1
 type WindowClose struct{ ID string }                           // %window-close @1
 type WindowRenamed struct{ ID, NewName string }                // %window-renamed @1 newname
@@ -61,6 +87,8 @@ func (SessionsChanged) isEvent()       {}
 func (SessionChanged) isEvent()        {}
 func (SessionRenamed) isEvent()        {}
 func (SessionsListed) isEvent()        {}
+func (WindowsListed) isEvent()         {}
+func (PanesListed) isEvent()           {}
 func (SessionWindowChanged) isEvent()  {}
 func (WindowAdd) isEvent()             {}
 func (WindowClose) isEvent()           {}

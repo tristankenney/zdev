@@ -1062,6 +1062,69 @@ func TestApplyPanesListPaneCwdChangedDedup(t *testing.T) {
 	}
 }
 
+// TestApplyWindowsListEmitsWindowsListed verifies applyWindowsList emits a
+// single WindowsListed carrying every parsed window ID after its per-window
+// adds, so the hub can reconcile windows closed while the daemon wasn't
+// listening (OQ-3). An empty/garbled response must emit nothing — the guard
+// that keeps a transient blank poll from tearing the window model down.
+func TestApplyWindowsListEmitsWindowsListed(t *testing.T) {
+	var listed []WindowsListed
+	sup := newTestSupervisor(func(ev Event) {
+		if e, ok := ev.(WindowsListed); ok {
+			listed = append(listed, e)
+		}
+	}, nil)
+	sup.sessionNames["$0"] = "alpha"
+
+	sup.applyWindowsList([][]byte{
+		[]byte("$0|@0|win-a|0"),
+		[]byte("$0|@1|win-b|1"),
+	})
+	if len(listed) != 1 {
+		t.Fatalf("got %d WindowsListed, want exactly 1: %+v", len(listed), listed)
+	}
+	if got := listed[0].IDs; len(got) != 2 || got[0] != "@0" || got[1] != "@1" {
+		t.Errorf("WindowsListed.IDs = %v; want [@0 @1]", got)
+	}
+
+	// Empty/garbled poll → no WindowsListed (guard).
+	listed = listed[:0]
+	sup.applyWindowsList([][]byte{[]byte("garbage")})
+	if len(listed) != 0 {
+		t.Errorf("garbled poll emitted WindowsListed: %+v", listed)
+	}
+}
+
+// TestApplyPanesListEmitsPanesListed verifies applyPanesList emits a single
+// PanesListed carrying every parsed pane ID after its per-pane adds, and
+// nothing for an empty response.
+func TestApplyPanesListEmitsPanesListed(t *testing.T) {
+	var listed []PanesListed
+	sup := newTestSupervisor(func(ev Event) {
+		if e, ok := ev.(PanesListed); ok {
+			listed = append(listed, e)
+		}
+	}, nil)
+	sup.sessionNames["$0"] = "alpha"
+
+	sup.applyPanesList([][]byte{
+		[]byte("$0|@0|%0|title-a|alpha|/work/alpha"),
+		[]byte("$0|@0|%1|shell|alpha|/work/alpha"),
+	})
+	if len(listed) != 1 {
+		t.Fatalf("got %d PanesListed, want exactly 1: %+v", len(listed), listed)
+	}
+	if got := listed[0].IDs; len(got) != 2 || got[0] != "%0" || got[1] != "%1" {
+		t.Errorf("PanesListed.IDs = %v; want [%%0 %%1]", got)
+	}
+
+	listed = listed[:0]
+	sup.applyPanesList([][]byte{[]byte("garbage|too|few")})
+	if len(listed) != 0 {
+		t.Errorf("garbled poll emitted PanesListed: %+v", listed)
+	}
+}
+
 // TestApplyPanesListSkipsWatcherCwd verifies the watcher session's panes do
 // not emit PaneCwdChanged (zd-bub). The watcher has no user-meaningful
 // working dir — its cwd would pollute the branch-probe override map for any

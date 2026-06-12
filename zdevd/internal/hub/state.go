@@ -410,9 +410,21 @@ func sessionIDNum(id string) int64 {
 }
 
 type window struct {
-	ID       string
-	Name     string
-	panesIDs map[string]struct{} // ordered set of `%<id>` keys; cross-ref with state.panesByID
+	ID   string
+	Name string
+	// authoritative marks the window→session association as ground truth:
+	// set by WindowAttach (poll-derived re-association carrying its own
+	// session id) and by the WindowsListed reconcile (a list-windows -a poll
+	// confirmed the window present). PROVISIONAL associations — WindowAdd's
+	// claimWindow, whose session id came from the racy currentSessionID pin,
+	// and UnlinkedWindowAdd's parking in $_unlinked — leave it false. Two
+	// production bugs live in this history (the coin-flip duplicate and the
+	// steal ping-pong, see attachWindow/claimWindow); the marker lets a
+	// provisional mutation refuse to displace a confirmed association, and
+	// gates the WindowsListed prune so a just-added-but-not-yet-listed
+	// window is spared until a poll confirms it.
+	authoritative bool
+	panesIDs      map[string]struct{} // ordered set of `%<id>` keys; cross-ref with state.panesByID
 }
 
 type pane struct {
@@ -530,12 +542,17 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// Directly associate a window with its real session without going
 		// through currentSessionID. Emitted by applyPanesList on periodic
 		// polls to re-associate windows that arrived via UnlinkedWindowAdd.
-		attachWindow(s, e.SessionID, e.WindowID)
+		// Authoritative: the session id rides the same poll row as the
+		// window, so this is ground truth and may correct a provisional
+		// association (and arms the window for the WindowsListed prune).
+		attachWindow(s, e.SessionID, e.WindowID, true)
 	case tmuxctl.UnlinkedWindowAdd:
 		// Window in another session — Phase 2 attaches it to a synthetic
 		// "unlinked" session bucket so the snapshot's Sessions list still
-		// grows correctly. Plan 02-08 may revisit if linkage matters.
-		attachWindow(s, "$_unlinked", e.ID)
+		// grows correctly. Provisional: parking, not a confirmed binding —
+		// the next list-panes poll's WindowAttach authoritatively moves it
+		// to its real session.
+		attachWindow(s, "$_unlinked", e.ID, false)
 	case tmuxctl.UnlinkedWindowClose:
 		detachWindow(s, e.ID)
 	case tmuxctl.UnlinkedWindowRenamed:
@@ -1024,6 +1041,126 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			// on a same-name recreate).
 			recomputeAgents(s, sess.Name)
 		}
+	case tmuxctl.WindowsListed:
+		// Authoritative window reconcile (OQ-3): list-windows -a is ground
+		// truth for what exists on the event's socket. Windows are otherwise
+		// add-only (WindowAdd/WindowAttach never remove), so a %window-close
+		// missed across a control-mode reconnect leaves a stale window
+		// classifying a dead agent forever — tmux never replays the close.
+		// This generalizes the SessionsListed prune to the window layer and
+		// reuses its scoping discipline.
+		//
+		// Guarded on non-empty: a transiently garbled/empty response must
+		// not tear the window model down. The supervisor guards too, but
+		// applyEvent is exercised directly by tests and is the last defence.
+		if len(e.IDs) == 0 {
+			break
+		}
+		listed := make(map[string]struct{}, len(e.IDs))
+		for _, id := range e.IDs {
+			listed[id] = struct{}{}
+		}
+		affected := make(map[string]struct{})
+		var prune []string
+		for sid, sess := range s.sessions {
+			// NEVER prune the $_unlinked parking lot here: list-windows -a
+			// legitimately omits unlinked windows, so their absence proves
+			// nothing. Only the pane list (PanesListed) may retire them.
+			if sid == "$_unlinked" {
+				continue
+			}
+			// Mirror SessionsListed F1 scoping: a never-named record
+			// (attachWindow-created, Name == ID) has unknown socket
+			// attribution; a record on another socket is not this list's
+			// business.
+			if sess.Name == sess.ID || sess.Socket != e.SocketName {
+				continue
+			}
+			for wid, w := range sess.windows {
+				if _, ok := listed[wid]; ok {
+					// Present — confirm the association so a later absence is
+					// prunable, and promote a provisional WindowAdd.
+					w.authoritative = true
+					continue
+				}
+				// Absent. Only prune a window the list has CONFIRMED before
+				// (authoritative): a window just %window-add'd but not yet in
+				// any poll is provisional and must be spared, else a poll
+				// racing its creation nukes it and the next poll re-adds it —
+				// the absent↔present flap the authority marker prevents.
+				if w.authoritative {
+					prune = append(prune, wid)
+					affected[sess.Name] = struct{}{}
+				}
+			}
+		}
+		for _, wid := range prune {
+			// detachWindow (NEVER bare delete): pane objects revive BY ID on
+			// later events, so an orphaned panesByID entry resurrects a stale
+			// title onto a recycled %N (invariants finding F2).
+			detachWindow(s, wid)
+		}
+		for name := range affected {
+			recomputeAgents(s, name)
+		}
+	case tmuxctl.PanesListed:
+		// Authoritative pane reconcile: a pane absent from list-panes -a is
+		// gone, and leaving its panesByID record behind resurrects a stale
+		// title onto a recycled %N. The pane list is also the only authority
+		// that may retire a $_unlinked-parked window (WindowsListed must not).
+		if len(e.IDs) == 0 {
+			break
+		}
+		listed := make(map[string]struct{}, len(e.IDs))
+		for _, id := range e.IDs {
+			listed[id] = struct{}{}
+		}
+		affected := make(map[string]struct{})
+		var prunePanes []string
+		unlinkedTouched := make(map[string]struct{})
+		for sid, sess := range s.sessions {
+			// Socket scoping mirrors SessionsListed/WindowsListed. The
+			// $_unlinked bucket carries Socket "" (synthetic) so it is in
+			// scope only for the default socket's list — never cross-socket.
+			// A never-named real record (Name == ID) has unknown socket
+			// attribution and is skipped; $_unlinked is exempt from that
+			// skip because the pane list is exactly how it gets retired.
+			if sid != "$_unlinked" && sess.Name == sess.ID {
+				continue
+			}
+			if sess.Socket != e.SocketName {
+				continue
+			}
+			for wid, w := range sess.windows {
+				for pid := range w.panesIDs {
+					if _, ok := listed[pid]; ok {
+						continue
+					}
+					prunePanes = append(prunePanes, pid)
+					affected[sess.Name] = struct{}{}
+					if sid == "$_unlinked" {
+						unlinkedTouched[wid] = struct{}{}
+					}
+				}
+			}
+		}
+		for _, pid := range prunePanes {
+			detachPane(s, pid)
+		}
+		// Retire $_unlinked windows the prune just emptied — pane-list proof
+		// that the window is gone. Only windows that LOST a pane this round
+		// are considered; a window that never held a pane is left alone (its
+		// WindowPaneChanged may simply not have arrived yet).
+		if unlinked, ok := s.sessions["$_unlinked"]; ok {
+			for wid := range unlinkedTouched {
+				if w, present := unlinked.windows[wid]; present && len(w.panesIDs) == 0 {
+					detachWindow(s, wid)
+				}
+			}
+		}
+		for name := range affected {
+			recomputeAgents(s, name)
+		}
 	}
 }
 
@@ -1184,16 +1321,27 @@ func claimWindow(s *state, sessID, winID string) {
 			return // a real session owns it; leave ownership alone
 		}
 	}
-	attachWindow(s, sessID, winID)
+	attachWindow(s, sessID, winID, false)
 }
 
-func attachWindow(s *state, sessID, winID string) {
+// attachWindow associates winID with sessID, creating the session if absent
+// and MOVING the existing window object (panes and all) from whichever
+// session currently holds it. authoritative records whether the association
+// is ground truth (WindowAttach / list-derived) or provisional (claimWindow /
+// $_unlinked parking). A PROVISIONAL move must never displace an
+// authoritative association — that is the steal-prevention invariant the
+// authority marker exists for; an authoritative move may freely correct a
+// provisional one.
+func attachWindow(s *state, sessID, winID string, authoritative bool) {
 	sess, ok := s.sessions[sessID]
 	if !ok {
 		sess = &session{ID: sessID, Name: sessID, windows: make(map[string]*window)}
 		s.sessions[sessID] = sess
 	}
-	if _, exists := sess.windows[winID]; exists {
+	if w, exists := sess.windows[winID]; exists {
+		if authoritative {
+			w.authoritative = true // confirm an existing provisional association
+		}
 		return
 	}
 	// Re-association MOVES the existing window object — panes and all —
@@ -1211,12 +1359,22 @@ func attachWindow(s *state, sessID, winID string) {
 			continue
 		}
 		if w, ok := osess.windows[winID]; ok {
+			if w.authoritative && !authoritative {
+				// A provisional signal (e.g. %unlinked-window-add for a
+				// window a poll already bound to its real session) must not
+				// yank a confirmed association into the parking lot. The
+				// WindowsListed/PanesListed reconcile owns removal now.
+				return
+			}
 			delete(osess.windows, winID)
+			if authoritative {
+				w.authoritative = true
+			}
 			sess.windows[winID] = w
 			return
 		}
 	}
-	sess.windows[winID] = &window{ID: winID, panesIDs: make(map[string]struct{})}
+	sess.windows[winID] = &window{ID: winID, authoritative: authoritative, panesIDs: make(map[string]struct{})}
 }
 
 // detachWindow removes a window from any session that owns it.
