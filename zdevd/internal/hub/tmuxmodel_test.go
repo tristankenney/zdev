@@ -186,6 +186,79 @@ func TestApplyEvent_PanesListedPrunesAndRetiresUnlinked(t *testing.T) {
 	}
 }
 
+// TestApplyEvent_PanesListedUnlinkedSocketScoping pins the F1 fix: a parked
+// $_unlinked window carries its source socket (UnlinkedWindowAdd.SocketName),
+// so (a) a named-socket daemon's pane poll actually reconciles its parked
+// windows — the bucket's own Socket is always "" and would never match a
+// non-empty poll, leaving the retire branch dead — and (b) a default-socket
+// poll never prunes a window parked from another socket (which would lose its
+// title, retire it, and let the other supervisor re-park it: a 5s flap).
+func TestApplyEvent_PanesListedUnlinkedSocketScoping(t *testing.T) {
+	s := newState()
+	// @9 parked from socket "gt"; @8 parked from the default socket.
+	applyEvent(s, tmuxctl.UnlinkedWindowAdd{ID: "@9", SocketName: "gt"}, nil)
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@9", PaneID: "%9"}, nil)
+	applyEvent(s, tmuxctl.UnlinkedWindowAdd{ID: "@8"}, nil) // default socket ""
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@8", PaneID: "%8"}, nil)
+
+	// Default-socket pane poll omits both panes. Only the default-socket
+	// parked window (@8) is in scope.
+	applyEvent(s, tmuxctl.PanesListed{SocketName: "", IDs: []string{"%keep"}}, nil)
+
+	unlinked := s.sessions["$_unlinked"]
+	if _, ok := s.panesByID["%8"]; ok {
+		t.Error("default-socket parked pane %8 survived its own socket's prune")
+	}
+	if _, ok := unlinked.windows["@8"]; ok {
+		t.Error("emptied default-socket parked window @8 was not retired")
+	}
+	if _, ok := s.panesByID["%9"]; !ok {
+		t.Error("gt-socket parked pane %9 was pruned by a default-socket poll (cross-socket flap)")
+	}
+	if _, ok := unlinked.windows["@9"]; !ok {
+		t.Error("gt-socket parked window @9 was retired by a default-socket poll")
+	}
+
+	// The gt-socket poll now reconciles @9 — proving the named-socket path is
+	// live (not dead code).
+	applyEvent(s, tmuxctl.PanesListed{SocketName: "gt", IDs: []string{"%other"}}, nil)
+	if _, ok := s.panesByID["%9"]; ok {
+		t.Error("gt-socket parked pane %9 survived its own socket's poll")
+	}
+	if u, ok := s.sessions["$_unlinked"]; ok {
+		if _, still := u.windows["@9"]; still {
+			t.Error("gt-socket parked window @9 was not retired by its own socket's poll")
+		}
+	}
+}
+
+// TestRecomputeAgents_SkipRuleNameClears pins the reviewer's note: now that
+// sessionByName routes through the skip-rule index, a skip-rule name (e.g.
+// the watcher) resolves to nil, so recomputeAgents takes the session-gone
+// branch and CLEARS attribution rather than surfacing the infrastructure
+// session's agent panes.
+func TestRecomputeAgents_SkipRuleNameClears(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "zdevd-watcher"}, nil)
+	applyEvent(s, tmuxctl.WindowAdd{ID: "@1"}, nil)
+	applyEvent(s, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%1"}, nil)
+	applyEvent(s, tmuxctl.PaneTitleChanged{PaneID: "%1", Title: "● claude"}, nil)
+
+	if _, ok := sessionByName(s, "zdevd-watcher"); ok {
+		t.Fatal("sessionByName resolved a skip-rule name")
+	}
+	// Seed non-empty attribution, then prove recompute clears it.
+	pd := s.projectData["zdevd-watcher"]
+	pd.AgentStates = map[string]string{"claude": "waiting"}
+	pd.AgentClaude = "waiting"
+	s.projectData["zdevd-watcher"] = pd
+	recomputeAgents(s, "zdevd-watcher")
+	got := s.projectData["zdevd-watcher"]
+	if got.AgentStates != nil || got.AgentClaude != "" {
+		t.Errorf("recomputeAgents on skip-rule name computed instead of clearing: %+v", got)
+	}
+}
+
 // TestApplyEvent_ListedEmptyGuards pins the empty-list guard for both
 // reconcilers: a transiently empty poll must mutate nothing (cf. the
 // SessionsListed non-empty guard).

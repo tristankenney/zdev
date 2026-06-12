@@ -192,6 +192,14 @@ func (s *Supervisor) emit(ev Event) {
 				e.SocketName = s.socketName
 				ev = e
 			}
+		case UnlinkedWindowAdd:
+			// The parked window inherits this socket so the PanesListed
+			// reconcile can scope its prune/retire (the $_unlinked bucket's
+			// own Socket field is meaningless — always "").
+			if e.SocketName == "" {
+				e.SocketName = s.socketName
+				ev = e
+			}
 		case ClientListRefresh:
 			if e.SocketName == "" {
 				e.SocketName = s.socketName

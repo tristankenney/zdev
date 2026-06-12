@@ -424,7 +424,15 @@ type window struct {
 	// gates the WindowsListed prune so a just-added-but-not-yet-listed
 	// window is spared until a poll confirms it.
 	authoritative bool
-	panesIDs      map[string]struct{} // ordered set of `%<id>` keys; cross-ref with state.panesByID
+	// socket is the source tmux socket a window parked in $_unlinked came
+	// from (UnlinkedWindowAdd.SocketName). Windows owned by a real session
+	// inherit their socket from that session's record; the $_unlinked bucket
+	// is synthetic (Socket always ""), so a parked window must carry its own
+	// socket or the PanesListed reconcile can't scope its prune/retire — on a
+	// named-socket daemon (ZDEVD_TMUX_SOCKET) the bucket's "" never matches a
+	// non-empty PanesListed.SocketName, and cross-socket it mis-scopes.
+	socket   string
+	panesIDs map[string]struct{} // ordered set of `%<id>` keys; cross-ref with state.panesByID
 }
 
 type pane struct {
@@ -553,6 +561,15 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// the next list-panes poll's WindowAttach authoritatively moves it
 		// to its real session.
 		attachWindow(s, "$_unlinked", e.ID, false)
+		// Record the source socket on the parked window so PanesListed can
+		// scope its prune/retire — the bucket's own Socket field is always "".
+		// If attachWindow refused (the window is authoritatively owned
+		// elsewhere) it won't be in the bucket and this is a no-op.
+		if unlinked, ok := s.sessions["$_unlinked"]; ok {
+			if w, ok := unlinked.windows[e.ID]; ok {
+				w.socket = e.SocketName
+			}
+		}
 	case tmuxctl.UnlinkedWindowClose:
 		detachWindow(s, e.ID)
 	case tmuxctl.UnlinkedWindowRenamed:
@@ -1119,28 +1136,40 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		var prunePanes []string
 		unlinkedTouched := make(map[string]struct{})
 		for sid, sess := range s.sessions {
-			// Socket scoping mirrors SessionsListed/WindowsListed. The
-			// $_unlinked bucket carries Socket "" (synthetic) so it is in
-			// scope only for the default socket's list — never cross-socket.
-			// A never-named real record (Name == ID) has unknown socket
-			// attribution and is skipped; $_unlinked is exempt from that
-			// skip because the pane list is exactly how it gets retired.
-			if sid != "$_unlinked" && sess.Name == sess.ID {
+			if sid == "$_unlinked" {
+				// The parking lot's own Socket is meaningless (always ""):
+				// scope each parked window by ITS source socket (recorded
+				// from UnlinkedWindowAdd) so a named-socket daemon's pane poll
+				// still reconciles its parked windows (the bucket "" would
+				// never match a non-empty SocketName) and a default-socket
+				// poll never prunes a window parked from another socket.
+				for wid, w := range sess.windows {
+					if w.socket != e.SocketName {
+						continue
+					}
+					for pid := range w.panesIDs {
+						if _, ok := listed[pid]; ok {
+							continue
+						}
+						prunePanes = append(prunePanes, pid)
+						unlinkedTouched[wid] = struct{}{}
+					}
+				}
 				continue
 			}
-			if sess.Socket != e.SocketName {
+			// Real sessions: scope by the session's socket. A never-named
+			// record (Name == ID) has unknown socket attribution — skip it,
+			// mirroring SessionsListed/WindowsListed F1.
+			if sess.Name == sess.ID || sess.Socket != e.SocketName {
 				continue
 			}
-			for wid, w := range sess.windows {
+			for _, w := range sess.windows {
 				for pid := range w.panesIDs {
 					if _, ok := listed[pid]; ok {
 						continue
 					}
 					prunePanes = append(prunePanes, pid)
 					affected[sess.Name] = struct{}{}
-					if sid == "$_unlinked" {
-						unlinkedTouched[wid] = struct{}{}
-					}
 				}
 			}
 		}

@@ -58,7 +58,7 @@ type PanesListed struct {
 type WindowAdd struct{ ID string }                             // %window-add @1
 type WindowClose struct{ ID string }                           // %window-close @1
 type WindowRenamed struct{ ID, NewName string }                // %window-renamed @1 newname
-type UnlinkedWindowAdd struct{ ID string }                     // %unlinked-window-add
+type UnlinkedWindowAdd struct{ ID, SocketName string }         // %unlinked-window-add; SocketName tags the source socket (zd-47u) so the parking lot's PanesListed retire scopes correctly
 type UnlinkedWindowClose struct{ ID string }                   // %unlinked-window-close
 type UnlinkedWindowRenamed struct{ ID, NewName string }        // %unlinked-window-renamed
 type WindowPaneChanged struct{ WindowID, PaneID string }       // %window-pane-changed @1 %2

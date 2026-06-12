@@ -721,8 +721,11 @@ func snapshotStatuses(s *state) map[string]string {
 	// map-iteration winner emitted spurious state-change flips at event
 	// rate (dogfood 2026-06-12, zitcha/infra: thousands/hour). See sessindex.go.
 	ix := buildSessionIndex(s)
-	for _, name := range ix.sortedNames() {
-		out[name] = deriveStatus(s, ix.lookup(name))
+	// Iterate the index map directly — `out` is order-insensitive, so the
+	// sortedNames() slice alloc + sort would be pure waste on every
+	// processed event (emitStateChanges runs this twice per event).
+	for name, sess := range ix.byName {
+		out[name] = deriveStatus(s, sess)
 	}
 	// Workspace projects: normalize slash-form project names to dash-form so
 	// "example/backend" and "example-backend" resolve to the same status key.
