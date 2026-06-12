@@ -1761,3 +1761,59 @@ func TestRender_TeamRows(t *testing.T) {
 		t.Errorf("waiting member name missing/uncolored\n%q", out)
 	}
 }
+
+// TestRender_TeamRows_CursorOnMember (slice C): CursorRow indexes the
+// flattened row list, so it can select a member row. Flattened order for
+// {alpha, beta} with a 2-member team led by alpha is:
+//
+//	0 alpha   1 alpha/impl   2 alpha/rev   3 beta
+//
+// Selecting row 2 must put the ▶ on rev's nested row (prefix "  ▶ ") and on
+// no project row; selecting row 0 must put the compact ▶ on alpha's row.
+func TestRender_TeamRows_CursorOnMember(t *testing.T) {
+	prev := TeamRows
+	TeamRows = true
+	defer func() { TeamRows = prev }()
+
+	mkSnap := func(cursorRow int) *proto.Snapshot {
+		return &proto.Snapshot{
+			CursorActive: true,
+			CursorRow:    cursorRow,
+			Projects: []proto.Project{
+				{Name: "alpha", Status: "alive"},
+				{Name: "beta", Status: "alive"},
+			},
+			TeamGroups: []proto.TeamGroup{{
+				Name: "t", LeadProject: "alpha",
+				Members: []proto.TeamMember{
+					{Name: "impl", Color: "blue", Status: "working", WindowID: "@7"},
+					{Name: "rev", Color: "green", Status: "waiting", WindowID: "@8"},
+				},
+			}},
+		}
+	}
+
+	anim := NewAnimator()
+	// Row 2 → the second member (rev) is cursor-selected.
+	snap := mkSnap(2)
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+	if !bytes.Contains(out, []byte("  ▶ "+RedPulse+"●"+Reset+" "+teamMemberColors["green"]+"rev")) {
+		t.Errorf("cursor row 2 must mark rev's member row with ▶\n%q", out)
+	}
+	// impl's row (flattened 1) must NOT be selected.
+	if bytes.Contains(out, []byte("  ▶ "+Icy+"✳")) {
+		t.Errorf("impl row must not carry ▶ when row 2 is selected\n%q", out)
+	}
+
+	// Row 0 → alpha's project row gets the compact ▶; no member row does.
+	snap0 := mkSnap(0)
+	anim.OnSnapshot(snap0)
+	out0 := Render(snap0, 50, anim, fixedNowFn)
+	if !bytes.Contains(out0, []byte("▶ ")) {
+		t.Fatalf("cursor row 0 must mark alpha's project row\n%q", out0)
+	}
+	if bytes.Contains(out0, []byte("  ▶ ")) {
+		t.Errorf("no member row should carry ▶ when the project row is selected\n%q", out0)
+	}
+}

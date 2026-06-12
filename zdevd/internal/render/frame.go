@@ -153,6 +153,29 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 	}
 
+	// Cursor row-order contract (slice C): CursorRow indexes the FLATTENED
+	// row list (proto.FlatRows) — projects plus, when TeamRows is on, their
+	// nested member rows. projBase[i] is the flattened index of project i's
+	// own row; its member rows occupy projBase[i]+1 .. projBase[i]+memberCount.
+	// This accumulation MUST match proto.FlatRows' ordering exactly (project
+	// then its teamsByLead members) so the hub cursor and this ▶ never drift.
+	// Knob off ⇒ projBase[i] == i ⇒ behaviour identical to pre-slice-C.
+	projBase := make([]int, len(snap.Projects))
+	acc := 0
+	for i := range snap.Projects {
+		projBase[i] = acc
+		acc++
+		if TeamRows {
+			for _, g := range teamsByLead[snap.Projects[i].Name] {
+				acc += len(g.Members)
+			}
+		}
+	}
+	cursorFlatRow := -1
+	if snap.CursorActive {
+		cursorFlatRow = snap.CursorRow
+	}
+
 	// Per-project rows.
 	//
 	// renderProject writes one project's row(s) and tallies it into the
@@ -183,7 +206,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
-		isCursor := snap.CursorActive && i == snap.CursorRow && !isCurrent
+		isCursor := cursorFlatRow == projBase[i] && !isCurrent
 		// 260511-ohu change A: twoRows := isCurrent only (urgent dropped).
 		// Non-current urgent projects now render as 1 compact row with the red ▌
 		// prefix migrated into renderCompactRow.
@@ -199,7 +222,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		// bullets on the badge are the surface). Placed here so it runs under
 		// both the fold and the flat layouts.
 		if TeamRows {
-			renderMemberRows(&buf, teamsByLead[p.Name], width)
+			renderMemberRows(&buf, teamsByLead[p.Name], width, projBase[i], cursorFlatRow)
 		}
 	}
 
@@ -693,26 +716,39 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 // renderMemberRows writes one indented row per teammate of every team led by
 // the just-rendered project (Agent Teams slice B, ZDEV_TEAM_WINDOWS). Layout:
 //
-//	"    " + glyph-color + glyph + Reset + " " + name-color + name + Reset
+//	indent + glyph-color + glyph + Reset + " " + name-color + name + Reset
 //
-// 4-space indent (distinct from the 2-space project indent so members nest
-// visually under the lead), a status glyph in the project-row language
-// (memberGlyph), then the member name in its team color (falling back to no
-// color for unknown colors). The name is truncated to the panel width budget.
-// No rows when groups is empty — the caller only invokes this under TeamRows.
-func renderMemberRows(buf *bytes.Buffer, groups []*proto.TeamGroup, width int) {
-	// Name budget: width minus the 4-space indent, the glyph, and a space.
+// The indent is 4 columns: "    " normally, "  ▶ " when this member row is the
+// cursor-selected row (slice C) — the ▶ sits at column 2 so it reads as nested
+// under the lead while the glyph column stays aligned with the unselected
+// rows. The status glyph is the project-row language (memberGlyph); the name
+// renders in its team color (no color for unknown colors), truncated to the
+// width budget.
+//
+// baseIdx is the flattened row index of the LEAD's project row (projBase[i]);
+// the first member therefore sits at baseIdx+1. cursorFlatRow is the selected
+// flattened row index, or -1 when the cursor is inactive. The accumulation
+// across groups/members MUST match proto.FlatRows so a selected member here is
+// exactly the row the hub's cursor resolved. No rows when groups is empty.
+func renderMemberRows(buf *bytes.Buffer, groups []*proto.TeamGroup, width, baseIdx, cursorFlatRow int) {
+	// Name budget: width minus the 4-col indent, the glyph, and a space.
 	nameCap := width - 6
 	if nameCap < 10 {
 		nameCap = 10
 	}
+	flat := baseIdx
 	for _, g := range groups {
 		if g == nil {
 			continue
 		}
 		for _, m := range g.Members {
+			flat++ // member rows occupy baseIdx+1, baseIdx+2, …
 			glyph, color := memberGlyph(m.Status)
-			buf.WriteString("    ")
+			if flat == cursorFlatRow {
+				buf.WriteString("  ▶ ")
+			} else {
+				buf.WriteString("    ")
+			}
 			buf.WriteString(color)
 			buf.WriteString(glyph)
 			buf.WriteString(Reset)
