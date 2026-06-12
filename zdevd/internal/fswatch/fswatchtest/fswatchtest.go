@@ -62,13 +62,31 @@ func EventuallyWithin(t testing.TB, deadline time.Duration, what string, pred fu
 // the watcher reacts). The stimulus MUST be safe to repeat — appending to a
 // file is not; re-writing the same content, or creating a uniquely-named dir,
 // is.
+//
+// The stimulus fires at most every stimGap, NOT every poll tick: against a
+// DEBOUNCED watcher, a stimulus re-issued every 5ms resets the debounce timer
+// forever and the settle the predicate waits for can never fire — the test
+// starves the very signal it polls for. CI exposed exactly that (both OSes,
+// TestRunDebouncesAndAddsWatches): loaded runners stretched delivery so the
+// stim cadence and the debounce window overlapped permanently. 150ms clears
+// every debounce in the tree (max 50ms) with 3x headroom while still
+// re-issuing fast enough to win the arm race quickly.
 func EventuallyStim(t testing.TB, what string, stim func(), pred func() bool) {
 	t.Helper()
+	var lastStim time.Time
 	Eventually(t, what, func() bool {
-		stim()
+		if time.Since(lastStim) >= stimGap {
+			stim()
+			lastStim = time.Now()
+		}
 		return pred()
 	})
 }
+
+// stimGap spaces EventuallyStim's stimulus re-issues. Must exceed the largest
+// Spec.Debounce used by any adapter (teams: 50ms) by enough margin that a
+// loaded machine cannot smear a stimulus into the next debounce window.
+const stimGap = 150 * time.Millisecond
 
 // Collector records every value submitted to a watcher under a mutex, so the
 // test goroutine can poll the sequence without racing the watcher goroutine.
