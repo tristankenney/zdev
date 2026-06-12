@@ -241,6 +241,60 @@ func TestApplyEvent_TeamsChanged_SnapshotThreading(t *testing.T) {
 	}
 }
 
+// TestBuildSnapshot_LeadDeAggregation (Agent Teams slice B, step 4): a team
+// member's pane lives in the lead's session (team-sweep relocates it to its
+// own WINDOW, not its own session). With teamWindows OFF the member's waiting
+// title aggregates into the lead's project row exactly as before; with
+// teamWindows ON the member pane is excluded from the lead session's attention
+// derivation, so the lead row reflects the lead's own (alive) pane only.
+func TestBuildSnapshot_LeadDeAggregation(t *testing.T) {
+	now := int64(1714838460)
+
+	// %1 is the lead's shell (alive); %42 is a team member's waiting pane,
+	// both owned by session proj-a.
+	newStateWithTeam := func() *state {
+		s := buildTestState("proj-a", []string{"%1", "%42"}, []string{"shell", "● claude"})
+		s.projectListNames = []string{"proj-a"}
+		s.agentTeams = map[string]*teams.Team{
+			"alpha": {Name: "alpha", Members: []teams.Member{
+				{Name: "team-lead", AgentType: "team-lead"},
+				{Name: "worker", AgentType: "general-purpose", Color: "green", TmuxPaneID: "%42"},
+			}},
+		}
+		return s
+	}
+
+	projStatus := func(snap *proto.Snapshot) string {
+		for _, p := range snap.Projects {
+			if p.Name == "proj-a" {
+				return p.Status
+			}
+		}
+		return "<missing>"
+	}
+
+	cases := []struct {
+		name        string
+		teamWindows bool
+		wantStatus  string
+	}{
+		// Off: the member's waiting title wins the session derivation.
+		{"knob_off_aggregates", false, tmuxctl.StatusWaiting},
+		// On: the member pane is excluded, leaving only the lead's shell.
+		{"knob_on_de_aggregates", true, tmuxctl.StatusAlive},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStateWithTeam()
+			s.teamWindows = tc.teamWindows
+			snap := buildSnapshot(s, 1, time.Time{}, now, now*1000)
+			if got := projStatus(snap); got != tc.wantStatus {
+				t.Errorf("proj-a status = %q; want %q (teamWindows=%v)", got, tc.wantStatus, tc.teamWindows)
+			}
+		})
+	}
+}
+
 // TestApplyEvent_WindowAddDoesNotSteal pins the ping-pong fix (dogfood
 // 2026-06-11: thousands of alive↔absent flips/hour): WindowAdd attaches
 // via the racy currentSessionID pin, so it must NEVER move a window a

@@ -100,6 +100,16 @@ type state struct {
 	// Run starts; read-only throughout Run.
 	showUnmanaged bool
 
+	// teamWindows mirrors hub.Config.TeamWindows (set from ZDEV_TEAM_WINDOWS
+	// in cmd/zdevd — the hub NEVER reads env itself). When true, panes
+	// claimed by an Agent Teams member are EXCLUDED from their session's
+	// attention derivation in buildSnapshot, so the lead's project row
+	// reflects the LEAD ONLY — teammate state surfaces on the dedicated
+	// member rows the renderer draws under the same knob. Default false:
+	// member panes still aggregate into the session row exactly as before
+	// (phase4-v16..v18). Set once by NewHub before Run; read-only throughout.
+	teamWindows bool
+
 	// agentTeams is the full-replacement Claude Code Agent Teams snapshot
 	// from TeamsChanged (slice 3). Keyed by team name; swapped wholesale —
 	// the watcher owns change detection, the hub owns nothing but the

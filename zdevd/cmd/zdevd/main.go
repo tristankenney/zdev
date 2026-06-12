@@ -215,6 +215,9 @@ func run() error {
 		StatePath:     *stateFlag,
 		Agents:        cfg.AgentRegistry(),
 		ShowUnmanaged: cfg.ShowUnmanaged,
+		// Agent Teams slice B: ZDEV_TEAM_WINDOWS=1 de-aggregates teammate
+		// panes out of the lead's session row (the hub never reads env itself).
+		TeamWindows: os.Getenv("ZDEV_TEAM_WINDOWS") == "1",
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve

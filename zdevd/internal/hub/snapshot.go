@@ -84,6 +84,16 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 	sort.Strings(names)
 	sort.Strings(unmanagedNames) // no-op when hide (default)
 
+	// Lead de-aggregation (Agent Teams slice B): when teamWindows is on,
+	// collect the panes claimed by team members once so each session's
+	// attention derivation can skip them — the lead row then reflects the
+	// lead only. nil when the knob is off or no team owns a real pane, in
+	// which case sessionTitlesExcluding behaves exactly as sessionTitles.
+	var excludeMemberPanes map[string]struct{}
+	if st.teamWindows {
+		excludeMemberPanes = teamMemberPaneIDs(st)
+	}
+
 	// Build the unmanaged set for O(1) lookup when assembling projects.
 	unmanagedSet := make(map[string]struct{}, len(unmanagedNames))
 	for _, n := range unmanagedNames {
@@ -130,7 +140,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		if !absent {
 			prevWaitStartedTS := pd.WaitStartedTS
 			ar := DeriveAttention(AttentionInputs{
-				Titles:            sessionTitles(st, sess),
+				Titles:            sessionTitlesExcluding(st, sess, excludeMemberPanes),
 				LastVisitTS:       st.lastVisitTS[dataKey],
 				LastTitleChangeTS: st.lastTitleChangeTS[dataKey],
 				WaitStartedTS:     pd.WaitStartedTS,
@@ -636,18 +646,56 @@ func emitPortDiff(emit func(eventlog.Event), project string, prev, now []int) {
 // Returns nil when the session is unknown or has no windows (a session
 // freshly created by SessionChanged but not yet populated).
 func sessionTitles(st *state, s *session) []string {
+	return sessionTitlesExcluding(st, s, nil)
+}
+
+// sessionTitlesExcluding is sessionTitles with an optional set of pane IDs to
+// skip. buildSnapshot passes the Agent Teams member-pane set when teamWindows
+// is on, so a relocated teammate's pane (which still lives in the lead's
+// session) does not drive the LEAD's row attention — the lead row reflects
+// the lead only, and teammate state surfaces on its own member row. A nil or
+// empty exclude set reproduces sessionTitles exactly (the default path).
+func sessionTitlesExcluding(st *state, s *session, exclude map[string]struct{}) []string {
 	if s == nil || len(s.windows) == 0 {
 		return nil
 	}
 	var titles []string
 	for _, w := range s.windows {
 		for paneID := range w.panesIDs {
+			if _, skip := exclude[paneID]; skip {
+				continue
+			}
 			if p, ok := st.panesByID[paneID]; ok {
 				titles = append(titles, p.Title)
 			}
 		}
 	}
 	return titles
+}
+
+// teamMemberPaneIDs returns the set of tmux pane IDs claimed by Agent Teams
+// members (the lead excluded — it IS the anchor; in-process members have no
+// pane). Used by buildSnapshot under teamWindows to de-aggregate teammate
+// panes out of the lead session's attention derivation. Returns nil when no
+// team has a real-pane member, so the default (no-team) path allocates
+// nothing. Read-only; hub goroutine only.
+func teamMemberPaneIDs(st *state) map[string]struct{} {
+	var out map[string]struct{}
+	for _, t := range st.agentTeams {
+		for _, m := range t.Members {
+			if m.AgentType == "team-lead" {
+				continue
+			}
+			if m.TmuxPaneID == "" || m.TmuxPaneID == teams.InProcessPaneID {
+				continue
+			}
+			if out == nil {
+				out = make(map[string]struct{})
+			}
+			out[m.TmuxPaneID] = struct{}{}
+		}
+	}
+	return out
 }
 
 func deriveStatus(st *state, s *session) string {

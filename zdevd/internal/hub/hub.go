@@ -183,6 +183,15 @@ type Config struct {
 	// below the managed block with proto.Project.Unmanaged=true.
 	// Default false preserves existing sidebar behaviour.
 	ShowUnmanaged bool
+
+	// TeamWindows mirrors ZDEV_TEAM_WINDOWS=1 (Agent Teams slice B). When
+	// true, buildSnapshot excludes Agent Teams member panes from their
+	// session's attention derivation so the lead's project row reflects the
+	// lead only (teammate state moves to the renderer's nested member rows
+	// under the same knob). Default false preserves the pre-slice-B
+	// behaviour where member panes aggregate into the session row. The hub
+	// never reads the env var — cmd/zdevd resolves it and passes it here.
+	TeamWindows bool
 }
 
 // NewHub constructs a hub from a Config. Every dependency is bundled into
@@ -208,6 +217,7 @@ func NewHub(cfg Config) *Hub {
 	st.statusDwell = cfg.StatusDwell
 	st.waitingDwell = cfg.WaitingDwell
 	st.showUnmanaged = cfg.ShowUnmanaged
+	st.teamWindows = cfg.TeamWindows
 	return &Hub{
 		debounce:       cfg.Debounce,
 		events:         make(chan tmuxctl.Event, eventsChanCap),
