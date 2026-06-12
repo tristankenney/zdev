@@ -9,10 +9,10 @@ package workspace
 import (
 	"context"
 	"log/slog"
-	"os"
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/tristankenney/zdev/zdevd/internal/fswatch"
 	"github.com/tristankenney/zdev/zdevd/internal/projects"
 )
 
@@ -31,44 +31,28 @@ func NewWatcher(dir string, lister *projects.Lister) *Watcher {
 	return &Watcher{dir: dir, lister: lister}
 }
 
-// Run starts the watcher loop. Returns nil on ctx cancel.
+// Run starts the watcher loop on the shared fswatch engine. Returns nil on ctx
+// cancel. This is a per-event watcher: no debounce, no reload-compare — each
+// directory create/remove triggers a project-list refresh in OnEvent.
+//
+// EnsureStat (not Mkdir): ~/workspace is the user's directory, and its absence
+// is the user's choice — the watcher must not conjure it. A missing dir
+// degrades to a no-op. Likewise an Add failure now degrades gracefully through
+// the engine (it previously returned an error and would have taken the daemon
+// down via the errgroup); the watch is best-effort and a transient kqueue Add
+// race must not be fatal.
 func (w *Watcher) Run(ctx context.Context) error {
-	if _, err := os.Stat(w.dir); err != nil {
-		slog.Warn("workspace dir not found; watcher disabled", "dir", w.dir, "err", err)
-		// Degrade gracefully — daemon shouldn't crash if workspace is missing
-		// at startup. Block on ctx.Done() so the errgroup is well-formed.
-		<-ctx.Done()
-		return nil
-	}
-	fsw, err := fsnotify.NewWatcher()
-	if err != nil {
-		return err
-	}
-	defer fsw.Close()
-	if err := fsw.Add(w.dir); err != nil {
-		return err
-	}
-	for {
-		select {
-		case ev, ok := <-fsw.Events:
-			if !ok {
-				return nil
-			}
-			if ev.Op&(fsnotify.Create|fsnotify.Remove) == 0 {
-				continue
-			}
+	return fswatch.Run(ctx, fswatch.Spec{
+		Name:   "workspace",
+		Root:   w.dir,
+		Ensure: fswatch.EnsureStat,
+		Ops:    fsnotify.Create | fsnotify.Remove,
+		OnEvent: func(h *fswatch.Handle, ev fsnotify.Event) {
 			// Re-shell zdev --list-projects. Lister submits ProjectListChanged
 			// on success; transient failures log but don't propagate.
-			if err := w.lister.Refresh(ctx); err != nil {
+			if err := w.lister.Refresh(h.Ctx); err != nil {
 				slog.Warn("workspace: lister refresh failed", "err", err)
 			}
-		case err, ok := <-fsw.Errors:
-			if !ok {
-				return nil
-			}
-			slog.Warn("workspace: fsnotify error", "err", err)
-		case <-ctx.Done():
-			return nil
-		}
-	}
+		},
+	})
 }
