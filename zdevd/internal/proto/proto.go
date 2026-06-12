@@ -255,6 +255,14 @@ type Snapshot struct {
 	// ~/.claude/teams/, sorted by name. Empty when the experimental
 	// feature is unused — non-team fleets see no change.
 	TeamGroups []TeamGroup `json:"team_groups,omitempty"`
+
+	// TeamRows (phase4-v20) is the DAEMON's ZDEV_TEAM_WINDOWS state. The
+	// renderer must derive member-row layout from THIS flag, never its own
+	// environment: CursorRow indexes the flattened row list (FlatRows),
+	// and a daemon/renderer knob mismatch would silently paint the cursor
+	// on the wrong row — the exact drift class FlatRows exists to kill,
+	// reintroduced at the process boundary (invariants review, slice C).
+	TeamRows bool `json:"team_rows,omitempty"`
 }
 
 // TeamGroup (phase4-v16, Agent Teams MVP slice 3) is one Claude Code

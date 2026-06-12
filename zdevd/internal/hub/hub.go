@@ -963,6 +963,11 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	if a.CursorRow != b.CursorRow || a.CursorActive != b.CursorActive {
 		return false
 	}
+	// TeamRows (phase4-v20): a daemon restart with the knob flipped changes
+	// the flattened row order — renderers must repaint, so it must publish.
+	if a.TeamRows != b.TeamRows {
+		return false
+	}
 	// TeamGroups (phase4-v16): team create/dissolve and member changes
 	// must publish. teamGroupsFor sorts by team name, so positional
 	// comparison is sufficient.

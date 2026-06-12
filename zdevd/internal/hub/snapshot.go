@@ -301,6 +301,9 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		CursorRow:    st.cursorRow,
 		CursorActive: st.cursorActive,
 		TeamGroups:   teamGroups,
+		// TeamRows: the daemon's knob is the single row-order authority —
+		// the renderer reads this, not its own env (see proto.Snapshot).
+		TeamRows: st.teamWindows,
 	}
 }
 

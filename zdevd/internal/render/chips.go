@@ -144,13 +144,13 @@ var teamMemberColors = map[string]string{
 // teammate. In-process teammates are exactly as real as tmux ones here —
 // the badge is the ONLY surface they have (no pane, no hooks). Name
 // truncated to 10 runes; a 4-member team costs ~17 cells total.
-func chipTeamBadge(buf *bytes.Buffer, groups []*proto.TeamGroup) {
+func chipTeamBadge(buf *bytes.Buffer, groups []*proto.TeamGroup, teamRows bool) {
 	for _, g := range groups {
-		chipOneTeamBadge(buf, g)
+		chipOneTeamBadge(buf, g, teamRows)
 	}
 }
 
-func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup) {
+func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup, teamRows bool) {
 	if g == nil {
 		return
 	}
@@ -162,7 +162,7 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup) {
 	// When member rows render (ZDEV_TEAM_WINDOWS), the ⊛<name> badge is the
 	// team MARKER only — per-member state moves to the nested rows, so the
 	// bullets are suppressed here to avoid duplicating the signal.
-	if TeamRows {
+	if teamRows {
 		return
 	}
 	for _, m := range g.Members {

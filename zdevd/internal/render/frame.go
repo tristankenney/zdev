@@ -160,12 +160,13 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// This accumulation MUST match proto.FlatRows' ordering exactly (project
 	// then its teamsByLead members) so the hub cursor and this ▶ never drift.
 	// Knob off ⇒ projBase[i] == i ⇒ behaviour identical to pre-slice-C.
+	teamRows := teamRowsFor(snap)
 	projBase := make([]int, len(snap.Projects))
 	acc := 0
 	for i := range snap.Projects {
 		projBase[i] = acc
 		acc++
-		if TeamRows {
+		if teamRows {
 			for _, g := range teamsByLead[snap.Projects[i].Name] {
 				acc += len(g.Members)
 			}
@@ -211,17 +212,17 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		// Non-current urgent projects now render as 1 compact row with the red ▌
 		// prefix migrated into renderCompactRow.
 		if isCurrent {
-			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name])
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows)
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 		} else {
-			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name])
+			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
 		}
 		// Nested member rows (Agent Teams slice B, ZDEV_TEAM_WINDOWS): each
 		// teammate of a team led by this project renders on its own indented
 		// row immediately after the lead's row(s). Knob off → no rows (the
 		// bullets on the badge are the surface). Placed here so it runs under
 		// both the fold and the flat layouts.
-		if TeamRows {
+		if teamRows {
 			renderMemberRows(&buf, teamsByLead[p.Name], width, projBase[i], cursorFlatRow)
 		}
 	}
@@ -339,6 +340,15 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // Kill criterion: if nested rows cost more vertical space than they earn
 // in legibility at fleet scale, default stays bullets.
 var TeamRows = false
+
+// teamRowsFor resolves the effective member-row mode for one snapshot: the
+// DAEMON's flag on the wire wins (it is the row-order authority — CursorRow
+// indexes the daemon's flattened list), with the package var as fallback
+// only for snapshots from a pre-v20 source (impossible in practice given
+// strict schema equality, but keeps goldens/tests that construct bare
+// snapshots meaningful). Invariants review (slice C, F1): renderer env must
+// never disagree with the daemon about row order.
+func teamRowsFor(snap *proto.Snapshot) bool { return snap.TeamRows || TeamRows }
 
 // renderFooter writes the footer tally per FooterMode. Counts use the
 // bucket's own marker color (waiting orange, dead red, working icy,
@@ -491,7 +501,7 @@ func joinNonEmpty(dst *bytes.Buffer, subs []*bytes.Buffer, sep string) {
 //	urgent=true          → {RedBorder}▌{Reset}" " (foreground-only red; no bg state to leak)
 //	urgent=false+current → {BreathColorForProject}▌{Reset}" " (per-project breath bar, VIS-03)
 //	otherwise            → "  " (2-space indent)
-func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent bool, teamGroups []*proto.TeamGroup) {
+func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent bool, teamGroups []*proto.TeamGroup, teamRows bool) {
 	isCurrent := p.Name == current && current != ""
 	switch {
 	case urgent:
@@ -540,7 +550,7 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	}
 	// Agent Teams badge (phase4-v16, slice 4) — same placement as the
 	// compact row: after the name, before line-clear.
-	chipTeamBadge(buf, teamGroups)
+	chipTeamBadge(buf, teamGroups, teamRows)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
 }
@@ -642,7 +652,7 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 // No branch, ports, shell-cmd, agent chips, or celebrate chip — those are
 // scanning noise on a non-current row. Only attention-worthy signals surface.
 // Per planner decision PD-02: name soft-cap at max(width-14, 10) runes.
-func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool, teamGroups []*proto.TeamGroup) {
+func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool, teamGroups []*proto.TeamGroup, teamRows bool) {
 	switch {
 	case urgent:
 		buf.WriteString(RedBorder)
@@ -690,7 +700,7 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	// Agent Teams badge (phase4-v16, slice 4): the lead's row carries
 	// "⊛name" + a colored bullet per teammate — for in-process teams
 	// this is the members' ONLY surface.
-	chipTeamBadge(buf, teamGroups)
+	chipTeamBadge(buf, teamGroups, teamRows)
 
 	// Wait-age (compact form: no "! " prefix; chipWaitAge with "! " is for
 	// current-session agent domain row only — compact rows use the tiered inline form).
