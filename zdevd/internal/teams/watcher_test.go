@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sync"
 	"testing"
-	"time"
+
+	"github.com/tristankenney/zdev/zdevd/internal/fswatch/fswatchtest"
 )
 
 // teamConfig renders a minimal-but-valid config.json for a team with the
@@ -50,54 +50,14 @@ func teamConfig(name string, memberNames ...string) string {
 	return body
 }
 
-// collector records every snapshot submit under a mutex so the test goroutine
-// can poll the sequence without racing the watcher goroutine.
-type collector struct {
-	mu    sync.Mutex
-	emits []map[string]*Team
-}
-
-func (c *collector) submit(m map[string]*Team) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// Snapshots are owned by the watcher after submit; LoadAll builds a fresh
-	// map each time so retaining the reference is safe.
-	c.emits = append(c.emits, m)
-}
-
-func (c *collector) snapshot() []map[string]*Team {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]map[string]*Team, len(c.emits))
-	copy(out, c.emits)
-	return out
-}
-
-// waitForEmit polls the collected emissions until pred is satisfied by any
-// emission, or fails after a generous timeout. Polling (not a fixed sleep)
-// keeps the test robust on a loaded machine: the timeout only extends a run
-// that is already failing.
-func waitForEmit(t *testing.T, c *collector, what string, pred func(map[string]*Team) bool) {
+// runWatcher starts a Watcher on root in a goroutine and returns the shared
+// fswatchtest.Collector recording its snapshot submits and a stop func. The
+// stop func cancels and waits for Run to return so the fsnotify watcher is
+// closed before the test's TempDir cleanup runs.
+func runWatcher(t *testing.T, root string) (*fswatchtest.Collector[map[string]*Team], func()) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, e := range c.snapshot() {
-			if pred(e) {
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for emission: %s", what)
-}
-
-// runWatcher starts a Watcher on root in a goroutine and returns the collector
-// and a stop func. The stop func cancels and waits for Run to return so the
-// fsnotify watcher is closed before the test's TempDir cleanup runs.
-func runWatcher(t *testing.T, root string) (*collector, func()) {
-	t.Helper()
-	c := &collector{}
-	w := NewWatcher(root, c.submit)
+	c := &fswatchtest.Collector[map[string]*Team]{}
+	w := NewWatcher(root, c.Submit)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -130,7 +90,7 @@ func TestWatcher_BaselineScan(t *testing.T) {
 	c, stop := runWatcher(t, root)
 	defer stop()
 
-	waitForEmit(t, c, "baseline emission containing pre-existing alpha", hasTeam("alpha"))
+	c.WaitFor(t, "baseline emission containing pre-existing alpha", hasTeam("alpha"))
 }
 
 func TestWatcher_Lifecycle(t *testing.T) {
@@ -139,17 +99,17 @@ func TestWatcher_Lifecycle(t *testing.T) {
 	defer stop()
 
 	// Empty-root baseline arrives first.
-	waitForEmit(t, c, "empty baseline", func(m map[string]*Team) bool { return len(m) == 0 })
+	c.WaitFor(t, "empty baseline", func(m map[string]*Team) bool { return len(m) == 0 })
 
 	// 1. Create detected.
 	writeTeam(t, root, "alpha", teamConfig("alpha"))
-	waitForEmit(t, c, "alpha created", hasTeam("alpha"))
+	c.WaitFor(t, "alpha created", hasTeam("alpha"))
 
 	// 2. Member join detected (proves per-subdir watching: this is a
 	// config.json rewrite inside an existing subdir, invisible to a root-only
 	// watch).
 	writeTeam(t, root, "alpha", teamConfig("alpha", "worker"))
-	waitForEmit(t, c, "alpha gained worker", func(m map[string]*Team) bool {
+	c.WaitFor(t, "alpha gained worker", func(m map[string]*Team) bool {
 		a := m["alpha"]
 		if a == nil {
 			return false
@@ -162,7 +122,7 @@ func TestWatcher_Lifecycle(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(root, "alpha")); err != nil {
 		t.Fatal(err)
 	}
-	waitForEmit(t, c, "alpha removed", lacksTeam("alpha"))
+	c.WaitFor(t, "alpha removed", lacksTeam("alpha"))
 }
 
 func TestWatcher_TornConfigDoesNotEmit(t *testing.T) {
@@ -170,7 +130,7 @@ func TestWatcher_TornConfigDoesNotEmit(t *testing.T) {
 	c, stop := runWatcher(t, root)
 	defer stop()
 
-	waitForEmit(t, c, "empty baseline", func(m map[string]*Team) bool { return len(m) == 0 })
+	c.WaitFor(t, "empty baseline", func(m map[string]*Team) bool { return len(m) == 0 })
 
 	// Truncated/invalid JSON for beta — LoadAll skips it, so it must never
 	// reach an emission.
@@ -180,9 +140,9 @@ func TestWatcher_TornConfigDoesNotEmit(t *testing.T) {
 	// write ample time to have produced a spurious emission if the watcher
 	// were buggy — no fixed sleep needed.
 	writeTeam(t, root, "gamma", teamConfig("gamma"))
-	waitForEmit(t, c, "gamma created", hasTeam("gamma"))
+	c.WaitFor(t, "gamma created", hasTeam("gamma"))
 
-	for i, e := range c.snapshot() {
+	for i, e := range c.Snapshot() {
 		if e["beta"] != nil {
 			t.Fatalf("emission %d contained torn team beta: %v", i, e)
 		}
@@ -196,20 +156,20 @@ func TestWatcher_MissingRootAtStartup(t *testing.T) {
 	c, stop := runWatcher(t, root)
 	defer stop()
 
-	waitForEmit(t, c, "empty baseline on freshly-created root", func(m map[string]*Team) bool {
+	c.WaitFor(t, "empty baseline on freshly-created root", func(m map[string]*Team) bool {
 		return len(m) == 0
 	})
 
 	writeTeam(t, root, "delta", teamConfig("delta"))
-	waitForEmit(t, c, "delta created under created root", hasTeam("delta"))
+	c.WaitFor(t, "delta created under created root", hasTeam("delta"))
 }
 
 // assertNoDuplicateEmits verifies the watcher never submits two consecutive
 // equal snapshots — the deep-compare suppression must hold across the whole
 // sequence.
-func assertNoDuplicateEmits(t *testing.T, c *collector) {
+func assertNoDuplicateEmits(t *testing.T, c *fswatchtest.Collector[map[string]*Team]) {
 	t.Helper()
-	emits := c.snapshot()
+	emits := c.Snapshot()
 	for i := 1; i < len(emits); i++ {
 		if reflect.DeepEqual(emits[i], emits[i-1]) {
 			t.Fatalf("duplicate consecutive emission at index %d: %v", i, emits[i])
