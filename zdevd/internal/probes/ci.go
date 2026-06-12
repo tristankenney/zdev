@@ -51,8 +51,9 @@ type CIProbe struct {
 	submit   func(tmuxctl.Event)
 	resolver RepoResolver
 
-	// sem is a single-token semaphore providing ARCH-08 in-process serialization.
-	sem chan struct{}
+	// rt owns the execution discipline (fleet-wide concurrency cap, per-key
+	// backoff, timeout) — replacing the old per-probe size-1 semaphore.
+	rt *Runtime
 
 	// execFunc is defaultExecInDir by default; tests override.
 	execFunc func(ctx context.Context, dir string, name string, args ...string) ([]byte, error)
@@ -74,7 +75,7 @@ func NewCIProbe(submit func(tmuxctl.Event), workspace string, resolver RepoResol
 	p := &CIProbe{
 		submit:    submit,
 		resolver:  resolver,
-		sem:       make(chan struct{}, 1),
+		rt:        newRuntime(defaultProbeMaxConcurrent),
 		execFunc:  defaultExecInDir,
 		workspace: workspace,
 	}
@@ -84,6 +85,11 @@ func NewCIProbe(submit func(tmuxctl.Event), workspace string, resolver RepoResol
 	}
 	return p
 }
+
+// SetRuntime points the probe at a shared Runtime. Call once at startup
+// before any Refresh dispatch so the global concurrency cap and per-key
+// backoff span every probe class.
+func (c *CIProbe) SetRuntime(rt *Runtime) { c.rt = rt }
 
 // Class implements Probe.
 func (c *CIProbe) Class() string { return "ci" }
@@ -129,46 +135,38 @@ func (c *CIProbe) Refresh(ctx context.Context, project string) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, ciProbeTimeout)
-	defer cancel()
-
-	// ARCH-08: acquire the semaphore. Blocks until any other in-flight
-	// gh subprocess completes. The scheduler already deduplicates
-	// (project,ci) collisions; this serializes ACROSS projects.
-	select {
-	case c.sem <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-c.sem }()
-
-	out, err := c.execFunc(ctx, dir, "gh", "run", "list",
-		"--repo", repo,
-		"--json", "status,conclusion,name",
-		"--limit", "1")
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// gh returned non-zero: "no runs found" or similar non-fatal condition.
-			// Submit empty CIRefresh to clear any stale chip.
-			c.submit(tmuxctl.CIRefresh{Project: project, Status: "", Conclusion: ""})
-			return nil
+	// Timeout, fleet-wide concurrency cap, and per-key backoff are owned by
+	// rt.Run. The cheap pre-checks above (disabled / empty / unresolved /
+	// dir-missing) stay outside it: they do no subprocess work.
+	return c.rt.Run(ctx, c.Class(), project, ciProbeTimeout, func(ctx context.Context) error {
+		out, err := c.execFunc(ctx, dir, "gh", "run", "list",
+			"--repo", repo,
+			"--json", "status,conclusion,name",
+			"--limit", "1")
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				// gh returned non-zero: "no runs found" or similar non-fatal
+				// condition. Submit empty CIRefresh to clear any stale chip.
+				c.submit(tmuxctl.CIRefresh{Project: project, Status: "", Conclusion: ""})
+				return nil
+			}
+			slog.Warn("gh run list failed", "project", project, "err", err)
+			return fmt.Errorf("gh run list %s: %w", project, err)
 		}
-		slog.Warn("gh run list failed", "project", project, "err", err)
-		return fmt.Errorf("gh run list %s: %w", project, err)
-	}
 
-	status, conclusion, perr := parseGhRunListJSON(out)
-	if perr != nil {
-		slog.Warn("gh run list parse error", "project", project, "err", perr)
-		return perr
-	}
-	c.submit(tmuxctl.CIRefresh{
-		Project:    project,
-		Status:     status,
-		Conclusion: conclusion,
+		status, conclusion, perr := parseGhRunListJSON(out)
+		if perr != nil {
+			slog.Warn("gh run list parse error", "project", project, "err", perr)
+			return perr
+		}
+		c.submit(tmuxctl.CIRefresh{
+			Project:    project,
+			Status:     status,
+			Conclusion: conclusion,
+		})
+		return nil
 	})
-	return nil
 }
 
 // ghRunEntry mirrors the top-level array element from gh run list --json.

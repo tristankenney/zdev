@@ -30,6 +30,12 @@ type LsofProbe struct {
 	projects  func() []string // returns the canonical project list (DATA-10)
 
 	execFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+	// rt owns the execution discipline. lsof carried no semaphore of its own
+	// before consolidation — it now counts against the fleet-wide concurrency
+	// cap like every other probe (260611 perf-hunt: the cap must be global to
+	// mean anything), and a hung lsof accrues per-key backoff.
+	rt *Runtime
 }
 
 // NewLsofProbe constructs an LsofProbe.
@@ -43,60 +49,68 @@ func NewLsofProbe(submit func(tmuxctl.Event), workspace string, projects func() 
 		workspace: workspace,
 		projects:  projects,
 		execFunc:  defaultExec,
+		rt:        newRuntime(defaultProbeMaxConcurrent),
 	}
 }
+
+// SetRuntime points the probe at a shared Runtime. Call once at startup
+// before any Refresh dispatch so the global concurrency cap and per-key
+// backoff span every probe class.
+func (l *LsofProbe) SetRuntime(rt *Runtime) { l.rt = rt }
 
 // Class implements Probe.
 func (l *LsofProbe) Class() string { return "lsof" }
 
 // Refresh runs both lsof calls and emits PortsRefresh per project.
-// The key argument is unused — lsof is a single global probe.
+// The key argument is unused — lsof is a single global probe, so its backoff
+// key is the empty string. Timeout + fleet-wide concurrency cap + backoff are
+// owned by rt.Run; lsof keeps its own "any failure → emit nothing" silent
+// degrade inside the body.
 func (l *LsofProbe) Refresh(ctx context.Context, _ string) error {
-	ctx, cancel := context.WithTimeout(ctx, lsofProbeTimeout)
-	defer cancel()
-
-	listenOut, err := l.execFunc(ctx, "lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn")
-	if err != nil {
-		// lsof exits 1 when no matching FDs exist — treat as empty.
-		slog.Debug("lsof listen exited non-zero", "err", err)
-		return nil
-	}
-	pidPorts := parseLsofF(listenOut)
-	if len(pidPorts) == 0 {
-		return nil
-	}
-
-	pids := make([]string, 0, len(pidPorts))
-	for pid := range pidPorts {
-		pids = append(pids, pid)
-	}
-	cwdOut, err := l.execFunc(ctx, "lsof",
-		"-p", strings.Join(pids, ","),
-		"-d", "cwd", "-F", "n")
-	if err != nil {
-		slog.Warn("lsof cwd lookup failed", "err", err)
-		// Don't return — emit nothing rather than fail loudly.
-		return nil
-	}
-	pidCwd := parseLsofCwd(cwdOut)
-
-	projectPorts := make(map[string][]int)
-	for pid, ports := range pidPorts {
-		cwd := pidCwd[pid]
-		proj := projectFromCwd(cwd, l.workspace)
-		if proj == "" {
-			continue
+	return l.rt.Run(ctx, l.Class(), "", lsofProbeTimeout, func(ctx context.Context) error {
+		listenOut, err := l.execFunc(ctx, "lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn")
+		if err != nil {
+			// lsof exits 1 when no matching FDs exist — treat as empty.
+			slog.Debug("lsof listen exited non-zero", "err", err)
+			return nil
 		}
-		projectPorts[proj] = append(projectPorts[proj], ports...)
-	}
-	for proj, ports := range projectPorts {
-		sort.Ints(ports)
-		if len(ports) > 4 {
-			ports = ports[:4]
+		pidPorts := parseLsofF(listenOut)
+		if len(pidPorts) == 0 {
+			return nil
 		}
-		l.submit(tmuxctl.PortsRefresh{Project: proj, Ports: ports})
-	}
-	return nil
+
+		pids := make([]string, 0, len(pidPorts))
+		for pid := range pidPorts {
+			pids = append(pids, pid)
+		}
+		cwdOut, err := l.execFunc(ctx, "lsof",
+			"-p", strings.Join(pids, ","),
+			"-d", "cwd", "-F", "n")
+		if err != nil {
+			slog.Warn("lsof cwd lookup failed", "err", err)
+			// Don't return — emit nothing rather than fail loudly.
+			return nil
+		}
+		pidCwd := parseLsofCwd(cwdOut)
+
+		projectPorts := make(map[string][]int)
+		for pid, ports := range pidPorts {
+			cwd := pidCwd[pid]
+			proj := projectFromCwd(cwd, l.workspace)
+			if proj == "" {
+				continue
+			}
+			projectPorts[proj] = append(projectPorts[proj], ports...)
+		}
+		for proj, ports := range projectPorts {
+			sort.Ints(ports)
+			if len(ports) > 4 {
+				ports = ports[:4]
+			}
+			l.submit(tmuxctl.PortsRefresh{Project: proj, Ports: ports})
+		}
+		return nil
+	})
 }
 
 // parseLsofF parses `lsof -F pcn` output. The output format emits one

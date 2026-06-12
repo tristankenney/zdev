@@ -67,16 +67,16 @@ type BranchProbe struct {
 	overridesMu  sync.Mutex
 	dirOverrides map[string]string
 
-	// sem serializes branch-probe shellouts across projects. Mirrors the
-	// ARCH-08 size-1 semaphore on GHProbe. Without this, a burst of
-	// SessionChanged events fans out into N parallel `sl bookmark` /
-	// `sl status` invocations — each takes seconds on a big sapling repo
-	// like agora, collectively saturating CPU and starving tmux's input
-	// handler. 260515 perf fix.
-	sem chan struct{}
+	// rt owns the execution discipline (global concurrency cap, per-key
+	// backoff, timeout). It replaces the old per-probe size-1 semaphore:
+	// branch shellouts now serialize against the WHOLE fleet, not just other
+	// branch probes (260611 perf-hunt — independent sems had no global cap).
+	rt *Runtime
 }
 
-// NewBranchProbe constructs a BranchProbe.
+// NewBranchProbe constructs a BranchProbe. The probe starts with its own
+// isolated Runtime (default cap); cmd/zdevd replaces it with the shared
+// fleet-wide Runtime via SetRuntime so the cap and backoff are global.
 func NewBranchProbe(submit func(tmuxctl.Event), workspace string) *BranchProbe {
 	return &BranchProbe{
 		submit:       submit,
@@ -85,9 +85,14 @@ func NewBranchProbe(submit func(tmuxctl.Event), workspace string) *BranchProbe {
 		statFunc:     os.Stat,
 		cache:        make(map[string]string),
 		dirOverrides: make(map[string]string),
-		sem:          make(chan struct{}, 1),
+		rt:           newRuntime(defaultProbeMaxConcurrent),
 	}
 }
+
+// SetRuntime points the probe at a shared Runtime. Call once at startup
+// before any Refresh dispatch so the global concurrency cap and per-key
+// backoff span every probe class.
+func (b *BranchProbe) SetRuntime(rt *Runtime) { b.rt = rt }
 
 // SetDirOverride pins a working directory for a project key, overriding the
 // default `workspace/<project>` resolution (zd-bub). Calling with the same
@@ -137,48 +142,43 @@ func (b *BranchProbe) Class() string { return "branch" }
 
 // Refresh queries the project's VCS and emits DataRefresh{Project,Branch,DirtyCount}.
 // Default-branch suppression applies via policy.IsDefaultBranch.
+//
+// VCS detection (a cheap, cached stat) runs OUTSIDE the runtime: a no-VCS dir
+// shouldn't consume a global concurrency slot or accrue backoff. The shellouts
+// run under rt.Run, which owns the timeout, the fleet-wide concurrency cap,
+// and per-key failure backoff.
 func (b *BranchProbe) Refresh(ctx context.Context, project string) error {
-	ctx, cancel := context.WithTimeout(ctx, branchProbeTimeout)
-	defer cancel()
-
 	dir := b.dirFor(project)
 	vcs := b.detectVCS(dir, project)
 	if vcs == "" {
 		return nil // no VCS → no chip
 	}
 
-	// Serialize shellouts across projects so a burst of SessionChanged
-	// events doesn't fan out into N parallel sl/git invocations.
-	select {
-	case b.sem <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-b.sem }()
-
-	var branch string
-	var dirty int
-	var err error
-	switch vcs {
-	case "jj":
-		branch, dirty, err = b.refreshJJ(ctx, dir)
-	case "sl":
-		branch, dirty, err = b.refreshSapling(ctx, dir)
-	case "git":
-		branch, dirty, err = b.refreshGit(ctx, dir)
-	}
-	if err != nil {
-		return fmt.Errorf("branch refresh %s (%s): %w", project, vcs, err)
-	}
-	if policy.IsDefaultBranch(branch) {
-		branch = "" // suppress default-branch chip per D-04
-	}
-	b.submit(tmuxctl.DataRefresh{
-		Project:    project,
-		Branch:     branch,
-		DirtyCount: dirty,
+	return b.rt.Run(ctx, b.Class(), project, branchProbeTimeout, func(ctx context.Context) error {
+		var branch string
+		var dirty int
+		var err error
+		switch vcs {
+		case "jj":
+			branch, dirty, err = b.refreshJJ(ctx, dir)
+		case "sl":
+			branch, dirty, err = b.refreshSapling(ctx, dir)
+		case "git":
+			branch, dirty, err = b.refreshGit(ctx, dir)
+		}
+		if err != nil {
+			return fmt.Errorf("branch refresh %s (%s): %w", project, vcs, err)
+		}
+		if policy.IsDefaultBranch(branch) {
+			branch = "" // suppress default-branch chip per D-04
+		}
+		b.submit(tmuxctl.DataRefresh{
+			Project:    project,
+			Branch:     branch,
+			DirtyCount: dirty,
+		})
+		return nil
 	})
-	return nil
 }
 
 // detectVCS returns "sl" / "git" / "" for the project directory. Cached

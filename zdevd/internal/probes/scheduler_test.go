@@ -11,7 +11,7 @@ import (
 // fakeProbe records every Refresh invocation and blocks on gate if set.
 type fakeProbe struct {
 	class string
-	calls int64        // atomic
+	calls int64         // atomic
 	block chan struct{} // if non-nil, Refresh blocks until closed or ctx cancelled
 }
 

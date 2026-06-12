@@ -404,6 +404,12 @@ func TestGHProbe_Class(t *testing.T) {
 	}
 }
 
+// TestGHProbe_Singleflight verifies the runtime serializes overlapping
+// Refresh calls. ARCH-08's "at most one in-flight gh subprocess" guarantee
+// now comes from the shared Runtime's concurrency cap rather than a per-probe
+// size-1 semaphore — injecting a cap-1 runtime reproduces the old invariant
+// and proves the seam moved without weakening it. (The fleet-wide default cap
+// of 2 is covered by TestRuntime_GlobalCapBoundsConcurrency.)
 func TestGHProbe_Singleflight(t *testing.T) {
 	var inflight int64
 	var maxInflight int64
@@ -413,6 +419,7 @@ func TestGHProbe_Singleflight(t *testing.T) {
 	var mu sync.Mutex
 	submit := func(ev tmuxctl.Event) { mu.Lock(); events = append(events, ev); mu.Unlock() }
 	p := NewGHProbe(submit, nil, "")
+	p.rt = newRuntime(1) // cap-1: reproduce the old per-probe ARCH-08 serialization
 
 	// Override execFunc to track in-flight count.
 	p.execFunc = func(ctx context.Context, name string, args ...string) ([]byte, error) {

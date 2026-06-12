@@ -60,10 +60,14 @@ type GHProbe struct {
 	// FailingChecks aggregation — pre-260512-ckp behavior).
 	workspace string
 
-	// sem is a single-token semaphore. Refresh acquires before exec and
-	// releases after — provides ARCH-08 in-process serialization without
-	// a goroutine-owned scheduler.
-	sem chan struct{}
+	// rt owns the execution discipline. It replaces the old per-probe size-1
+	// semaphore: the fleet-wide cap now also bounds gh against branch/ci/lsof
+	// (ARCH-08's single-gh guarantee generalizes into the shared cap), and
+	// per-key backoff means a repo whose `gh pr list` keeps timing out
+	// (agora-b/c, 260611) is skipped with a growing cool-down instead of
+	// re-burning the timeout every staleness cycle and head-of-line-blocking
+	// every other project's PR refresh.
+	rt *Runtime
 
 	// execFunc is exec.CommandContext by default; tests override.
 	execFunc func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -93,13 +97,18 @@ func NewGHProbe(submit func(tmuxctl.Event), resolver RepoResolver, workspace str
 		submit:         submit,
 		resolver:       resolver,
 		workspace:      workspace,
-		sem:            make(chan struct{}, 1),
+		rt:             newRuntime(defaultProbeMaxConcurrent),
 		execFunc:       defaultExec,
 		branchExecFunc: defaultExecInDir,
 		branchCache:    make(map[string]branchCacheEntry),
 		branchNow:      time.Now,
 	}
 }
+
+// SetRuntime points the probe at a shared Runtime. Call once at startup
+// before any Refresh dispatch so the global concurrency cap and per-key
+// backoff span every probe class.
+func (g *GHProbe) SetRuntime(rt *Runtime) { g.rt = rt }
 
 func defaultExec(ctx context.Context, name string, args ...string) ([]byte, error) {
 	name, args = withBackground(name, args)
@@ -118,10 +127,9 @@ func (g *GHProbe) Class() string { return "gh" }
 // staleness gating prevents storming a rate-limited probe (lastOK is
 // still updated even on error per scheduler.go::runOne).
 //
-// Per-call timeout: 10s budget covers semaphore-wait + gh subprocess.
-// A hung gh against a slow GitHub API would otherwise pin the size-1
-// ARCH-08 semaphore globally, blocking PR refreshes for every project
-// (staff-review PR #2 — Subprocess M1).
+// Per-call timeout + concurrency + backoff are owned by rt.Run. The resolver
+// check runs OUTSIDE the runtime: an unresolved project does no subprocess
+// work, so it shouldn't consume a global slot or accrue backoff.
 func (g *GHProbe) Refresh(ctx context.Context, project string) error {
 	// 260512-cfg: resolve the GitHub repo from the local working copy when a
 	// resolver is wired in. Multiple worktree dirs (e.g., agora-a, agora-b)
@@ -138,63 +146,52 @@ func (g *GHProbe) Refresh(ctx context.Context, project string) error {
 		repo = r
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, ghProbeTimeout)
-	defer cancel()
-
-	// ARCH-08: acquire the semaphore. Blocks until any other in-flight
-	// gh subprocess completes. The scheduler already deduplicates
-	// (project,gh) collisions; this serializes ACROSS projects.
-	select {
-	case g.sem <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-g.sem }()
-
-	out, err := g.execFunc(ctx, "gh", "pr", "list",
-		"--repo", repo,
-		"--state", "open",
-		"--json", "number,statusCheckRollup,headRefName")
-	if err != nil {
-		slog.Warn("gh pr list failed", "project", project, "err", err)
-		return fmt.Errorf("gh pr list %s: %w", project, err)
-	}
-
-	// 260513-dpr: scope FailingChecks/PendingChecks to the current branch
-	// (git) or the current stack's bookmarks (sapling). When the workspace
-	// is unset or no VCS can be detected, fall back to whole-repo
-	// aggregation by passing branchesDetected=false. When VCS is detected
-	// but the scope is empty (e.g., Sapling stack with no bookmarks), pass
-	// the empty slice with detected=true so parseGhJSON filters strictly.
-	//
-	// 260514 perf: per-project TTL cache in front of detectLocalBranches so
-	// the sl/git shellouts don't run on every gh refresh.
-	var branches []string
-	var branchesDetected bool
-	if g.workspace != "" {
-		if entry, ok := g.lookupBranchCache(project); ok {
-			branches, branchesDetected = entry.branches, entry.detected
-		} else {
-			dir := filepath.Join(g.workspace, project)
-			branches, branchesDetected = detectLocalBranches(ctx, g.branchExecFunc, dir)
-			g.storeBranchCache(project, branches, branchesDetected)
+	return g.rt.Run(ctx, g.Class(), project, ghProbeTimeout, func(ctx context.Context) error {
+		out, err := g.execFunc(ctx, "gh", "pr", "list",
+			"--repo", repo,
+			"--state", "open",
+			"--json", "number,statusCheckRollup,headRefName")
+		if err != nil {
+			slog.Warn("gh pr list failed", "project", project, "err", err)
+			return fmt.Errorf("gh pr list %s: %w", project, err)
 		}
-	}
 
-	open, fail, pend, failing, pending, err := parseGhJSON(out, branches, branchesDetected)
-	if err != nil {
-		slog.Warn("gh pr list parse error", "project", project, "err", err)
-		return err
-	}
-	g.submit(tmuxctl.PRRefresh{
-		Project:       project,
-		Open:          open,
-		Fail:          fail,
-		Pend:          pend,
-		FailingChecks: failing,
-		PendingChecks: pending,
+		// 260513-dpr: scope FailingChecks/PendingChecks to the current branch
+		// (git) or the current stack's bookmarks (sapling). When the workspace
+		// is unset or no VCS can be detected, fall back to whole-repo
+		// aggregation by passing branchesDetected=false. When VCS is detected
+		// but the scope is empty (e.g., Sapling stack with no bookmarks), pass
+		// the empty slice with detected=true so parseGhJSON filters strictly.
+		//
+		// 260514 perf: per-project TTL cache in front of detectLocalBranches so
+		// the sl/git shellouts don't run on every gh refresh.
+		var branches []string
+		var branchesDetected bool
+		if g.workspace != "" {
+			if entry, ok := g.lookupBranchCache(project); ok {
+				branches, branchesDetected = entry.branches, entry.detected
+			} else {
+				dir := filepath.Join(g.workspace, project)
+				branches, branchesDetected = detectLocalBranches(ctx, g.branchExecFunc, dir)
+				g.storeBranchCache(project, branches, branchesDetected)
+			}
+		}
+
+		open, fail, pend, failing, pending, err := parseGhJSON(out, branches, branchesDetected)
+		if err != nil {
+			slog.Warn("gh pr list parse error", "project", project, "err", err)
+			return err
+		}
+		g.submit(tmuxctl.PRRefresh{
+			Project:       project,
+			Open:          open,
+			Fail:          fail,
+			Pend:          pend,
+			FailingChecks: failing,
+			PendingChecks: pending,
+		})
+		return nil
 	})
-	return nil
 }
 
 // ghCheck mirrors the `gh pr list --json statusCheckRollup` element shape.
