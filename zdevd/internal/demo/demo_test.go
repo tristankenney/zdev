@@ -11,6 +11,14 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
+// pollDeadline is the generous upper bound for "did the expected thing
+// happen" waits in this package. Per the project convention (CLAUDE.md):
+// timing tests must NOT assume an idle machine — poll with a deadline that
+// only extends a FAILING run and exit early on success, never a fixed
+// window sized to the happy path. A healthy run satisfies these waits in
+// milliseconds; the deadline only bites on a genuine hang.
+const pollDeadline = 30 * time.Second
+
 // TestNewLoadsFrames verifies that all embedded testdata frames parse
 // without error and are ordered correctly.
 func TestNewLoadsFrames(t *testing.T) {
@@ -79,7 +87,7 @@ func TestRegisterPushesInitialSnapshot(t *testing.T) {
 	}
 	select {
 	case <-regDone:
-	case <-time.After(time.Second):
+	case <-time.After(pollDeadline):
 		t.Fatal("regDone not closed after Register")
 	}
 	select {
@@ -90,33 +98,27 @@ func TestRegisterPushesInitialSnapshot(t *testing.T) {
 		if len(snap.Projects) == 0 {
 			t.Error("initial snapshot has no projects")
 		}
-	case <-time.After(time.Second):
+	case <-time.After(pollDeadline):
 		t.Fatal("no snapshot received from Snaps after Register")
 	}
 }
 
 // TestRunAdvancesFrames verifies that Run broadcasts subsequent frames to
-// subscribers. Uses a very short frame delay to keep the test fast.
+// subscribers. The two broadcasts it waits for — Register's initial push
+// and Run's re-broadcast of the initial frame — are both immediate, so the
+// test exits as soon as they land; the deadline only extends a stuck run.
 func TestRunAdvancesFrames(t *testing.T) {
 	d, err := New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	// Override all frame delays to 10ms for a fast test.
-	for i := range d.frames {
-		d.frames[i].DelaySeconds = 0 // triggers the 8s default...
-	}
-	// ...but we need shorter delays, so set them directly.
-	for i := 1; i < len(d.frames); i++ {
-		// Using a trick: set DelaySeconds to 0 and patch the frame count
-		// to ensure we get at least 2 broadcasts quickly.
-		// Instead, limit frames to first 2 and set delay 0.
-	}
-	// Keep only the first 2 frames with immediate transition.
+	// Keep only the first two frames. Note DelaySeconds == 0 does NOT mean
+	// "advance immediately" — Run treats a non-positive delay as the 8s
+	// default (demo.go). We deliberately do not rely on a frame *advance*
+	// here: the two snapshots below are the immediate broadcasts (Register's
+	// initial push + Run's re-broadcast of the pre-built initial frame), so
+	// the 8s timer never gates the test.
 	d.frames = d.frames[:min(2, len(d.frames))]
-	for i := range d.frames {
-		d.frames[i].DelaySeconds = 0
-	}
 
 	sub := hub.NewSubscriber("", "")
 	regDone := make(chan struct{})
@@ -125,7 +127,10 @@ func TestRunAdvancesFrames(t *testing.T) {
 	}
 	<-regDone
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// Generous ctx so a loaded machine can't cancel Run (and tear down the
+	// subscriber) before its initial broadcast lands. We cancel explicitly
+	// the moment we have what we need.
+	ctx, cancel := context.WithTimeout(context.Background(), pollDeadline)
 	defer cancel()
 
 	runDone := make(chan struct{})
@@ -134,22 +139,22 @@ func TestRunAdvancesFrames(t *testing.T) {
 		_ = d.Run(ctx)
 	}()
 
-	// Drain initial snap (from Register) + at least one more from Run.
+	// Poll until we've drained both immediate snapshots, extending only on a
+	// failing run. A subscriber teardown before then is itself a failure
+	// (Run should not close subscribers until ctx cancels, which we haven't
+	// done yet).
 	received := 0
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(pollDeadline)
 	for received < 2 {
 		select {
 		case <-sub.Snaps():
 			received++
 		case <-sub.Done():
-			goto done
+			t.Fatalf("subscriber torn down after %d snapshots, want >= 2", received)
 		case <-deadline:
-			t.Errorf("only received %d snapshots in 2s, want >= 2", received)
-			cancel()
-			goto done
+			t.Fatalf("only received %d snapshots in %v, want >= 2", received, pollDeadline)
 		}
 	}
-done:
 	cancel()
 	<-runDone
 }
@@ -169,7 +174,7 @@ func TestUnregisterClosesDone(t *testing.T) {
 	d.Unregister(sub)
 	select {
 	case <-sub.Done():
-	case <-time.After(time.Second):
+	case <-time.After(pollDeadline):
 		t.Fatal("Done not closed after Unregister")
 	}
 }
