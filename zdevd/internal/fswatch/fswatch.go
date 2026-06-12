@@ -97,13 +97,13 @@ func Run(ctx context.Context, spec Spec) error {
 	switch spec.Ensure {
 	case EnsureMkdir:
 		if err := os.MkdirAll(spec.Root, 0o700); err != nil {
-			slog.Warn(spec.Name+": mkdir watch root failed; watcher disabled", "root", spec.Root, "err", err)
+			slog.Error(spec.Name+": mkdir watch root failed; watcher disabled", "root", spec.Root, "err", err)
 			<-ctx.Done()
 			return nil
 		}
 	case EnsureStat:
 		if _, err := os.Stat(spec.Root); err != nil {
-			slog.Warn(spec.Name+": watch root not found; watcher disabled", "root", spec.Root, "err", err)
+			slog.Error(spec.Name+": watch root not found; watcher disabled", "root", spec.Root, "err", err)
 			<-ctx.Done()
 			return nil
 		}
@@ -119,7 +119,7 @@ func Run(ctx context.Context, spec Spec) error {
 		// kqueue iterates directory contents during Add; a file created and
 		// removed in that window returns an lstat error. Degrade rather than
 		// crash — the watch is best-effort.
-		slog.Warn(spec.Name+": watch root failed; watcher disabled", "root", spec.Root, "err", err)
+		slog.Error(spec.Name+": watch root failed; watcher disabled", "root", spec.Root, "err", err)
 		<-ctx.Done()
 		return nil
 	}

@@ -85,8 +85,18 @@ func TestWorkspaceWatcher_DirRemove(t *testing.T) {
 		func() bool { return atomic.LoadInt64(&refreshes) > before })
 }
 
+// TestWorkspaceWatcher_MissingDirSurvives pins the DELIBERATE behavior
+// change from the fswatch migration: a root that cannot be armed used to
+// return an error, which took the whole daemon down via the errgroup over
+// a transient kqueue Add race. Degraded now means "no live project-list
+// updates until restart" — never "no projects": the initial lister load
+// happens at cmd/zdevd startup before the watcher runs, so the daemon
+// keeps serving that snapshot. Pinned here: Run returns nil (daemon
+// lives) AND the lister sees zero watcher-driven Refresh calls (no
+// degraded-mode refresh storm).
 func TestWorkspaceWatcher_MissingDirSurvives(t *testing.T) {
-	lister := newCountingLister(new(int64))
+	var refreshes int64
+	lister := newCountingLister(&refreshes)
 	w := NewWatcher("/no/such/path", lister)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -99,5 +109,8 @@ func TestWorkspaceWatcher_MissingDirSurvives(t *testing.T) {
 		}
 	case <-time.After(fswatchtest.DefaultDeadline):
 		t.Error("Run did not exit on cancel after missing-dir")
+	}
+	if n := atomic.LoadInt64(&refreshes); n != 0 {
+		t.Errorf("degraded watcher drove %d Refresh calls; want 0", n)
 	}
 }
