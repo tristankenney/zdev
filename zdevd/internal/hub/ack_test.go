@@ -170,6 +170,8 @@ func TestApplyEvent_TeamsChanged_SnapshotThreading(t *testing.T) {
 				{Name: "worker-ip", AgentType: "general-purpose", Color: "blue", TmuxPaneID: teams.InProcessPaneID},
 				{Name: "worker-tm", AgentType: "general-purpose", Color: "green", TmuxPaneID: "%42"},
 			},
+			// worker-ip declared idle in the lead's inbox (Tier 2a).
+			MemberIdle: map[string]bool{"worker-ip": true},
 		},
 	}}, nil)
 
@@ -186,6 +188,10 @@ func TestApplyEvent_TeamsChanged_SnapshotThreading(t *testing.T) {
 	}
 	if !g.Members[0].InProcess || g.Members[0].PaneID != "" {
 		t.Errorf("in-process member = %+v; want InProcess, no pane id", g.Members[0])
+	}
+	// v20: an in-process member with an idle_notification carries Status "idle".
+	if g.Members[0].Status != "idle" {
+		t.Errorf("in-process idle member Status = %q; want idle", g.Members[0].Status)
 	}
 	if g.Members[1].InProcess || g.Members[1].PaneID != "%42" {
 		t.Errorf("tmux member = %+v; want pane %%42", g.Members[1])
