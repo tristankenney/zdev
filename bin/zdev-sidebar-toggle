@@ -21,6 +21,27 @@ if [[ -f "$_zdev_env" ]]; then
   done < "$_zdev_env"
 fi
 
+# Delegation to the daemon-side layout engine (architecture review card 4).
+# When ZDEV_LAYOUT_ENGINE=1 and `zdevd` is on PATH, hand off to
+# `zdevd layout` — one `tmux list-panes` + one batched `tmux` exec per
+# window, versus the ~26 forks per window this bash does (a measured
+# typing-lag source during resize drags, perf-hunt 2026-06-11). The engine
+# fails LOUDLY when the render binary is missing instead of leaving a blank
+# pane. Gap-fill above means the knob can live in ~/.config/zdev/env too.
+#
+# Legacy bash stays the DEFAULT (project convention: new surfaces ship
+# behind a knob with current behavior as the default). `exec` only returns
+# if it fails to launch; the `command -v` guard makes that path unreachable
+# in practice, but if exec somehow errors under `set -e` the script exits
+# non-zero rather than silently running neither path.
+if [[ "${ZDEV_LAYOUT_ENGINE:-}" == "1" ]] && command -v zdevd >/dev/null 2>&1; then
+  if [[ $# -ge 1 ]]; then
+    exec zdevd layout "$1"
+  else
+    exec zdevd layout
+  fi
+fi
+
 # 160 default (was 200): a fullscreen laptop terminal is ~180 cols, so
 # 200 suppressed the sidebar on the most common screen size (first
 # Ubuntu install, dogfood 2026-06-06). At 160 the sidebar (50) leaves
