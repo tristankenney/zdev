@@ -21,7 +21,6 @@ package notif
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +28,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/tristankenney/zdev/zdevd/internal/fswatch"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
@@ -64,69 +64,44 @@ func NewWatcher(dir string, submit func(tmuxctl.Event)) *Watcher {
 	return &Watcher{dir: dir, submit: submit}
 }
 
-// Run starts the watcher loop. Returns nil on ctx cancel; non-nil only
-// if fsnotify itself fails to initialize (rare — typically a kernel
-// resource exhaustion).
+// Run starts the watcher loop on the shared fswatch engine. Returns nil on
+// ctx cancel; non-nil only if fsnotify itself fails to initialize (rare —
+// typically kernel resource exhaustion). This is a per-event watcher: no
+// debounce, no reload-compare — each matching file event is read and emitted
+// directly in OnEvent.
+//
+// EnsureMkdir pre-creates the watched dir so fsnotify.Add does not race the
+// first write (production: cmd/zdevd also mkdir's it before Run; the engine's
+// mkdir is idempotent).
 func (w *Watcher) Run(ctx context.Context) error {
-	// Pre-create the watched dir so fsnotify.Add does not race with the
-	// first write. mkdir is idempotent and a no-op if the caller has
-	// already created the dir (production path: cmd/zdevd mkdir's it
-	// before Run). 0700 keeps the per-user TMPDIR convention.
-	if err := os.MkdirAll(w.dir, 0o700); err != nil {
-		slog.Warn("notif: mkdir watched dir failed; watcher disabled", "dir", w.dir, "err", err)
-		<-ctx.Done()
-		return nil
+	return fswatch.Run(ctx, fswatch.Spec{
+		Name:    "notif",
+		Root:    w.dir,
+		Ensure:  fswatch.EnsureMkdir,
+		Ops:     fsnotify.Create | fsnotify.Write | fsnotify.Chmod,
+		OnEvent: func(h *fswatch.Handle, ev fsnotify.Event) { w.handle(ev.Name) },
+	})
+}
+
+// handle reads one notif file and emits a NotifSeen, applying the empty-read
+// guard. Split out of Run so the event filtering is unit-testable.
+func (w *Watcher) handle(name string) {
+	base := filepath.Base(name)
+	if !strings.HasPrefix(base, notifPrefix) || !strings.HasSuffix(base, notifSuffix) {
+		return
 	}
-	fsw, err := fsnotify.NewWatcher()
-	if err != nil {
-		return err
+	session := strings.TrimSuffix(strings.TrimPrefix(base, notifPrefix), notifSuffix)
+	ts, kind, summary := readNotifFile(name)
+	if ts == 0 {
+		// No valid timestamp = no signal yet. On Linux, inotify delivers the
+		// Create event BEFORE the writer's content lands, so the first read of
+		// every notif file is empty — submitting it would feed the hub a
+		// garbage ts=0 wait-start that the immediate Write event then has to
+		// repair. macOS coalesces, so this race never showed on the dev
+		// platform (first caught by CI's Linux leg).
+		return
 	}
-	defer fsw.Close()
-	if err := fsw.Add(w.dir); err != nil {
-		// kqueue iterates the directory contents during Add; a rapidly
-		// created-then-deleted file causes a race that returns lstat
-		// errors. Degrade gracefully rather than crashing the daemon —
-		// activity notifications are best-effort.
-		slog.Warn("notif: fsnotify watch setup failed; watcher disabled", "dir", w.dir, "err", err)
-		<-ctx.Done()
-		return nil
-	}
-	for {
-		select {
-		case ev, ok := <-fsw.Events:
-			if !ok {
-				return nil
-			}
-			if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Chmod) == 0 {
-				continue
-			}
-			base := filepath.Base(ev.Name)
-			if !strings.HasPrefix(base, notifPrefix) || !strings.HasSuffix(base, notifSuffix) {
-				continue
-			}
-			session := strings.TrimSuffix(strings.TrimPrefix(base, notifPrefix), notifSuffix)
-			ts, kind, summary := readNotifFile(ev.Name)
-			if ts == 0 {
-				// No valid timestamp = no signal yet. On Linux,
-				// inotify delivers the Create event BEFORE the
-				// writer's content lands, so the first read of every
-				// notif file is empty — submitting it would feed the
-				// hub a garbage ts=0 wait-start that the immediate
-				// Write event then has to repair. macOS coalesces, so
-				// this race never showed on the dev platform (first
-				// caught by CI's Linux leg).
-				continue
-			}
-			w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary})
-		case err, ok := <-fsw.Errors:
-			if !ok {
-				return nil
-			}
-			slog.Warn("notif: fsnotify error", "err", err)
-		case <-ctx.Done():
-			return nil
-		}
-	}
+	w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary})
 }
 
 // readNotifFile reads the notif file zdev-notify wrote. Three formats,

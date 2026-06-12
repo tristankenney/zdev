@@ -2,70 +2,81 @@ package notif
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/fswatch/fswatchtest"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
-func runWatcher(t *testing.T, dir string) (chan tmuxctl.Event, context.CancelFunc) {
+// runWatcher starts a notif Watcher on dir and returns the shared collector
+// recording its NotifSeen submits. Cleanup cancels and waits (generously) for
+// Run to exit so the fsnotify watcher closes before TempDir cleanup.
+func runWatcher(t *testing.T, dir string) *fswatchtest.Collector[tmuxctl.Event] {
 	t.Helper()
-	events := make(chan tmuxctl.Event, 16)
-	var mu sync.Mutex
-	submit := func(ev tmuxctl.Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		select {
-		case events <- ev:
-		default:
-		}
-	}
-	w := NewWatcher(dir, submit)
+	c := &fswatchtest.Collector[tmuxctl.Event]{}
+	w := NewWatcher(dir, c.Submit)
 	ctx, cancel := context.WithCancel(context.Background())
 	runErr := make(chan error, 1)
 	go func() { runErr <- w.Run(ctx) }()
-	// Allow the watcher to register with kqueue.
-	time.Sleep(20 * time.Millisecond)
 	t.Cleanup(func() {
 		cancel()
 		select {
 		case <-runErr:
-		case <-time.After(200 * time.Millisecond):
-			t.Error("watcher did not exit within 200ms after cancel")
+		case <-time.After(fswatchtest.DefaultDeadline):
+			t.Error("watcher did not exit after cancel")
 		}
 	})
-	return events, cancel
+	return c
 }
 
-func waitEvent(t *testing.T, events <-chan tmuxctl.Event, timeout time.Duration) tmuxctl.Event {
-	t.Helper()
-	select {
-	case ev := <-events:
-		return ev
-	case <-time.After(timeout):
-		t.Fatalf("expected event within %v", timeout)
-		return nil
+// seenSession matches a NotifSeen for the given session.
+func seenSession(session string) func(tmuxctl.Event) bool {
+	return func(ev tmuxctl.Event) bool {
+		n, ok := ev.(tmuxctl.NotifSeen)
+		return ok && n.Session == session
 	}
+}
+
+// arm defeats the fsnotify arm race deterministically: it re-creates a fresh
+// sentinel notif file each tick (a unique name, so every tick is a new
+// directory entry the watch will report once live) until the watcher emits one
+// of them. After arm returns, the watch is provably active, so a single
+// subsequent (possibly non-idempotent) stimulus is reliably observed within
+// the generous deadline — no fixed "let it register" sleep.
+func arm(t *testing.T, dir string, c *fswatchtest.Collector[tmuxctl.Event]) {
+	t.Helper()
+	i := 0
+	fswatchtest.EventuallyStim(t, "notif watcher armed",
+		func() {
+			p := filepath.Join(dir, fmt.Sprintf("%sarm%d%s", notifPrefix, i, notifSuffix))
+			_ = os.WriteFile(p, []byte("1"), 0o644)
+			i++
+		},
+		func() bool {
+			for _, ev := range c.Snapshot() {
+				if n, ok := ev.(tmuxctl.NotifSeen); ok && strings.HasPrefix(n.Session, "arm") {
+					return true
+				}
+			}
+			return false
+		})
 }
 
 func TestNotifWatcher_FileWriteEmits(t *testing.T) {
 	dir := t.TempDir()
-	events, _ := runWatcher(t, dir)
-	p := filepath.Join(dir, "zdev-notif-alpha.ts")
-	if err := os.WriteFile(p, []byte("1714838460"), 0o644); err != nil {
+	c := runWatcher(t, dir)
+	arm(t, dir, c)
+
+	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-alpha.ts"), []byte("1714838460"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ev := waitEvent(t, events, 200*time.Millisecond)
-	n, ok := ev.(tmuxctl.NotifSeen)
-	if !ok {
-		t.Fatalf("got = %T; want NotifSeen", ev)
-	}
-	if n.Session != "alpha" {
-		t.Errorf("Session = %q; want alpha", n.Session)
-	}
+	ev := c.WaitFor(t, "NotifSeen{alpha}", seenSession("alpha"))
+	n := ev.(tmuxctl.NotifSeen)
 	if n.Timestamp != 1714838460 {
 		t.Errorf("Timestamp = %d; want 1714838460", n.Timestamp)
 	}
@@ -73,47 +84,42 @@ func TestNotifWatcher_FileWriteEmits(t *testing.T) {
 
 func TestNotifWatcher_FilterByName(t *testing.T) {
 	dir := t.TempDir()
-	events, _ := runWatcher(t, dir)
+	c := runWatcher(t, dir)
+	arm(t, dir, c)
+
+	// A non-matching name must never produce a NotifSeen; beta must.
 	if err := os.WriteFile(filepath.Join(dir, "random.txt"), []byte("nope"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-beta.ts"), []byte("1700000000"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(300 * time.Millisecond)
-	var got tmuxctl.NotifSeen
-	var found bool
-	for time.Now().Before(deadline) {
-		select {
-		case ev := <-events:
-			if n, ok := ev.(tmuxctl.NotifSeen); ok && n.Session == "beta" {
-				got = n
-				found = true
-			}
-		case <-time.After(50 * time.Millisecond):
-		}
-		if found {
-			break
-		}
+	ev := c.WaitFor(t, "NotifSeen{beta}", seenSession("beta"))
+	if n := ev.(tmuxctl.NotifSeen); n.Timestamp != 1700000000 {
+		t.Errorf("Timestamp = %d; want 1700000000", n.Timestamp)
 	}
-	if !found {
-		t.Fatal("did not see NotifSeen{Session:beta}")
-	}
-	if got.Timestamp != 1700000000 {
-		t.Errorf("Timestamp = %d; want 1700000000", got.Timestamp)
+	// random.txt is filtered out by name, so no NotifSeen can carry it — the
+	// filter is total, nothing to wait for.
+	for _, e := range c.Snapshot() {
+		if n, ok := e.(tmuxctl.NotifSeen); ok && n.Session == "random.txt" {
+			t.Errorf("non-matching file leaked a NotifSeen: %+v", n)
+		}
 	}
 }
 
 func TestNotifWatcher_AppendMode(t *testing.T) {
 	dir := t.TempDir()
-	events, _ := runWatcher(t, dir)
+	c := runWatcher(t, dir)
+	arm(t, dir, c)
+
 	p := filepath.Join(dir, "zdev-notif-gamma.ts")
 	if err := os.WriteFile(p, []byte("100"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	waitEvent(t, events, 200*time.Millisecond)
+	c.WaitFor(t, "NotifSeen{gamma} from create", seenSession("gamma"))
 
-	// Append: kqueue should fire WRITE.
+	// Append fires a WRITE; readNotifFile then sees "100200". The post-arm
+	// append is a single, reliably-delivered event — wait for the appended ts.
 	f, err := os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		t.Fatal(err)
@@ -122,47 +128,30 @@ func TestNotifWatcher_AppendMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	ev := waitEvent(t, events, 200*time.Millisecond)
-	n, ok := ev.(tmuxctl.NotifSeen)
-	if !ok {
-		t.Fatalf("got = %T; want NotifSeen", ev)
-	}
-	if n.Session != "gamma" {
-		t.Errorf("append: Session = %q; want gamma", n.Session)
-	}
+	c.WaitFor(t, "NotifSeen{gamma} from append", func(ev tmuxctl.Event) bool {
+		n, ok := ev.(tmuxctl.NotifSeen)
+		return ok && n.Session == "gamma" && n.Timestamp == 100200
+	})
 }
 
 func TestNotifWatcher_AtomicRename(t *testing.T) {
 	dir := t.TempDir()
-	events, _ := runWatcher(t, dir)
+	c := runWatcher(t, dir)
+	arm(t, dir, c)
+
+	// Write to a non-matching staging name, then rename into place — the
+	// classic atomic-publish pattern. Only the rename's final name matches the
+	// filter. The watch is already armed, so the single rename is observed.
 	staging := filepath.Join(dir, "staging.tmp")
 	final := filepath.Join(dir, "zdev-notif-delta.ts")
 	if err := os.WriteFile(staging, []byte("1714838500"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// staging.tmp doesn't match the prefix → no event for that.
-	// Drain any event from staging.tmp (kqueue may emit Create on it; the filter strips it).
-	time.Sleep(50 * time.Millisecond)
-	drained := false
-	for !drained {
-		select {
-		case <-events:
-		case <-time.After(50 * time.Millisecond):
-			drained = true
-		}
-	}
 	if err := os.Rename(staging, final); err != nil {
 		t.Fatal(err)
 	}
-	ev := waitEvent(t, events, 300*time.Millisecond)
-	n, ok := ev.(tmuxctl.NotifSeen)
-	if !ok {
-		t.Fatalf("got = %T; want NotifSeen", ev)
-	}
-	if n.Session != "delta" {
-		t.Errorf("rename: Session = %q; want delta", n.Session)
-	}
-	if n.Timestamp != 1714838500 {
+	ev := c.WaitFor(t, "NotifSeen{delta}", seenSession("delta"))
+	if n := ev.(tmuxctl.NotifSeen); n.Timestamp != 1714838500 {
 		t.Errorf("rename: Timestamp = %d; want 1714838500", n.Timestamp)
 	}
 }
@@ -227,16 +216,14 @@ func TestReadNotifFile(t *testing.T) {
 // end-to-end through the fsnotify path into NotifSeen.Kind.
 func TestNotifWatcher_TaggedKindEmits(t *testing.T) {
 	dir := t.TempDir()
-	events, _ := runWatcher(t, dir)
-	p := filepath.Join(dir, "zdev-notif-epsilon.ts")
-	if err := os.WriteFile(p, []byte("1714838460\npermission\n"), 0o644); err != nil {
+	c := runWatcher(t, dir)
+	arm(t, dir, c)
+
+	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-epsilon.ts"), []byte("1714838460\npermission\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ev := waitEvent(t, events, 200*time.Millisecond)
-	n, ok := ev.(tmuxctl.NotifSeen)
-	if !ok {
-		t.Fatalf("got = %T; want NotifSeen", ev)
-	}
+	ev := c.WaitFor(t, "NotifSeen{epsilon}", seenSession("epsilon"))
+	n := ev.(tmuxctl.NotifSeen)
 	if n.Timestamp != 1714838460 {
 		t.Errorf("Timestamp = %d; want 1714838460", n.Timestamp)
 	}
@@ -247,19 +234,17 @@ func TestNotifWatcher_TaggedKindEmits(t *testing.T) {
 
 func TestNotifWatcher_CtxCancel(t *testing.T) {
 	dir := t.TempDir()
-	submit := func(tmuxctl.Event) {}
-	w := NewWatcher(dir, submit)
+	w := NewWatcher(dir, func(tmuxctl.Event) {})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
 	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Errorf("Run after cancel: err = %v; want nil", err)
 		}
-	case <-time.After(200 * time.Millisecond):
-		t.Error("Run did not return within 200ms after cancel")
+	case <-time.After(fswatchtest.DefaultDeadline):
+		t.Error("Run did not return after cancel")
 	}
 }
