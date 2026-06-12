@@ -214,13 +214,21 @@ func cursorSubcmd(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	name, err := socketpkg.DialCursor(ctx, *socket, delta)
+	name, windowID, err := socketpkg.DialCursor(ctx, *socket, delta)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "zdevd cursor: %v\n", err)
 		return 1
 	}
+	// Output contract (slice C): a project row prints just the name; a team
+	// member row prints "name<TAB>@windowID" so the M-Enter consumer can
+	// switch to the lead's session and then select-window into the member's
+	// window. Empty name (cursor inactive / no projects) prints nothing.
 	if name != "" {
-		fmt.Println(name)
+		if windowID != "" {
+			fmt.Printf("%s\t%s\n", name, windowID)
+		} else {
+			fmt.Println(name)
+		}
 	}
 	return 0
 }

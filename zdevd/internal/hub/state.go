@@ -1203,32 +1203,15 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 	}
 }
 
-// countVisibleProjects returns the number of rows buildSnapshot would produce
-// for the current state. Mirrors the two-pass name-union logic in buildSnapshot
-// so the cursor wrap-around stays in bounds. Called only from applyEvent and
-// therefore only from the hub goroutine — no locking needed.
+// countVisibleProjects returns the number of NAVIGABLE cursor rows for the
+// current state — the length of the flattened row list (cursorFlatRows), which
+// is the project rows plus, when teamWindows is on, the nested team member
+// rows. The cursor wrap-around in applyEvent(CursorMove) bounds against this,
+// so a flattened-list cursor can reach member rows. With teamWindows off the
+// flattened list is one row per project, so the count matches the pre-slice-C
+// project-row count exactly. Called only from the hub goroutine.
 func countVisibleProjects(s *state) int {
-	seen := make(map[string]struct{}, len(s.projectListNames)+len(s.sessions))
-	n := 0
-	for _, name := range s.projectListNames {
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		seen[proto.SessionKey(name)] = struct{}{}
-		n++
-	}
-	for _, sess := range s.sessions {
-		if skipForIndex(sess) {
-			continue
-		}
-		if _, ok := seen[sess.Name]; ok {
-			continue
-		}
-		seen[sess.Name] = struct{}{}
-		n++
-	}
-	return n
+	return len(cursorFlatRows(s))
 }
 
 // drainPendingActivity applies any pending ActivityRefresh timestamp for the

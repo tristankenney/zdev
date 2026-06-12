@@ -140,7 +140,16 @@ type diagReq struct {
 // reply cap=1 so Run never blocks on the caller (same Pitfall 6 pattern).
 type cursorReq struct {
 	delta int
-	reply chan<- string
+	reply chan<- cursorResult
+}
+
+// cursorResult is the cursor handler's reply: the project name a select on the
+// new cursor row jumps to, plus (slice C) the member WindowID when the row is a
+// team member row — empty for a project row. The consumer switch-clients to
+// Name's session, then select-windows to WindowID when present.
+type cursorResult struct {
+	name     string
+	windowID string
 }
 
 // Config bundles every dependency the hub needs. Pass to NewHub once;
@@ -564,15 +573,20 @@ func (h *Hub) Run(ctx context.Context) error {
 			} else {
 				resetDebounce(timer, h.debounce)
 			}
-			// Return the name at the new cursor row. Derive it from current
-			// state using projectNameAtRow (mirrors buildSnapshot's ordering),
-			// not from lastSnap — the project list may have changed since the
-			// last publish, and lastSnap could be stale or shorter.
-			name := ""
+			// Resolve the new cursor row from current state via cursorFlatRows
+			// (the shared flattened-row helper — same ordering the renderer
+			// draws), not from lastSnap which could be stale or shorter. A
+			// member row carries its WindowID so the consumer can select-window
+			// into the relocated teammate's window after the session switch.
+			var res cursorResult
 			if h.state.cursorActive {
-				name = projectNameAtRow(h.state, h.state.cursorRow)
+				rows := cursorFlatRows(h.state)
+				if r := h.state.cursorRow; r >= 0 && r < len(rows) {
+					res.name = rows[r].SwitchTo
+					res.windowID = rows[r].WindowID
+				}
 			}
-			req.reply <- name
+			req.reply <- res
 
 		case <-h.errInc:
 			h.errCounter.Inc(time.Now())
@@ -655,30 +669,33 @@ func (h *Hub) DiagSnapshot(ctx context.Context) (*diag.Reply, error) {
 // delta=0:  select — query current row name without moving (M-Enter)
 //
 // The returned name is the canonical slash-form project name (e.g.
-// "example/backend") at the new cursor row, or "" when the cursor is
-// inactive or the project list is empty. The shell script converts the name
-// to dash-form for `tmux switch-client -t =<dash-name>`.
-func (h *Hub) SubmitCursor(ctx context.Context, delta int) (string, error) {
+// "example/backend") a select on the new cursor row jumps to — the project
+// itself for a project row, the LEAD project for a team member row — or "" when
+// the cursor is inactive or the project list is empty. windowID is the member's
+// tmux window for a member row (slice C), empty otherwise. The shell script
+// converts name to dash-form for `tmux switch-client -t =<dash-name>` and runs
+// `tmux select-window -t <windowID>` when windowID is non-empty.
+func (h *Hub) SubmitCursor(ctx context.Context, delta int) (name, windowID string, err error) {
 	select {
 	case <-h.stopped:
-		return "", ErrHubStopped
+		return "", "", ErrHubStopped
 	default:
 	}
-	reply := make(chan string, 1)
+	reply := make(chan cursorResult, 1)
 	select {
 	case h.cursorRequests <- cursorReq{delta: delta, reply: reply}:
 	case <-h.stopped:
-		return "", ErrHubStopped
+		return "", "", ErrHubStopped
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", "", ctx.Err()
 	}
 	select {
-	case name := <-reply:
-		return name, nil
+	case res := <-reply:
+		return res.name, res.windowID, nil
 	case <-h.stopped:
-		return "", ErrHubStopped
+		return "", "", ErrHubStopped
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", "", ctx.Err()
 	}
 }
 

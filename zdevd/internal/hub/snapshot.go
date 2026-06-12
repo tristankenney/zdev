@@ -542,15 +542,13 @@ func dwellWindowMS(st *state, pd *projectData, candidate proto.Attention, now in
 	return st.statusDwell.Milliseconds()
 }
 
-// projectNameAtRow returns the canonical project name at the given row index
-// using the same name-ordering logic as buildSnapshot (sorted project list
-// then sorted unmanaged sessions). Used by the cursorRequests handler to
-// return an authoritative name from current state rather than from a
-// potentially-stale lastSnap.
-//
-// Returns "" when row is out of bounds or the project list is empty.
-// Safe to call only from the hub goroutine.
-func projectNameAtRow(st *state, row int) string {
+// orderedRowNames returns the project row names in the exact order
+// buildSnapshot lays them out: the deduped project-list names then the
+// unmanaged session names, each block sorted. The single definition of that
+// ordering, used by countVisibleProjects, projectNameAtRow, and cursorFlatRows
+// so the cursor's row math can never disagree with what buildSnapshot
+// published. Safe to call only from the hub goroutine (reads state maps).
+func orderedRowNames(st *state) []string {
 	seen := make(map[string]struct{}, len(st.projectListNames)+len(st.sessions))
 	names := make([]string, 0, len(st.projectListNames))
 
@@ -581,11 +579,40 @@ func projectNameAtRow(st *state, row int) string {
 	sort.Strings(names)
 	sort.Strings(unmanagedNames)
 
-	allNames := append(names, unmanagedNames...)
-	if row < 0 || row >= len(allNames) {
+	return append(names, unmanagedNames...)
+}
+
+// cursorFlatRows builds the FLATTENED navigation row list for the cursor —
+// the hub-side mirror of what the renderer flattens from the published
+// snapshot — WITHOUT buildSnapshot's dwell/attention side effects. It
+// assembles a minimal snapshot (ordered row names → Project skeletons + the
+// live TeamGroups from teamGroupsFor) and runs it through the shared
+// proto.FlatRows, gated on st.teamWindows exactly as the renderer gates on
+// render.TeamRows. Because both sides flatten the same ordering through the
+// same helper, cursorRow and the ▶ highlight index the same rows. Read-only;
+// hub goroutine only.
+func cursorFlatRows(st *state) []proto.FlatRow {
+	names := orderedRowNames(st)
+	projects := make([]proto.Project, len(names))
+	for i, n := range names {
+		projects[i] = proto.Project{Name: n}
+	}
+	snap := &proto.Snapshot{Projects: projects, TeamGroups: teamGroupsFor(st)}
+	return proto.FlatRows(snap, st.teamWindows)
+}
+
+// projectNameAtRow returns the canonical name a select on the given flattened
+// row jumps to (the project itself for a project row, the lead project for a
+// member row), or "" when row is out of bounds. Retained as a thin wrapper
+// over cursorFlatRows for the move-only cursor tests; the cursorRequests
+// handler uses cursorFlatRows directly so it can also carry the member
+// WindowID. Safe to call only from the hub goroutine.
+func projectNameAtRow(st *state, row int) string {
+	rows := cursorFlatRows(st)
+	if row < 0 || row >= len(rows) {
 		return ""
 	}
-	return allNames[row]
+	return rows[row].SwitchTo
 }
 
 // emitPortDiff fires one eventlog.Event per port that opened (in `now`

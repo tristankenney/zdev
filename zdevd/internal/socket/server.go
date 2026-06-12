@@ -44,11 +44,15 @@ type cursorRequest struct {
 }
 
 // cursorReply is the server-to-client cursor wire frame. Name is the
-// canonical slash-form project name at the resulting cursor row, or ""
-// when the cursor is inactive or the project list is empty.
+// canonical slash-form project name a select on the resulting cursor row jumps
+// to (the lead project for a member row), or "" when the cursor is inactive or
+// the project list is empty. WindowID (slice C) is the member's tmux window for
+// a member row, empty for a project row — the consumer select-windows to it
+// after the session switch.
 type cursorReply struct {
-	Type string `json:"type"`
-	Name string `json:"name"`
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	WindowID string `json:"window_id,omitempty"`
 }
 
 // SnapshotSource is the interface the Server requires from its backing hub.
@@ -59,9 +63,11 @@ type SnapshotSource interface {
 	Unregister(sub *hub.Subscriber)
 	DiagSnapshot(ctx context.Context) (*diag.Reply, error)
 	// SubmitCursor applies a cursor move and returns the project name at the
-	// resulting cursor row (zd-e6e, phase4-v14). delta=+1/-1 to move,
-	// delta=0 to query without moving. Returns "" when no projects exist.
-	SubmitCursor(ctx context.Context, delta int) (string, error)
+	// resulting cursor row plus (slice C) the member WindowID when that row is
+	// a team member row (zd-e6e, phase4-v14). delta=+1/-1 to move, delta=0 to
+	// query without moving. Returns "" name when no projects exist; windowID is
+	// "" for a project row.
+	SubmitCursor(ctx context.Context, delta int) (name, windowID string, err error)
 }
 
 // dialProbeTimeout caps the liveness probe in BindOrCleanStale.
@@ -237,12 +243,12 @@ func (s *Server) serveOne(ctx context.Context, conn net.Conn) {
 			slog.Warn("socket: cursor request unmarshal failed", "err", err)
 			return
 		}
-		name, err := s.hub.SubmitCursor(ctx, cr.Delta)
+		name, windowID, err := s.hub.SubmitCursor(ctx, cr.Delta)
 		if err != nil {
 			slog.Warn("socket: cursor submit failed", "err", err)
 			return
 		}
-		payload, mErr := proto.MarshalCompact(cursorReply{Type: "cursor-reply", Name: name})
+		payload, mErr := proto.MarshalCompact(cursorReply{Type: "cursor-reply", Name: name, WindowID: windowID})
 		if mErr != nil {
 			slog.Warn("socket: cursor reply marshal failed", "err", mErr)
 			return

@@ -301,6 +301,60 @@ func TestBuildSnapshot_LeadDeAggregation(t *testing.T) {
 	}
 }
 
+// TestCursorFlatRows_MemberJump (Agent Teams slice C): with teamWindows on the
+// flattened cursor row list nests the member under its lead, the cursor wrap
+// bounds against the flattened length so it can reach the member row, and a
+// select on that row resolves to the lead project name + the member's window.
+func TestCursorFlatRows_MemberJump(t *testing.T) {
+	// proj-a owns the lead's shell (%1) and the member's pane (%42), both in
+	// window @1; the lead anchors to proj-a by cwd.
+	mk := func() *state {
+		s := buildTestState("proj-a", []string{"%1", "%42"}, []string{"shell", "● claude"})
+		s.projectListNames = []string{"proj-a"}
+		s.panesByID["%1"].Cwd = "/ws/proj-a"
+		s.agentTeams = map[string]*teams.Team{
+			"alpha": {Name: "alpha", Members: []teams.Member{
+				{Name: "team-lead", AgentType: "team-lead", CWD: "/ws/proj-a"},
+				{Name: "worker", AgentType: "general-purpose", Color: "green", TmuxPaneID: "%42"},
+			}},
+		}
+		return s
+	}
+
+	// Knob off: one flattened row (the project), member not navigable.
+	off := mk()
+	if got := countVisibleProjects(off); got != 1 {
+		t.Errorf("teamWindows off: countVisibleProjects = %d; want 1", got)
+	}
+
+	// Knob on: two flattened rows — proj-a then proj-a/worker.
+	on := mk()
+	on.teamWindows = true
+	rows := cursorFlatRows(on)
+	if len(rows) != 2 {
+		t.Fatalf("flattened rows = %d; want 2 (%+v)", len(rows), rows)
+	}
+	if rows[0].IsMember() || rows[0].SwitchTo != "proj-a" {
+		t.Errorf("row 0 = %+v; want proj-a project row", rows[0])
+	}
+	if !rows[1].IsMember() || rows[1].SwitchTo != "proj-a" || rows[1].WindowID != "@1" {
+		t.Errorf("row 1 = %+v; want member row switching to proj-a, window @1", rows[1])
+	}
+	if got := countVisibleProjects(on); got != 2 {
+		t.Errorf("teamWindows on: countVisibleProjects = %d; want 2", got)
+	}
+
+	// The cursor reaches the member row: +1 activates row 0, +1 moves to row 1.
+	applyEvent(on, tmuxctl.CursorMove{Delta: +1}, nil)
+	applyEvent(on, tmuxctl.CursorMove{Delta: +1}, nil)
+	if on.cursorRow != 1 {
+		t.Fatalf("cursorRow = %d; want 1 (member row)", on.cursorRow)
+	}
+	if name := projectNameAtRow(on, on.cursorRow); name != "proj-a" {
+		t.Errorf("projectNameAtRow(member row) = %q; want proj-a (lead session)", name)
+	}
+}
+
 // TestApplyEvent_WindowAddDoesNotSteal pins the ping-pong fix (dogfood
 // 2026-06-11: thousands of alive↔absent flips/hour): WindowAdd attaches
 // via the racy currentSessionID pin, so it must NEVER move a window a

@@ -145,10 +145,10 @@ func (d *DemoSource) DiagSnapshot(_ context.Context) (*diag.Reply, error) {
 }
 
 // SubmitCursor is a no-op for the demo source — the cursor is not interactive
-// during a scripted replay. Returns "" always (cursor inactive in demo mode).
-// Implements socket.SnapshotSource.
-func (d *DemoSource) SubmitCursor(_ context.Context, _ int) (string, error) {
-	return "", nil
+// during a scripted replay. Returns empty name/windowID always (cursor inactive
+// in demo mode). Implements socket.SnapshotSource.
+func (d *DemoSource) SubmitCursor(_ context.Context, _ int) (name, windowID string, err error) {
+	return "", "", nil
 }
 
 // Run advances through the frame sequence on timers, broadcasting each new

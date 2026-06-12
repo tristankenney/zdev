@@ -19,9 +19,19 @@ case "$ARG" in
     "$ZDEVD" cursor "$ARG" >/dev/null
     ;;
   select)
-    NAME="$("$ZDEVD" cursor select 2>/dev/null || true)"
-    if [[ -z "$NAME" ]]; then
+    OUT="$("$ZDEVD" cursor select 2>/dev/null || true)"
+    if [[ -z "$OUT" ]]; then
         exit 0
+    fi
+    # Output contract (Agent Teams slice C): a project row prints just the
+    # name; a team member row prints "name<TAB>@windowID".  Split on the tab
+    # (bash 3.2: no associative arrays, no readarray).  WIN is empty for a
+    # project row, leaving the jump behaviour unchanged.
+    NAME="${OUT%%$'\t'*}"
+    if [[ "$OUT" == *$'\t'* ]]; then
+        WIN="${OUT#*$'\t'}"
+    else
+        WIN=""
     fi
     # Convert slash-form (e.g. "example/backend") to dash-form for tmux.
     SESSION="${NAME//\//-}"
@@ -56,6 +66,12 @@ case "$ARG" in
     fi
 
     tmux switch-client -t "=$SESSION" 2>/dev/null || true
+    # Member jump (slice C): the selected row was a team member whose pane was
+    # relocated into its own window (team-sweep).  After landing in the lead's
+    # session, select that window so M-Enter jumps straight to the teammate.
+    if [[ -n "$WIN" ]]; then
+        tmux select-window -t "$WIN" 2>/dev/null || true
+    fi
     ;;
   *)
     echo "zdev-sidebar-move: usage: $0 {+1|-1|select}" >&2
