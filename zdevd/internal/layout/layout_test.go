@@ -295,3 +295,18 @@ func TestConfigFromEnv(t *testing.T) {
 		})
 	}
 }
+
+// TestPlan_TeamWindowNeverDecorated pins the teammate-window exclusion: a
+// window created by team-sweep (TeamWindow, via the @zdev-team tag) must
+// never receive a sidebar — found by the first production reap, where a
+// toggle-added sidebar pane kept a dead member window alive past its team.
+func TestPlan_TeamWindowNeverDecorated(t *testing.T) {
+	w := Window{
+		ID: "@19", Session: "zdev", EffectiveWidth: 300, TeamWindow: true,
+		Panes:          []Pane{{ID: "%57", Width: 300, Height: 50, Title: "✳ general-purpose"}},
+		SidebarCommand: "exec render",
+	}
+	if got := Plan(w, DefaultConfig()); got != nil {
+		t.Fatalf("Plan decorated a teammate window: %v", got)
+	}
+}

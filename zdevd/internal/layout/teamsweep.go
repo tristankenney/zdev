@@ -61,6 +61,15 @@ func PlanTeamSweep(w Window, members map[string]TeamPane) []Command {
 			cmd("set-option", "-p", "-t", p.ID, MemberOption, tm.Member),
 			cmd("set-option", "-p", "-t", p.ID, TeamOption, tm.Team),
 			cmd("break-pane", "-d", "-s", p.ID, "-t", w.Session+":", "-n", tm.Member),
+			// Tag the destination WINDOW too (-w, targeted via the moved
+			// pane). Pane options die with the pane: the first production
+			// reap found orphan member windows kept alive by a sidebar
+			// pane after the teammate process exited — untagged, so the
+			// tag-bounded reap was blind to them. tmux format lookup
+			// falls back pane→window, so every consumer reading
+			// #{@zdev-team} off any pane in this window now sees the tag
+			// regardless of which pane survives.
+			cmd("set-option", "-w", "-t", p.ID, TeamOption, tm.Team),
 		)
 	}
 	return out

@@ -14,10 +14,11 @@ func TestParseInventory(t *testing.T) {
 	// contains the '|' delimiter to exercise the bounded split (title is
 	// the final field and must survive intact). Window-level width/session
 	// repeat per row and are taken from the first.
+	// 10th field is @zdev-team (empty here — not a teammate window).
 	out := strings.Join([]string{
-		"%9|0|0|50|50|0|1|240|work|zdev-sidebar",
-		"%0|51|0|94|50|1|0|240|work|nvim | src/main.go",
-		"%1|146|0|94|50|0|0|240|work|bash",
+		"%9|0|0|50|50|0|1|240|work||zdev-sidebar",
+		"%0|51|0|94|50|1|0|240|work||nvim | src/main.go",
+		"%1|146|0|94|50|0|0|240|work||bash",
 	}, "\n")
 
 	win, ok := parseInventory("@3", out)

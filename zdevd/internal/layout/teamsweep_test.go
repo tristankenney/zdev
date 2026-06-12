@@ -35,6 +35,7 @@ func TestPlanTeamSweep(t *testing.T) {
 				cmd("set-option", "-p", "-t", "%9", MemberOption, "hub-core"),
 				cmd("set-option", "-p", "-t", "%9", TeamOption, "deepen"),
 				cmd("break-pane", "-d", "-s", "%9", "-t", "zitcha-backend:", "-n", "hub-core"),
+				cmd("set-option", "-w", "-t", "%9", TeamOption, "deepen"),
 			},
 		},
 		{
@@ -45,9 +46,11 @@ func TestPlanTeamSweep(t *testing.T) {
 				cmd("set-option", "-p", "-t", "%9", MemberOption, "hub-core"),
 				cmd("set-option", "-p", "-t", "%9", TeamOption, "deepen"),
 				cmd("break-pane", "-d", "-s", "%9", "-t", "zitcha-backend:", "-n", "hub-core"),
+				cmd("set-option", "-w", "-t", "%9", TeamOption, "deepen"),
 				cmd("set-option", "-p", "-t", "%10", MemberOption, "probe-runtime"),
 				cmd("set-option", "-p", "-t", "%10", TeamOption, "deepen"),
 				cmd("break-pane", "-d", "-s", "%10", "-t", "zitcha-backend:", "-n", "probe-runtime"),
+				cmd("set-option", "-w", "-t", "%10", TeamOption, "deepen"),
 			},
 		},
 		{

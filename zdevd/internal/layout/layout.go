@@ -91,6 +91,15 @@ type Window struct {
 	// column rebalance.
 	EffectiveWidth int
 
+	// TeamWindow marks a window created by team-sweep for an Agent Teams
+	// teammate (any pane reporting a non-empty @zdev-team — the option is
+	// stamped on both the pane and the window, and tmux format lookup
+	// falls back pane→window). Plan never decorates these: a sidebar per
+	// teammate window is clutter, an extra renderer process each, and —
+	// found by the first production reap — the surviving sidebar pane
+	// kept dead member windows alive past their team.
+	TeamWindow bool
+
 	Panes []Pane
 
 	// SidebarCommand is the shell command passed to `split-window` when a
@@ -137,6 +146,10 @@ func Plan(w Window, cfg Config) []Command {
 	}
 	// NEVER decorate the watcher session (load-bearing — see WatcherSession).
 	if w.Session == WatcherSession {
+		return nil
+	}
+	// NEVER decorate a teammate's window (see Window.TeamWindow).
+	if w.TeamWindow {
 		return nil
 	}
 

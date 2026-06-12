@@ -195,9 +195,10 @@ func (e *layoutEngine) allWindows(ctx context.Context) []string {
 // window_width and session_name are window-level vars that repeat per pane;
 // we read them off the first row.
 const inventoryFormat = "#{pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|" +
-	"#{pane_height}|#{pane_active}|#{@is-sidebar}|#{window_width}|#{session_name}|#{pane_title}"
+	"#{pane_height}|#{pane_active}|#{@is-sidebar}|#{window_width}|#{session_name}|" +
+	"#{@zdev-team}|#{pane_title}"
 
-const inventoryFields = 10
+const inventoryFields = 11
 
 // processWindow reconciles a single window: lock, gather inventory (one
 // list-panes), compute the batch, apply it (one tmux exec). All failures are
@@ -301,7 +302,7 @@ func parseInventory(windowID, out string) (layout.Window, bool) {
 			Height:     atoiOr(f[4], 0),
 			Active:     f[5] == "1",
 			SidebarOpt: f[6] == "1",
-			Title:      f[9],
+			Title:      f[10],
 		}
 		win.Panes = append(win.Panes, p)
 		if !have {
@@ -309,6 +310,11 @@ func parseInventory(windowID, out string) (layout.Window, bool) {
 			win.EffectiveWidth = atoiOr(f[7], 0)
 			win.Session = f[8]
 			have = true
+		}
+		// @zdev-team resolves pane→window in tmux's format lookup, so any
+		// pane reporting a team marks the whole window as a teammate's.
+		if f[9] != "" {
+			win.TeamWindow = true
 		}
 	}
 	return win, have
