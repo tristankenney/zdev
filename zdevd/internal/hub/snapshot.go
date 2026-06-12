@@ -317,32 +317,87 @@ func teamGroupsFor(st *state) []proto.TeamGroup {
 			if m.AgentType == "team-lead" {
 				continue
 			}
-			// Waiting (v18): a tmux-backend member's pane title is the
-			// same signal the session-level derivation reads — classify
-			// it per member so the badge can pinpoint WHO is blocked.
-			waiting := false
-			if m.TmuxPaneID != "" && m.TmuxPaneID != teams.InProcessPaneID {
-				if pn, ok := st.panesByID[m.TmuxPaneID]; ok {
-					waiting = tmuxctl.ClassifyPaneTitle(pn.Title) == tmuxctl.StatusWaiting
-				}
+			inProcess := m.TmuxPaneID == teams.InProcessPaneID
+			paneID := ""
+			if !inProcess {
+				paneID = m.TmuxPaneID
 			}
 			g.Members = append(g.Members, proto.TeamMember{
 				Name:      m.Name,
 				Color:     m.Color,
-				Idle:      t.MemberIdle[m.Name],
-				Waiting:   waiting,
-				InProcess: m.TmuxPaneID == teams.InProcessPaneID,
-				PaneID: func() string {
-					if m.TmuxPaneID == teams.InProcessPaneID {
-						return ""
-					}
-					return m.TmuxPaneID
-				}(),
+				InProcess: inProcess,
+				PaneID:    paneID,
+				// Status (v20): tmux-backend members classify their pane
+				// title (the same signal the session-level derivation
+				// reads) so a nested row can pinpoint WHO is working /
+				// blocked / done; in-process members carry "idle" from
+				// the lead-inbox idle_notification derivation, else "".
+				Status: memberStatus(st, m, t.MemberIdle[m.Name]),
+				// WindowID (v20): the window that owns the member's pane
+				// after team-sweep relocates it into its own window —
+				// empty for in-process members and unassociated panes.
+				WindowID: windowIDForPane(st, paneID),
 			})
 		}
 		out = append(out, g)
 	}
 	return out
+}
+
+// memberStatus derives the wire Status for one team member (proto.TeamMember
+// vocabulary). For a tmux-backend member it classifies the pane title with
+// the same tmuxctl.ClassifyPaneTitle the session-level derivation uses, and
+// maps the result into the project attention vocabulary:
+//
+//	waiting       → "waiting" (blocked on input)
+//	shell-running → "working"
+//	finished      → "done"
+//	alive / no pane / unknown → ""
+//
+// For an in-process member (no pane to read) the only signal is the lead's
+// inbox: idle==true → "idle", else "". An in-process member is never
+// "waiting"/"working"/"done" — those require a pane title.
+func memberStatus(st *state, m teams.Member, idle bool) string {
+	if m.TmuxPaneID == "" || m.TmuxPaneID == teams.InProcessPaneID {
+		if idle {
+			return "idle"
+		}
+		return ""
+	}
+	pn, ok := st.panesByID[m.TmuxPaneID]
+	if !ok {
+		return ""
+	}
+	switch tmuxctl.ClassifyPaneTitle(pn.Title) {
+	case tmuxctl.StatusWaiting:
+		return "waiting"
+	case tmuxctl.StatusShellRunning:
+		return "working"
+	case tmuxctl.StatusFinished:
+		return "done"
+	default:
+		return ""
+	}
+}
+
+// windowIDForPane returns the tmux window id (`@<n>`) of the window that
+// owns paneID, scanning every session's windows (the $_unlinked parking lot
+// included — a mid-attach member pane parks there briefly). Returns "" for
+// an empty paneID or a pane no window claims yet. Read-only; hub goroutine
+// only. Determinism across the windowless-collision window is not required:
+// a pane belongs to at most one window's panesIDs set at a time.
+func windowIDForPane(st *state, paneID string) string {
+	if paneID == "" {
+		return ""
+	}
+	for _, sess := range st.sessions {
+		for _, w := range sess.windows {
+			if _, ok := w.panesIDs[paneID]; ok {
+				return w.ID
+			}
+		}
+	}
+	return ""
 }
 
 // projectByPaneCwd returns the PROJECT ROW NAME anchoring dir: the first

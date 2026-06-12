@@ -1678,7 +1678,7 @@ func TestRender_TeamBadge(t *testing.T) {
 			Members: []proto.TeamMember{
 				{Name: "impl", Color: "blue", InProcess: true},
 				{Name: "rev", Color: "chartreuse"}, // unknown → Dim
-				{Name: "blk", Color: "green", Waiting: true},
+				{Name: "blk", Color: "green", Status: "waiting"},
 			},
 		}},
 	}

@@ -43,8 +43,8 @@ func TestFindProject(t *testing.T) {
 		wantName  string
 		wantFound bool
 	}{
-		{"example-agora", "example/agora", true},   // dash-form target matches slash-form project
-		{"example/agora", "example/agora", true},   // slash normalized to dash matches slash-form project
+		{"example-agora", "example/agora", true},     // dash-form target matches slash-form project
+		{"example/agora", "example/agora", true},     // slash normalized to dash matches slash-form project
 		{"example-backend", "example-backend", true}, // dash-form target matches dash-form project
 		{"nonexistent", "", false},
 		{"", "", false},
@@ -213,5 +213,25 @@ func TestFormatAgentsFromRegistry_Empty(t *testing.T) {
 	r := agents.NewRegistry(nil)
 	if got := formatAgentsFromRegistry(r); got != "" {
 		t.Errorf("formatAgentsFromRegistry(empty) = %q; want empty", got)
+	}
+}
+
+// TestFormatLegend_AgentTeams verifies the legend documents the Agent Teams
+// vocabulary the sidebar actually renders (chipTeamBadge): the ⊛ lead-row
+// badge, the busy/idle/waiting bullet states, and the ZDEV_TEAM_WINDOWS knob
+// that surfaces nested member rows. The legend is the source of truth for
+// "what does this glyph mean" — if these drift from render, fix both.
+func TestFormatLegend_AgentTeams(t *testing.T) {
+	out := formatLegend()
+	for _, want := range []string{
+		"Agent Teams",
+		"⊛",
+		"◦",              // idle/available member bullet
+		"identity color", // busy/idle bullets carry the member's color
+		"ZDEV_TEAM_WINDOWS=1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("legend missing %q", want)
+		}
 	}
 }

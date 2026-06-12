@@ -222,6 +222,13 @@ func formatLegend() string {
 	row(yellow+"✻◆"+reset+" / "+yellow+"π◆"+reset, "agent just finished")
 	row(dim+"(no chip)"+reset, "agent idle, or you've visited the session since the wait started")
 
+	section("Agent Teams (lead-row badge + member rows)")
+	row(dim+"⊛ team"+reset, "team led from this row; for in-process teams the badge is the members' only surface")
+	row(cyan+"•"+reset, "teammate busy/working — one bullet per member, in the member's identity color")
+	row(cyan+"◦"+reset, "teammate idle — available, awaiting tasking (Tier 2a)")
+	row(redPulse+"•"+reset, "teammate waiting on input (red outranks the identity color)")
+	row(dim+"  • member-name"+reset, "member row nested under its lead (ZDEV_TEAM_WINDOWS=1: each tmux teammate gets its own window)")
+
 	section("Time chips (wait age + activity age)")
 	row(dim+"42s"+reset, "wait age <60s (just started)")
 	row(orange+"2m"+reset, "wait age 60s-5min (warn tier)")
