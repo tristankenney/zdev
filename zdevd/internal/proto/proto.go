@@ -152,7 +152,12 @@ import (
 // moves each tmux-backend teammate into its own window). Wire-incompatible: a
 // v19 renderer reading .Idle/.Waiting hard-rejects snapshots from a v20 daemon.
 // Restart all zdev-sidebar-render instances after deploying the new zdevd
-// binary.
+// binary. Provenance note: the v20 bump itself first landed mislabeled inside
+// commits ec746eb ("layout: add team-reap") and 8f687fd ("zdev-show: …
+// --legend") — a teammate's commit-all swept the slice-B working tree before
+// it was committed under its own message. The change is correct and gated; this
+// comment + the later doc commit carry the story a grep for the bump won't find
+// in those subjects.
 const SchemaVersion = "phase4-v20"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
