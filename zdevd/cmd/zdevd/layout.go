@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/layout"
+	"github.com/tristankenney/zdev/zdevd/internal/teams"
 )
 
 // layoutTmuxTimeout bounds each tmux subprocess. Layout runs on a hot hook
@@ -52,11 +53,21 @@ func layoutSubcmd(args []string) int {
 	fs := flag.NewFlagSet("zdevd layout", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	socketName := fs.String("socket-name", "", "tmux -L socket name (testing; empty = user's default server)")
+	teamsDir := fs.String("teams-dir", "", "team-config root for team-sweep (testing; empty = ~/.claude/teams)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "usage: zdevd layout [window-id]")
+	// `zdevd layout team-sweep [window-id]` — Agent Teams slice A: relocate
+	// teammate panes into their own windows. Routed here so the sweep shares
+	// the engine (one inventory gather, one batched apply, same -socket-name
+	// test seam).
+	sweep := fs.NArg() >= 1 && fs.Arg(0) == "team-sweep"
+	maxArgs := 1
+	if sweep {
+		maxArgs = 2
+	}
+	if fs.NArg() > maxArgs {
+		fmt.Fprintln(os.Stderr, "usage: zdevd layout [window-id] | zdevd layout team-sweep [window-id]")
 		return 2
 	}
 
@@ -70,6 +81,14 @@ func layoutSubcmd(args []string) int {
 		socketName: *socketName,
 		cfg:        layout.ConfigFromEnv(os.LookupEnv),
 		sidebarCmd: resolveSidebarCommand(),
+	}
+
+	if sweep {
+		dir := *teamsDir
+		if dir == "" {
+			dir = teams.DefaultDir()
+		}
+		return eng.teamSweep(fs.Arg(1), dir)
 	}
 
 	if fs.NArg() == 1 {
