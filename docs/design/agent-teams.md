@@ -351,3 +351,96 @@ Driven via send-keys against an interactive `claude --teammate-mode tmux`:
 3. Tier 2a (inbox idle, hollow bullets) shipped phase4-v17 the same
    day — both backends now have a teammate-state signal: inboxes for
    in-process, pane titles for tmux.
+
+## 2026-06-12 — tmux teammate windows: shipped surface + slice status
+
+The tmux-mode finding above (teammates split INTO the lead's window)
+turned out to be the problem, not the win. Claude Code spawns each
+tmux-backend teammate as a SPLIT of the lead's current window, which
+shreds the operator's three-pane working layout (sidebar | shell | main
+agent) — the dogfood verdict was that no amount of in-window corralling
+fixes that. The response is a family of `zdevd layout` verbs plus a
+de-aggregated render, sliced A–D.
+
+### Slice A — `zdevd layout team-sweep` (SHIPPED)
+
+Relocates every tmux teammate pane OUT of the lead's window into its own
+window of the same session.
+
+- **`@zdev-member` / `@zdev-team` pane options** — set on the teammate
+  pane BEFORE `break-pane`. Pane options travel with the pane through the
+  move, so the tags survive relocation and let later passes (and the
+  daemon post-restart) recognize a member window without re-reading team
+  configs. `@zdev-member` = member name (becomes the window name);
+  `@zdev-team` = team name.
+- **after-split-window hook** fires `team-sweep` for EVERY split (teammate
+  or human) — cheap exits run first (knob off, no teams on disk, no
+  tmux-backend members) so the common case is nearly free. Only when a
+  team exists does it gather the window inventory and plan the move. Runs
+  detached (`run-shell -b`) so tmux never blocks on it.
+- **mid-join race**: Claude Code splits the teammate pane BEFORE writing
+  its `tmuxPaneId` into config.json (the field is briefly empty during
+  join). The hook fires at split time, so the sweep polls the configs for
+  a bounded window (~5s) while a join is visibly in flight.
+- **`ZDEV_TEAM_WINDOWS=1`** gates the whole feature; current behavior
+  (teammates stay where Claude Code put them) is the default.
+- Pure plan: `internal/layout.PlanTeamSweep` (inventory + pane→member map
+  in, ordered `[]Command` out); cmd glue in `cmd/zdevd/teamsweep.go`.
+
+### Slice D — `zdevd layout team-reap` (SHIPPED)
+
+GCs the member windows slice A created, once their team is gone.
+
+A clean team dissolution removes the config dir and the teammate
+processes exit, taking their windows with them. A CRASHED teammate leaves
+an orphan window nobody reaps. `team-reap` gathers every pane across every
+session in ONE `list-panes -a` (format `window_id|pane_id|@zdev-team|
+session_name` — the tag is a PANE option; windows aggregate from their
+panes), compares each `@zdev-team` against the teams still on disk
+(`teams.LoadAll`), and kills the windows whose team no longer exists.
+
+- **The `@zdev-team` tag is the safety boundary**: reap only ever kills a
+  window carrying a non-empty `@zdev-team`, so a window team-sweep never
+  touched is invisible — an ordinary work window can never be reaped, even
+  if its session name collides with a dead team. A window claimed by a
+  live team is spared even if a dead-team tag also appears on it.
+- The `zdevd-watcher` session (`layout.WatcherSession`) is excluded.
+- Pure plan: `internal/layout.PlanTeamReap` (inventory + live-team set in,
+  `[]ReapTarget` out) + `KillWindowCommands`; cmd glue in
+  `cmd/zdevd/teamreap.go`, gated by `ZDEV_TEAM_WINDOWS=1`.
+- **`-dry-run`** prints the would-kill plan (`window-id<TAB>dead-team`) to
+  stdout and exits 0 without touching tmux.
+
+### Slices B–C — de-aggregated render (IN FLIGHT)
+
+Being built concurrently (phase4-v20). Once teammates live in their own
+windows, the lead's session no longer aggregates their attention, so the
+render has to re-thread it explicitly:
+
+- **Slice B** — member `WindowID`/`Status` on the wire; nested member rows
+  rendered under the lead; lead-row de-aggregation (the lead stops
+  inheriting teammate attention now that members render separately).
+- **Slice C** — cursor flattening over the nested rows, member jump (cursor
+  → the member's own window), and member triage entries.
+
+The `zdev-show --legend` Agent Teams section (shipped 2026-06-12 with this
+slice) documents the rendered vocabulary: ⊛ lead-row badge, • busy / ◦
+idle / red • waiting member bullets, and the nested member rows that
+appear when `ZDEV_TEAM_WINDOWS=1`.
+
+### Design decision — own-windows-in-the-lead's-session, nested rows
+
+Two shapes were considered and rejected before landing here:
+
+1. **Dedicated team session** (move all teammates into a separate
+   `team-<name>` session). Rejected: it severs the teammates from the
+   lead's session context and doubles the session count the operator
+   navigates; the win/lead relationship is a within-session concept.
+   Teammates get their own WINDOWS, but in the LEAD's session.
+2. **In-window corral** (keep teammates as panes, just tile them tidily).
+   Judged the wrong shape (2026-06-12): a teammate pane is a full agent
+   surface, not a widget — cramming N of them into the lead's window
+   re-creates the exact layout-shredding the sweep exists to undo, and
+   leaves no clean cursor/jump target. Nested member ROWS in the sidebar
+   (one row per member, under the lead) give per-member state and a jump
+   target without stealing the operator's working geometry.
