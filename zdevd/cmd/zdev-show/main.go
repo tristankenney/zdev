@@ -117,7 +117,7 @@ func run() int {
 	// nothing and exits 0 — the consumer tests for empty output, matching
 	// the "no context cases exit 0" convention above.
 	if os.Args[1] == "next" {
-		for _, name := range snap.Triage {
+		for _, name := range nextNames(snap) {
 			fmt.Println(name)
 		}
 		return 0
@@ -296,6 +296,27 @@ func formatShow(p *proto.Project) string {
 // formatList walks all projects and prints one preview line for each project
 // whose Status is "waiting". Returns "(no projects currently waiting)" when
 // no waiting projects exist.
+// nextNames returns the triage queue filtered to PROJECT names only — the
+// `next` consumer contract. bin/zdev resolves each line to a tmux session
+// and, on a has-session miss, falls through to the start-and-switch path,
+// which would CREATE a junk session for a non-project label. Team-member
+// triage labels ("lead/member", Agent Teams slice C) are therefore excluded
+// here; members surface in the sidebar rows and `triage` views, and are
+// reached via the cursor's M-Enter window path instead.
+func nextNames(snap *proto.Snapshot) []string {
+	projects := make(map[string]struct{}, len(snap.Projects))
+	for i := range snap.Projects {
+		projects[snap.Projects[i].Name] = struct{}{}
+	}
+	var out []string
+	for _, name := range snap.Triage {
+		if _, ok := projects[name]; ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 func formatList(snap *proto.Snapshot) string {
 	var b strings.Builder
 	for i := range snap.Projects {
