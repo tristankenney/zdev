@@ -141,7 +141,7 @@ func TestRankTriage(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := rankTriage(tc.projects, rankNow)
+			got := rankTriage(tc.projects, nil, false, rankNow)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("rankTriage = %v; want %v", got, tc.want)
 			}
@@ -193,7 +193,7 @@ func TestRankTriage_AnswerCost(t *testing.T) {
 		got := rankTriage([]proto.Project{
 			wait("q-old", 1800, "Which design should I use?"),
 			wait("cheap-new", 1960, cheapContext),
-		}, 2000)
+		}, nil, false, 2000)
 		want := []string{"cheap-new", "q-old"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("rankTriage = %v; want %v", got, want)
@@ -205,7 +205,7 @@ func TestRankTriage_AnswerCost(t *testing.T) {
 		got := rankTriage([]proto.Project{
 			wait("cheap-new", 1960, cheapContext),
 			wait("q-starved", 1600, "Which design should I use?"),
-		}, 2000)
+		}, nil, false, 2000)
 		want := []string{"q-starved", "cheap-new"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("rankTriage = %v; want %v", got, want)
@@ -216,7 +216,7 @@ func TestRankTriage_AnswerCost(t *testing.T) {
 		got := rankTriage([]proto.Project{
 			wait("cheap-b", 1960, cheapContext),
 			wait("cheap-a", 1900, cheapContext),
-		}, 2000)
+		}, nil, false, 2000)
 		want := []string{"cheap-a", "cheap-b"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("rankTriage = %v; want %v", got, want)
@@ -229,12 +229,44 @@ func TestRankTriage_AnswerCost(t *testing.T) {
 		got := rankTriage([]proto.Project{
 			wait("cheap-dec", 1500, cheapContext),
 			perm,
-		}, 2000)
+		}, nil, false, 2000)
 		want := []string{"perm", "cheap-dec"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("rankTriage = %v; want %v", got, want)
 		}
 	})
+}
+
+// TestRankTriage_WaitingMembers (Agent Teams slice C): with memberRows on, a
+// team member whose Status is "waiting" joins the queue as a
+// lead-project/member-name entry at the tail of the decision-waiting class; a
+// working member, an unanchored team, and the memberRows-off path contribute
+// nothing.
+func TestRankTriage_WaitingMembers(t *testing.T) {
+	projects := []proto.Project{
+		{Name: "alpha", Attention: proto.AttWaiting, WaitStartedTS: 1990}, // decision wait
+	}
+	groups := []proto.TeamGroup{
+		{LeadProject: "alpha", Members: []proto.TeamMember{
+			{Name: "blk", Status: "waiting"},  // → entry
+			{Name: "busy", Status: "working"}, // excluded (not waiting)
+		}},
+		{LeadProject: "", Members: []proto.TeamMember{
+			{Name: "ghost", Status: "waiting"}, // excluded (no lead row)
+		}},
+	}
+
+	// memberRows on: the waiting member trails the project decision-wait.
+	got := rankTriage(projects, groups, true, 2000)
+	want := []string{"alpha", "alpha/blk"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("rankTriage(memberRows=true) = %v; want %v", got, want)
+	}
+
+	// memberRows off: members never enter the queue (lead row still aggregates).
+	if got := rankTriage(projects, groups, false, 2000); !reflect.DeepEqual(got, []string{"alpha"}) {
+		t.Errorf("rankTriage(memberRows=false) = %v; want [alpha]", got)
+	}
 }
 
 // TestBuildSnapshot_TriagePopulated proves the queue flows onto the wire

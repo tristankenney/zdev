@@ -139,7 +139,16 @@ func hasYesNoToken(l string) bool {
 // first for the HUMAN's attention — but a non-cheap wait older than the
 // 5m tier boundary (tiers[1].AgeSec, notify.go) jumps ahead of all
 // cheap waits so structured prompts can never starve a real question.
-func rankTriage(projects []proto.Project, now int64) []string {
+//
+// teamGroups (Agent Teams slice C) adds waiting team members to the queue as
+// "lead-project/member-name" labels in the decision-waiting class, at the tail
+// (cost 2, order max) since a member carries no wait age to rank by. Gated on
+// memberRows (the daemon's TeamWindows knob): only when the lead row is
+// de-aggregated — so the member's wait no longer shows on the lead's own row —
+// does the member earn its own entry, avoiding a double-count. Deliberately
+// minimal: no per-member visit latch, so the project-level acknowledgement
+// machinery is untouched (member entries are always unacknowledged).
+func rankTriage(projects []proto.Project, teamGroups []proto.TeamGroup, memberRows bool, now int64) []string {
 	type cand struct {
 		name  string
 		class int
@@ -189,6 +198,33 @@ func rankTriage(projects []proto.Project, now int64) []string {
 			}
 		}
 		cands = append(cands, c)
+	}
+	// Waiting team members (slice C): one entry per member whose Status is
+	// "waiting", labeled lead-project/member-name, ranked at the tail of the
+	// decision-waiting class (class 2, cost 2, order max — no per-member wait
+	// age to order by). Only when memberRows is on, so we don't double-count a
+	// wait that still shows on a non-de-aggregated lead row. A team with no
+	// resolved lead row (LeadProject == "") contributes nothing — the label
+	// would anchor to no row.
+	if memberRows {
+		for gi := range teamGroups {
+			g := &teamGroups[gi]
+			if g.LeadProject == "" {
+				continue
+			}
+			for mi := range g.Members {
+				m := &g.Members[mi]
+				if m.Status != "waiting" {
+					continue
+				}
+				cands = append(cands, cand{
+					name:  g.LeadProject + "/" + m.Name,
+					class: 2,
+					cost:  2,
+					order: int64(^uint64(0) >> 1), // max int64 — tail of the class
+				})
+			}
+		}
 	}
 	if len(cands) == 0 {
 		return nil

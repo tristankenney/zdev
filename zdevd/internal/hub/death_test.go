@@ -141,7 +141,7 @@ func TestRankTriage_DeadTopsQueue(t *testing.T) {
 		{Name: "perm", Attention: proto.AttWaiting, WaitKind: proto.WaitKindPermission, WaitStartedTS: 1900},
 		{Name: "corpse", Attention: proto.AttDead, WaitStartedTS: 1990, WaitSummary: "exited: other"},
 		{Name: "done", Attention: proto.AttFinished, LastActivityTS: 100},
-	}, 2000)
+	}, nil, false, 2000)
 	want := []string{"corpse", "perm", "done"}
 	for i := range want {
 		if i >= len(got) || got[i] != want[i] {

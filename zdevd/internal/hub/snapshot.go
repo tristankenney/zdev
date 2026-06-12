@@ -275,6 +275,11 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		projects = append(projects, proj)
 	}
 
+	// TeamGroups (phase4-v16): Agent Teams with the lead resolved to a project
+	// row by pane cwd. Computed once per pass (team count is tiny) and shared
+	// with rankTriage so the queue's member entries agree with the wire groups.
+	teamGroups := teamGroupsFor(st)
+
 	return &proto.Snapshot{
 		V:              proto.CurrentProtocolVersion,
 		Type:           "snapshot",
@@ -287,16 +292,15 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// Triage (phase4-v9) ranks the rows just assembled above, so the
 		// queue always reflects exactly what the renderer draws —
 		// including the dwell-debounced Attention. Computed here (not
-		// per-subscriber) so every surface shares one ordering.
-		Triage: rankTriage(projects, now),
+		// per-subscriber) so every surface shares one ordering. Waiting team
+		// members join the queue (slice C) only when teamWindows de-aggregates
+		// them off the lead row, so a wait is never counted twice.
+		Triage: rankTriage(projects, teamGroups, st.teamWindows, now),
 		// Cursor (phase4-v14, zd-e6e): propagate hub cursor state so every
 		// subscriber's renderer highlights the selected row consistently.
 		CursorRow:    st.cursorRow,
 		CursorActive: st.cursorActive,
-		// TeamGroups (phase4-v16): Agent Teams with the lead resolved to
-		// a project row by pane cwd. Computed per pass — team count is
-		// tiny (single digits) so no caching.
-		TeamGroups: teamGroupsFor(st),
+		TeamGroups:   teamGroups,
 	}
 }
 
