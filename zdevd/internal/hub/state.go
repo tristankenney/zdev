@@ -1009,6 +1009,16 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			s.cursorRow = 0
 			return
 		}
+		// Clamp a stale parked index BEFORE applying the delta. The flattened
+		// row list (countVisibleProjects → cursorFlatRows) can shrink under a
+		// parked cursor — e.g. a team dissolves (TeamsChanged empties) and its
+		// member rows vanish while the cursor sat on one. Without this clamp a
+		// delta=0 select would read past the end (the handler returns "") and a
+		// move would wrap from an out-of-range base, silently landing on the
+		// wrong row. Clamping to the last valid row keeps the next op sane.
+		if s.cursorRow >= n {
+			s.cursorRow = n - 1
+		}
 		if e.Delta != 0 {
 			s.cursorRow = ((s.cursorRow+e.Delta)%n + n) % n
 		}

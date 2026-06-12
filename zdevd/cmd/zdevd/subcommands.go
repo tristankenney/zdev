@@ -168,12 +168,28 @@ func demoSubcmd(args []string) int {
 
 // cursorSubcmd implements `zdevd cursor [--socket PATH] {+1|-1|select}`.
 // Connects to the running daemon, applies the cursor delta, and prints the
-// project name at the resulting cursor row to stdout (one line, no newline
-// for select — the caller captures it; +1/-1 callers may ignore it).
+// resulting row to stdout.
 //
 //	+1      move cursor down (M-j binding in zdev-sidebar-move)
 //	-1      move cursor up   (M-k binding in zdev-sidebar-move)
-//	select  query current row name, used by M-Enter to switch-client
+//	select  query current row, used by M-Enter to jump there
+//
+// OUTPUT CONTRACT (Agent Teams slice C — this is now a stable interface
+// consumed by bin/zdev-sidebar-move, so do not change it without updating that
+// consumer):
+//
+//   - PROJECT row: one line, the bare canonical project name (e.g.
+//     "example/backend"). No trailing tab. This is byte-identical to the
+//     pre-slice-C output.
+//   - MEMBER row (only with ZDEV_TEAM_WINDOWS=1): one line,
+//     "<lead-project>\t<@windowID>" — the lead project name, a single TAB, then
+//     the member's tmux window id. The consumer switch-clients to the lead
+//     session, then select-windows the window id.
+//   - cursor inactive / empty project list: nothing printed (empty output).
+//
+// Tabs cannot appear in tmux session names, so the TAB delimiter is
+// unambiguous. Only `select` (delta 0) is captured by callers; +1/-1 callers
+// ignore stdout (they just drive a republish).
 func cursorSubcmd(args []string) int {
 	fs := flag.NewFlagSet("zdevd cursor", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

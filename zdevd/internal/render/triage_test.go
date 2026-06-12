@@ -157,3 +157,37 @@ func TestRender_TriageShiftsProjectSectionPredictably(t *testing.T) {
 		t.Errorf("triage frame rows = %d; want %d+2 (entry + divider)", linesWith, linesWithout)
 	}
 }
+
+// TestRenderTriageSection_SkipsMemberLabel (Agent Teams slice C, hard
+// requirement): a Triage entry that is a "lead/member" label — which matches
+// no Projects[].Name — must be skipped by the strip with zero effect: no
+// panic, no blank row, identical bytes to the same queue without the label.
+// Pins the "consumers already skip unknown names safely" claim for the
+// sidebar strip so a future change can't regress it.
+func TestRenderTriageSection_SkipsMemberLabel(t *testing.T) {
+	proj := proto.Project{Name: "alpha", Attention: proto.AttWaiting, Status: "waiting", WaitStartedTS: triageRefNow - 40}
+	nowFn := func() int64 { return triageRefNow }
+
+	// Control: project-only queue.
+	ctrl := triageSnap([]string{"alpha"}, proj)
+	var ctrlBuf bytes.Buffer
+	ctrlRows := renderTriageSection(&ctrlBuf, ctrl, 50, NewAnimator(), nowFn)
+
+	// With a member label appended — must render identically.
+	withMember := triageSnap([]string{"alpha", "alpha/blk"}, proj)
+	var memBuf bytes.Buffer
+	memRows := renderTriageSection(&memBuf, withMember, 50, NewAnimator(), nowFn)
+
+	if memRows != ctrlRows {
+		t.Errorf("member label changed strip row count: %d vs control %d", memRows, ctrlRows)
+	}
+	if !bytes.Equal(memBuf.Bytes(), ctrlBuf.Bytes()) {
+		t.Errorf("member label changed strip bytes:\n got: %q\nwant: %q", memBuf.Bytes(), ctrlBuf.Bytes())
+	}
+	if !bytes.Contains(memBuf.Bytes(), []byte("alpha")) {
+		t.Errorf("real entry missing from strip:\n%q", memBuf.Bytes())
+	}
+	if bytes.Contains(memBuf.Bytes(), []byte("blk")) {
+		t.Errorf("member label leaked into strip output:\n%q", memBuf.Bytes())
+	}
+}

@@ -355,6 +355,62 @@ func TestCursorFlatRows_MemberJump(t *testing.T) {
 	}
 }
 
+// TestCursorMove_ClampsOnTeamDissolve (Agent Teams slice C, hard requirement):
+// a cursor parked on a member row must clamp sanely when the team dissolves and
+// the flattened row list shrinks under it — never index out of range, never
+// silently point at the wrong row. Covers both the next op being a select
+// (delta 0) and a move (delta != 0).
+func TestCursorMove_ClampsOnTeamDissolve(t *testing.T) {
+	mk := func() *state {
+		s := buildTestState("proj-a", []string{"%1", "%42"}, []string{"shell", "● claude"})
+		s.projectListNames = []string{"proj-a"}
+		s.panesByID["%1"].Cwd = "/ws/proj-a"
+		s.teamWindows = true
+		s.agentTeams = map[string]*teams.Team{
+			"alpha": {Name: "alpha", Members: []teams.Member{
+				{Name: "team-lead", AgentType: "team-lead", CWD: "/ws/proj-a"},
+				{Name: "worker", AgentType: "general-purpose", TmuxPaneID: "%42"},
+			}},
+		}
+		return s
+	}
+
+	// Park the cursor on the member row (flattened index 1).
+	parkOnMember := func(s *state) {
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // activate at 0
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil) // move to 1 (member)
+		if s.cursorRow != 1 {
+			t.Fatalf("setup: cursorRow = %d; want 1 (member row)", s.cursorRow)
+		}
+	}
+
+	t.Run("next_op_is_select", func(t *testing.T) {
+		s := mk()
+		parkOnMember(s)
+		// Team dissolves: flattened list shrinks 2 → 1 with the cursor on row 1.
+		applyEvent(s, tmuxctl.TeamsChanged{Teams: nil}, nil)
+		// A select (delta 0) must clamp the stale row to the last valid one.
+		applyEvent(s, tmuxctl.CursorMove{Delta: 0}, nil)
+		if s.cursorRow != 0 {
+			t.Errorf("cursorRow = %d after dissolve+select; want 0 (clamped)", s.cursorRow)
+		}
+		if name := projectNameAtRow(s, s.cursorRow); name != "proj-a" {
+			t.Errorf("resolved name = %q; want proj-a (real row, not out-of-range)", name)
+		}
+	})
+
+	t.Run("next_op_is_move", func(t *testing.T) {
+		s := mk()
+		parkOnMember(s)
+		applyEvent(s, tmuxctl.TeamsChanged{Teams: nil}, nil)
+		// A move from the stale row must also land in range (n=1 → row 0).
+		applyEvent(s, tmuxctl.CursorMove{Delta: +1}, nil)
+		if s.cursorRow != 0 {
+			t.Errorf("cursorRow = %d after dissolve+move; want 0 (in range)", s.cursorRow)
+		}
+	})
+}
+
 // TestApplyEvent_WindowAddDoesNotSteal pins the ping-pong fix (dogfood
 // 2026-06-11: thousands of alive↔absent flips/hour): WindowAdd attaches
 // via the racy currentSessionID pin, so it must NEVER move a window a
