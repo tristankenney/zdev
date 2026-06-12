@@ -331,6 +331,17 @@ func run() error {
 	lsofProbe := probes.NewLsofProbe(submitEvent, workspaceDir, lister.Names)
 	branchProbe := probes.NewBranchProbe(submitEvent, workspaceDir)
 
+	// Share ONE probe runtime across all four probes so the global subprocess
+	// concurrency cap (ZDEVD_PROBE_MAX_CONCURRENT, default 2) and per-key
+	// failure backoff are fleet-wide. Without this each probe would enforce
+	// the cap independently — the pre-consolidation bug where branch+gh+ci
+	// could stack three concurrent heavyweight subprocesses (260611 perf-hunt).
+	probeRuntime := probes.NewRuntime()
+	ghProbe.SetRuntime(probeRuntime)
+	ciProbe.SetRuntime(probeRuntime)
+	lsofProbe.SetRuntime(probeRuntime)
+	branchProbe.SetRuntime(probeRuntime)
+
 	// fsnotify watchers (D3-05 + D3-06).
 	//
 	// notif watch path is a PRIVATE subdir of the daemon's TMPDIR
