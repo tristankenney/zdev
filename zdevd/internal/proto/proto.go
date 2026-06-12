@@ -143,7 +143,17 @@ import (
 // (the daemon's GT supervisor and rigs.json watcher are deleted). Agent
 // Teams (TeamGroups) is the successor surface for agent-fleet grouping.
 // Restart all zdev-sidebar-render instances after deploying.
-const SchemaVersion = "phase4-v19"
+//
+// phase4-v20 (Agent Teams slice B): replaces the TeamMember.Idle and
+// TeamMember.Waiting bools with a single TeamMember.Status string (vocabulary
+// "working"/"waiting"/"done"/"idle"/"" — aligned with the project attention
+// vocabulary) and adds TeamMember.WindowID so the renderer can draw nested
+// member rows and the cursor can jump to a relocated member window (team-sweep
+// moves each tmux-backend teammate into its own window). Wire-incompatible: a
+// v19 renderer reading .Idle/.Waiting hard-rejects snapshots from a v20 daemon.
+// Restart all zdev-sidebar-render instances after deploying the new zdevd
+// binary.
+const SchemaVersion = "phase4-v20"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -256,22 +266,33 @@ type TeamGroup struct {
 	Members     []TeamMember `json:"members,omitempty"`
 }
 
-// TeamMember is one badge chip of a TeamGroup (the lead is excluded —
-// it IS the anchor row).
+// TeamMember is one badge chip / nested row of a TeamGroup (the lead is
+// excluded — it IS the anchor row).
 type TeamMember struct {
 	Name      string `json:"name"`
 	Color     string `json:"color,omitempty"`
 	InProcess bool   `json:"in_process,omitempty"`
 	PaneID    string `json:"pane_id,omitempty"`
-	// Idle (phase4-v17, Tier 2a) is true when the member's latest
-	// lead-inbox message is an idle_notification — the teammate is
-	// available and waiting for tasking. Renders as a hollow bullet.
-	Idle bool `json:"idle,omitempty"`
-	// Waiting (phase4-v18) is true when a tmux-backend member's pane
-	// title classifies as waiting — the teammate is blocked on input.
-	// Renders as a red bullet. Always false for in-process members
-	// (no pane; their signal is Idle).
-	Waiting bool `json:"waiting,omitempty"`
+	// Status (phase4-v20) is the member's derived attention, replacing the
+	// v17 Idle and v18 Waiting bools with one field aligned to the project
+	// attention vocabulary. Values:
+	//
+	//	"working" — tmux-backend pane title classifies as shell-running
+	//	"waiting" — tmux-backend pane title classifies as waiting (blocked
+	//	            on input); renders as a red bullet / ● member row
+	//	"done"    — tmux-backend pane title classifies as finished
+	//	"idle"    — in-process member whose latest lead-inbox message is an
+	//	            idle_notification (Tier 2a); renders as a hollow bullet
+	//	""        — no signal (idle-prompt tmux member, or an in-process
+	//	            member with no idle notification yet)
+	Status string `json:"status,omitempty"`
+	// WindowID (phase4-v20) is the tmux window id (`@<n>`) owning the
+	// member's pane after team-sweep relocates each tmux-backend teammate
+	// into its own window. Empty for in-process members (no pane) and for
+	// a tmux member whose pane is not yet associated with a window. The
+	// cursor's member-jump (slice C) runs select-window with this id after
+	// switching sessions.
+	WindowID string `json:"window_id,omitempty"`
 }
 
 // Project is the per-row metadata in a Snapshot.

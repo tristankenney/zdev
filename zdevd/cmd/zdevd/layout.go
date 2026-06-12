@@ -53,21 +53,24 @@ func layoutSubcmd(args []string) int {
 	fs := flag.NewFlagSet("zdevd layout", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	socketName := fs.String("socket-name", "", "tmux -L socket name (testing; empty = user's default server)")
-	teamsDir := fs.String("teams-dir", "", "team-config root for team-sweep (testing; empty = ~/.claude/teams)")
+	teamsDir := fs.String("teams-dir", "", "team-config root for team-sweep / team-reap (testing; empty = ~/.claude/teams)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	// `zdevd layout team-sweep [window-id]` — Agent Teams slice A: relocate
-	// teammate panes into their own windows. Routed here so the sweep shares
-	// the engine (one inventory gather, one batched apply, same -socket-name
-	// test seam).
-	sweep := fs.NArg() >= 1 && fs.Arg(0) == "team-sweep"
-	maxArgs := 1
-	if sweep {
-		maxArgs = 2
+	// Team verbs share the engine (one inventory gather, one batched apply,
+	// same -socket-name / -teams-dir test seams):
+	//   team-sweep [window-id] — slice A: relocate teammate panes into their
+	//                            own windows.
+	//   team-reap  [-dry-run]  — slice D: kill member windows whose team is
+	//                            gone from disk.
+	verb := ""
+	if fs.NArg() >= 1 {
+		verb = fs.Arg(0)
 	}
-	if fs.NArg() > maxArgs {
-		fmt.Fprintln(os.Stderr, "usage: zdevd layout [window-id] | zdevd layout team-sweep [window-id]")
+	sweep := verb == "team-sweep"
+	reap := verb == "team-reap"
+	if !sweep && !reap && fs.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, "usage: zdevd layout [window-id] | zdevd layout team-sweep [window-id] | zdevd layout team-reap [-dry-run]")
 		return 2
 	}
 
@@ -84,11 +87,35 @@ func layoutSubcmd(args []string) int {
 	}
 
 	if sweep {
+		if fs.NArg() > 2 {
+			fmt.Fprintln(os.Stderr, "usage: zdevd layout team-sweep [window-id]")
+			return 2
+		}
 		dir := *teamsDir
 		if dir == "" {
 			dir = teams.DefaultDir()
 		}
 		return eng.teamSweep(fs.Arg(1), dir)
+	}
+
+	if reap {
+		// -dry-run may follow the verb (`team-reap -dry-run`); flag.Parse
+		// stops at the first non-flag, so the trailing token lands as a
+		// positional and we read it ourselves rather than via the flagset.
+		dryRun := false
+		for _, a := range fs.Args()[1:] {
+			if a == "-dry-run" || a == "--dry-run" {
+				dryRun = true
+				continue
+			}
+			fmt.Fprintln(os.Stderr, "usage: zdevd layout team-reap [-dry-run]")
+			return 2
+		}
+		dir := *teamsDir
+		if dir == "" {
+			dir = teams.DefaultDir()
+		}
+		return eng.teamReap(dryRun, dir)
 	}
 
 	if fs.NArg() == 1 {

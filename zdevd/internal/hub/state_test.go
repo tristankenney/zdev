@@ -1067,11 +1067,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v19 (RigGroups removed
-	// with the Gas Town decommission).
-	t.Run("H_schema_version_is_phase4_v19", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v19" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v19")
+	// Test H: proto.SchemaVersion must be phase4-v20 (TeamMember.Status +
+	// WindowID replaced the Idle/Waiting bools for Agent Teams slice B).
+	t.Run("H_schema_version_is_phase4_v20", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v20" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v20")
 		}
 	})
 }
