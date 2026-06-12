@@ -354,13 +354,31 @@ func run() error {
 
 	// lastFrame tracks the bytes of the most recent successful render — used
 	// as the dim-overlay body during outage (D4-02). Updated on every paint.
-	lastFrame := render.Render(snap, width, animator, time.Now().Unix)
-	if _, err := fw.Write(lastFrame); err != nil {
+	//
+	// paint is THE render→write→stamp path (card 5: this sequence used to be
+	// open-coded at four sites — initial, stream, tick, post-reconnect — and
+	// the stamp 1Hz fix had to find every copy). It also records the frame's
+	// FrameSig so the ticker can skip rebuilding byte-identical frames
+	// (framesig.go): the FrameWriter already suppressed the WRITE, but the
+	// full Render cost was paid first on every tick.
+	var lastFrame []byte
+	var lastSig render.FrameSig
+	paint := func(s *proto.Snapshot) error {
+		now := time.Now().Unix()
+		lastSig = animator.FrameSigFor(s, now)
+		lastFrame = render.Render(s, width, animator, time.Now().Unix)
+		if _, werr := fw.Write(lastFrame); werr != nil {
+			return werr
+		}
+		if fw.WroteLast() {
+			stampLastRenderFn(ctx, tmuxPane, now)
+		}
+		return nil
+	}
+
+	if err := paint(snap); err != nil {
 		slog.Error("first frame write failed", "err", err)
 		return err
-	}
-	if fw.WroteLast() {
-		stampLastRenderFn(ctx, tmuxPane, time.Now().Unix())
 	}
 	slog.Info("rendered initial snapshot", "seq", snap.Seq, "schema", snap.Schema, "width", width, "tmux_pane", tmuxPane, "tmux_session", tmuxSession, "current_session", snap.CurrentSession)
 
@@ -424,8 +442,7 @@ func run() error {
 				fw = render.NewFrameWriter(os.Stdout)
 
 				animator.OnSnapshot(newSnap)
-				lastFrame = render.Render(newSnap, width, animator, time.Now().Unix)
-				if _, werr := fw.Write(lastFrame); werr != nil {
+				if werr := paint(newSnap); werr != nil {
 					slog.Error("post-reconnect frame write failed", "err", werr)
 					return werr
 				}
@@ -447,13 +464,9 @@ func run() error {
 			}
 			animator.OnSnapshot(next)
 			ticker.Reset(animator.CadenceFor(next))
-			lastFrame = render.Render(next, width, animator, time.Now().Unix)
-			if _, err := fw.Write(lastFrame); err != nil {
+			if err := paint(next); err != nil {
 				slog.Error("frame write failed", "err", err)
 				return err
-			}
-			if fw.WroteLast() {
-				stampLastRenderFn(ctx, tmuxPane, time.Now().Unix())
 			}
 			slog.Debug("rendered snapshot", "seq", next.Seq, "current_session", next.CurrentSession)
 
@@ -463,13 +476,15 @@ func run() error {
 			if lastSnap == nil {
 				continue
 			}
-			lastFrame = render.Render(lastSnap, width, animator, time.Now().Unix)
-			if _, err := fw.Write(lastFrame); err != nil {
+			// Skip the rebuild when nothing visible advanced this tick —
+			// PulseHold=1 moves the counter every tick, but the displayed
+			// glyph indices divide it, so most ticks are byte-identical.
+			if animator.FrameSigFor(lastSnap, time.Now().Unix()) == lastSig {
+				continue
+			}
+			if err := paint(lastSnap); err != nil {
 				slog.Error("animation frame write failed", "err", err)
 				return err
-			}
-			if fw.WroteLast() {
-				stampLastRenderFn(ctx, tmuxPane, time.Now().Unix())
 			}
 
 		case <-ctx.Done():
