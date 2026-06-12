@@ -264,6 +264,12 @@ func run() error {
 			render.DemoteThresholdSec = n
 		}
 	}
+
+	// Agent Teams nested member rows (slice B): the same ZDEV_TEAM_WINDOWS=1
+	// knob that drives the daemon's team-sweep and lead de-aggregation also
+	// switches the sidebar from per-member badge bullets to indented member
+	// rows under the lead. Default off → bullets, no byte change.
+	render.TeamRows = os.Getenv("ZDEV_TEAM_WINDOWS") == "1"
 	snap, conn, err := initialSubscribe(ctx, func(ctx context.Context) (*proto.Snapshot, net.Conn, error) {
 		return socket.Subscribe(ctx, socketPath, tmuxPane, tmuxSession)
 	}, width)

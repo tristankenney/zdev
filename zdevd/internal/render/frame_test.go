@@ -1703,3 +1703,61 @@ func TestRender_TeamBadge(t *testing.T) {
 		t.Errorf("badge rendered %d times; want exactly 1 (lead row only)", bytes.Count(out, []byte("⊛")))
 	}
 }
+
+// TestRender_TeamRows (Agent Teams slice B): with ZDEV_TEAM_WINDOWS on
+// (render.TeamRows=true) the lead keeps its ⊛<name> marker but the per-member
+// bullets are suppressed; each teammate renders as its own 4-space-indented
+// row carrying the project-row status glyph (✳ working / ● waiting / ◆ done /
+// · idle) and the member name in its team color.
+func TestRender_TeamRows(t *testing.T) {
+	prev := TeamRows
+	TeamRows = true
+	defer func() { TeamRows = prev }()
+
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "alpha", Status: "alive"},
+			{Name: "beta", Status: "alive"},
+		},
+		TeamGroups: []proto.TeamGroup{{
+			Name:        "slice2",
+			LeadProject: "alpha",
+			Members: []proto.TeamMember{
+				{Name: "impl", Color: "blue", Status: "working", WindowID: "@7"},
+				{Name: "rev", Color: "green", Status: "waiting", WindowID: "@8"},
+				{Name: "qa", Color: "yellow", Status: "done", WindowID: "@9"},
+				{Name: "idle1", Color: "purple", Status: "idle", InProcess: true},
+			},
+		}},
+	}
+	anim := NewAnimator()
+	anim.OnSnapshot(snap)
+	out := Render(snap, 50, anim, fixedNowFn)
+
+	// Badge marker still present exactly once; NO bullets (rows carry state).
+	if bytes.Count(out, []byte("⊛")) != 1 {
+		t.Errorf("team marker rendered %d times; want exactly 1", bytes.Count(out, []byte("⊛")))
+	}
+	if bytes.Contains(out, []byte("•")) || bytes.Contains(out, []byte("◦")) {
+		t.Errorf("rows mode must not draw badge bullets\n%q", out)
+	}
+
+	// One 4-space-indented row per member, with the right status glyph.
+	for _, want := range []string{
+		"    " + Icy + "✳" + Reset + " ",      // working
+		"    " + RedPulse + "●" + Reset + " ", // waiting
+		"    " + Yellow + "◆" + Reset + " ",   // done
+		"    " + Dim + "·" + Reset + " ",      // idle
+	} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("missing member row prefix %q in\n%q", want, out)
+		}
+	}
+	// Member names appear in their team colors.
+	if !bytes.Contains(out, []byte(teamMemberColors["blue"]+"impl"+Reset)) {
+		t.Errorf("working member name missing/uncolored\n%q", out)
+	}
+	if !bytes.Contains(out, []byte(teamMemberColors["green"]+"rev"+Reset)) {
+		t.Errorf("waiting member name missing/uncolored\n%q", out)
+	}
+}

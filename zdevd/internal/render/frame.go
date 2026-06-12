@@ -193,6 +193,14 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		} else {
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name])
 		}
+		// Nested member rows (Agent Teams slice B, ZDEV_TEAM_WINDOWS): each
+		// teammate of a team led by this project renders on its own indented
+		// row immediately after the lead's row(s). Knob off → no rows (the
+		// bullets on the badge are the surface). Placed here so it runs under
+		// both the fold and the flat layouts.
+		if TeamRows {
+			renderMemberRows(&buf, teamsByLead[p.Name], width)
+		}
 	}
 
 	if DemoteMode == "fold" {
@@ -290,6 +298,24 @@ var DemoteMode = "dim"
 // project is eligible for fold/dim demotion. Defaults to StaleThresholdSec.
 // cmd/zdev-sidebar overrides via ZDEV_SIDEBAR_DEMOTE_THRESHOLD.
 var DemoteThresholdSec = DemoteThresholdSecDefault
+
+// TeamRows selects how Agent Teams members render (Agent Teams slice B).
+// cmd/zdev-sidebar sets it from ZDEV_TEAM_WINDOWS=1 — the same knob that
+// drives the daemon's team-sweep (each tmux teammate lives in its own
+// window) and lead de-aggregation, so the three move together:
+//
+//	false (default) — members render as colored bullets on the lead's
+//	                  ⊛badge, exactly as phase4-v16..v18 did. Zero byte
+//	                  change for non-team fleets and for teams when the
+//	                  knob is off.
+//	true            — the lead row keeps the ⊛<name> badge as the team
+//	                  marker (no bullets), and each member renders as its
+//	                  own 4-space-indented row beneath the lead with a
+//	                  status glyph in the project-row language.
+//
+// Kill criterion: if nested rows cost more vertical space than they earn
+// in legibility at fleet scale, default stays bullets.
+var TeamRows = false
 
 // renderFooter writes the footer tally per FooterMode. Counts use the
 // bucket's own marker color (waiting orange, dead red, working icy,
@@ -662,6 +688,47 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
+}
+
+// renderMemberRows writes one indented row per teammate of every team led by
+// the just-rendered project (Agent Teams slice B, ZDEV_TEAM_WINDOWS). Layout:
+//
+//	"    " + glyph-color + glyph + Reset + " " + name-color + name + Reset
+//
+// 4-space indent (distinct from the 2-space project indent so members nest
+// visually under the lead), a status glyph in the project-row language
+// (memberGlyph), then the member name in its team color (falling back to no
+// color for unknown colors). The name is truncated to the panel width budget.
+// No rows when groups is empty — the caller only invokes this under TeamRows.
+func renderMemberRows(buf *bytes.Buffer, groups []*proto.TeamGroup, width int) {
+	// Name budget: width minus the 4-space indent, the glyph, and a space.
+	nameCap := width - 6
+	if nameCap < 10 {
+		nameCap = 10
+	}
+	for _, g := range groups {
+		if g == nil {
+			continue
+		}
+		for _, m := range g.Members {
+			glyph, color := memberGlyph(m.Status)
+			buf.WriteString("    ")
+			buf.WriteString(color)
+			buf.WriteString(glyph)
+			buf.WriteString(Reset)
+			buf.WriteString(" ")
+			nameColor, ok := teamMemberColors[m.Color]
+			if ok {
+				buf.WriteString(nameColor)
+			}
+			buf.WriteString(truncateRunes(m.Name, nameCap))
+			if ok {
+				buf.WriteString(Reset)
+			}
+			buf.WriteString(ClearLineEnd)
+			buf.WriteByte('\n')
+		}
+	}
 }
 
 // spaceIf writes a space to buf if buf is non-empty AND the last byte

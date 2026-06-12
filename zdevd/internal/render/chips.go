@@ -159,6 +159,12 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup) {
 	buf.WriteString("⊛")
 	buf.WriteString(truncateRunes(g.Name, 10))
 	buf.WriteString(Reset)
+	// When member rows render (ZDEV_TEAM_WINDOWS), the ⊛<name> badge is the
+	// team MARKER only — per-member state moves to the nested rows, so the
+	// bullets are suppressed here to avoid duplicating the signal.
+	if TeamRows {
+		return
+	}
 	for _, m := range g.Members {
 		c, ok := teamMemberColors[m.Color]
 		if !ok {
@@ -177,6 +183,29 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup) {
 			buf.WriteString("•")
 		}
 		buf.WriteString(Reset)
+	}
+}
+
+// memberGlyph maps a proto.TeamMember.Status string to the (glyph, color)
+// pair used by the nested member rows (Agent Teams slice B). The glyphs are
+// the static project-row language — not the lead row's animated spinner /
+// pulse — because a teammate row is a status readout, not the focal pulse:
+//
+//	"working" → "✳" Icy
+//	"waiting" → "●" RedPulse (blocked on input — the only attention-drawing one)
+//	"done"    → "◆" Yellow
+//	"idle" / "" / unknown → "·" Dim
+func memberGlyph(status string) (glyph, color string) {
+	switch status {
+	case "working":
+		return "✳", Icy
+	case "waiting":
+		return "●", RedPulse
+	case "done":
+		return "◆", Yellow
+	default:
+		// idle, "", and any unrecognised value recede to a dim dot.
+		return "·", Dim
 	}
 }
 
