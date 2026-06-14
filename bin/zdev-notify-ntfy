@@ -1,0 +1,79 @@
+#!/bin/sh
+# zdev → ntfy remote-push adapter. A standalone transport for the
+# ZDEV_NOTIFY_CMD exec seam: zdevd runs this via `sh -c` under a ~1.5s
+# deadline with the payload in ZDEV_NOTIFY_* env vars (see
+# zdevd/internal/hub/notifier.go). It POSTs the fleet notification to an
+# ntfy topic so tier escalations and death alerts reach the operator's
+# phone.
+#
+# Wire it up (sidebar.toml / shell rc / systemd unit env):
+#   export ZDEV_NTFY_URL="https://ntfy.example.com/zdev-fleet"   # REQUIRED
+#   export ZDEV_NTFY_TOKEN="tk_xxx"        # bearer token (STRONGLY advised)
+#   export ZDEV_NOTIFY_CMD="zdev-notify-ntfy"
+#
+# ── SECURITY: do NOT use a public topic ──────────────────────────────
+# ntfy topic names are the only access control on ntfy.sh. The push body
+# carries your PROJECT names (and the daemon's messages can carry branch
+# context). A topic on the public ntfy.sh server is world-readable AND
+# world-writable to anyone who guesses the name — that leaks your fleet's
+# project/branch names and lets strangers spam your phone. ALWAYS point
+# ZDEV_NTFY_URL at a self-hosted server with auth, or at minimum use an
+# access-token-protected reserved topic. This adapter refuses to fall
+# back to a public default precisely so a misconfiguration fails closed
+# (no push) rather than leaking.
+#
+# ── KIND → priority/tags, AGE → urgency ──────────────────────────────
+#   dead        → priority 5 (max), tags skull,rotating_light
+#   permission  → priority 4 (high), tags warning,lock
+#   decision    → priority 4 (high), tags speech_balloon
+#   "" (other)  → priority 3 (default), tags bell
+#   AGE>=900s (the 15m STUCK tier) escalates to priority 5 regardless.
+#
+# Fail-soft: a missing URL, missing curl, or a slow/broken endpoint must
+# never hang or fail the daemon's notify path. We bound curl well under
+# the 1.5s budget and always exit 0.
+
+URL="${ZDEV_NTFY_URL:-}"
+TOKEN="${ZDEV_NTFY_TOKEN:-}"
+USERPW="${ZDEV_NTFY_USERPW:-}"      # optional "user:pass" for basic-auth servers
+TIMEOUT="${ZDEV_NTFY_TIMEOUT:-1.2}" # seconds; kept under the daemon's 1.5s ctx
+
+PROJECT="${ZDEV_NOTIFY_PROJECT:-fleet}"
+MSG="${ZDEV_NOTIFY_MSG:-zdev notification}"
+KIND="${ZDEV_NOTIFY_KIND:-}"
+AGE="${ZDEV_NOTIFY_AGE:-0}"
+case "$AGE" in ''|*[!0-9]*) AGE=0 ;; esac
+
+# No endpoint configured → fail closed (see SECURITY note). Warn once to
+# stderr (the daemon logs nothing from us) and exit clean.
+if [ -z "$URL" ]; then
+  echo "zdev-notify-ntfy: ZDEV_NTFY_URL unset — refusing to guess a public topic (would leak project names); no push sent" >&2
+  exit 0
+fi
+command -v curl >/dev/null 2>&1 || exit 0
+
+case "$KIND" in
+  dead)       PRIORITY=5; TAGS="skull,rotating_light" ;;
+  permission) PRIORITY=4; TAGS="warning,lock" ;;
+  decision)   PRIORITY=4; TAGS="speech_balloon" ;;
+  *)          PRIORITY=3; TAGS="bell" ;;
+esac
+# AGE escalation: the 15m STUCK tier is always max-urgency.
+if [ "$AGE" -ge 900 ]; then
+  PRIORITY=5
+  TAGS="${TAGS},hourglass"
+fi
+
+# Build the curl arg list positionally (POSIX sh — no arrays). Headers
+# carry ntfy's structured fields; the body is the human message.
+set -- -s -S --max-time "$TIMEOUT" --connect-timeout 1 -X POST
+set -- "$@" -H "X-Title: zdev: ${PROJECT}"
+set -- "$@" -H "X-Priority: ${PRIORITY}"
+set -- "$@" -H "X-Tags: ${TAGS}"
+[ -n "$TOKEN" ]  && set -- "$@" -H "Authorization: Bearer ${TOKEN}"
+[ -n "$USERPW" ] && set -- "$@" -u "$USERPW"
+set -- "$@" -d "$MSG" "$URL"
+
+# Fire-and-forget: swallow all output/errors, always succeed.
+curl "$@" >/dev/null 2>&1 || true
+exit 0

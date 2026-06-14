@@ -1,0 +1,84 @@
+#!/bin/sh
+# zdev → Pushover remote-push adapter. A standalone transport for the
+# ZDEV_NOTIFY_CMD exec seam: zdevd runs this via `sh -c` under a ~1.5s
+# deadline with the payload in ZDEV_NOTIFY_* env vars (see
+# zdevd/internal/hub/notifier.go). It POSTs the fleet notification to the
+# Pushover API so tier escalations and death alerts reach the operator's
+# phone.
+#
+# Wire it up (sidebar.toml / shell rc / systemd unit env):
+#   export ZDEV_PUSHOVER_TOKEN="<application api token>"   # REQUIRED
+#   export ZDEV_PUSHOVER_USER="<user or group key>"        # REQUIRED
+#   export ZDEV_PUSHOVER_DEVICE="iphone"                   # optional, target one device
+#   export ZDEV_NOTIFY_CMD="zdev-notify-pushover"
+#
+# ── SECURITY ─────────────────────────────────────────────────────────
+# Pushover is inherently authenticated — delivery requires BOTH your
+# application token and your user/group key, and traffic is HTTPS to
+# api.pushover.net. There is no anonymous/public mode to leak through.
+# Keep the token+user key out of shared dotfiles (use a private env file
+# or systemd `EnvironmentFile=` with 0600 perms); they grant push to your
+# devices.
+#
+# ── KIND → priority/sound, AGE → urgency ─────────────────────────────
+#   dead        → priority 1 (high), sound siren
+#   permission  → priority 1 (high), sound pushover
+#   decision    → priority 0 (normal), sound pushover
+#   "" (other)  → priority 0 (normal), sound pushover
+#   AGE>=900s (the 15m STUCK tier) escalates to priority 1 regardless.
+# We deliberately do NOT use priority 2 (emergency): it requires retry/
+# expire params and forces an explicit ack on the phone, which is push
+# fatigue waiting to happen for a fleet babysitter. Bump to 1 in the env
+# wrapper if you want that for deaths — documented in docs/remote-push.md.
+# (ZDEV_NOTIFY_SOUND is a macOS sound name and not meaningful to
+# Pushover, so we map KIND → a Pushover sound instead.)
+#
+# Fail-soft: missing credentials, missing curl, or a slow/broken endpoint
+# must never hang or fail the daemon's notify path. We bound curl well
+# under the 1.5s budget and always exit 0.
+
+TOKEN="${ZDEV_PUSHOVER_TOKEN:-}"
+USERKEY="${ZDEV_PUSHOVER_USER:-}"
+DEVICE="${ZDEV_PUSHOVER_DEVICE:-}"
+TIMEOUT="${ZDEV_PUSHOVER_TIMEOUT:-1.2}" # seconds; under the daemon's 1.5s ctx
+API="${ZDEV_PUSHOVER_API:-https://api.pushover.net/1/messages.json}"
+
+PROJECT="${ZDEV_NOTIFY_PROJECT:-fleet}"
+MSG="${ZDEV_NOTIFY_MSG:-zdev notification}"
+KIND="${ZDEV_NOTIFY_KIND:-}"
+AGE="${ZDEV_NOTIFY_AGE:-0}"
+case "$AGE" in ''|*[!0-9]*) AGE=0 ;; esac
+
+# No credentials configured → exit clean (warn once to stderr).
+if [ -z "$TOKEN" ] || [ -z "$USERKEY" ]; then
+  echo "zdev-notify-pushover: ZDEV_PUSHOVER_TOKEN / ZDEV_PUSHOVER_USER unset — no push sent" >&2
+  exit 0
+fi
+command -v curl >/dev/null 2>&1 || exit 0
+
+case "$KIND" in
+  dead)       PRIORITY=1; SOUND="siren" ;;
+  permission) PRIORITY=1; SOUND="pushover" ;;
+  decision)   PRIORITY=0; SOUND="pushover" ;;
+  *)          PRIORITY=0; SOUND="pushover" ;;
+esac
+# AGE escalation: the 15m STUCK tier is always high priority.
+if [ "$AGE" -ge 900 ]; then
+  PRIORITY=1
+fi
+
+# Build the curl arg list positionally (POSIX sh — no arrays). Pushover
+# takes form fields; --data-urlencode keeps token/message bytes safe.
+set -- -s -S --max-time "$TIMEOUT" --connect-timeout 1
+set -- "$@" --data-urlencode "token=${TOKEN}"
+set -- "$@" --data-urlencode "user=${USERKEY}"
+set -- "$@" --data-urlencode "title=zdev: ${PROJECT}"
+set -- "$@" --data-urlencode "message=${MSG}"
+set -- "$@" --data-urlencode "priority=${PRIORITY}"
+set -- "$@" --data-urlencode "sound=${SOUND}"
+[ -n "$DEVICE" ] && set -- "$@" --data-urlencode "device=${DEVICE}"
+set -- "$@" "$API"
+
+# Fire-and-forget: swallow all output/errors, always succeed.
+curl "$@" >/dev/null 2>&1 || true
+exit 0
