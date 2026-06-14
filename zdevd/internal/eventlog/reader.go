@@ -1,11 +1,87 @@
 package eventlog
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 )
+
+// scanBufCap is the bufio.Scanner token-buffer ceiling for Scan. Event lines
+// are small (a few hundred bytes), but a corrupted log could carry a giant
+// line with no newline; cap the buffer so one bad line can't exhaust memory.
+// A line longer than this is treated as malformed and skipped (fail-soft).
+const scanBufCap = 1 * 1024 * 1024
+
+// Scan reads the event log forward (oldest-first) and returns every Event
+// whose timestamp is at or after `since` (unix seconds). It is the typed,
+// chronological counterpart to TailLines — the shared data-layer reader the
+// roadmap's S3 review gauge / `--since` queries build on.
+//
+// Rotation-aware like TailLines: it reads `path+".1"` (older) first, then
+// `path` (newer), so a `since` that reaches back across a rotation still
+// returns a contiguous chronological slice. Within each file, lines are in
+// append (chronological) order, so the concatenation is globally ordered.
+//
+// Fail-soft parsing: blank lines and lines that don't parse as an Event
+// (malformed JSON, unparseable timestamp, over-long line) are skipped
+// silently rather than aborting the scan — a single corrupt line in a
+// forensic log must not blind every reader after it. I/O errors other than
+// a missing file propagate.
+//
+// since == 0 returns every well-formed event. A zero-valued Event.Ts
+// (Unix() == negative for the zero time) is filtered out unless since is
+// likewise non-positive, which callers never pass in practice.
+//
+// The returned slice is freshly allocated; callers may retain or mutate it.
+func Scan(path string, since int64) ([]Event, error) {
+	var out []Event
+	if err := scanFile(path+".1", since, &out); err != nil {
+		return nil, err
+	}
+	if err := scanFile(path, since, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// scanFile appends the since-filtered, well-formed events from a single file
+// to *out in file order. A missing file is not an error (nil return, *out
+// untouched) — the log may not have rotated yet, or the daemon may never have
+// run. Other open/read errors propagate.
+func scanFile(path string, since int64, out *[]Event) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("eventlog: open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), scanBufCap)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var ev Event
+		if err := json.Unmarshal(line, &ev); err != nil {
+			continue // malformed line — skip fail-soft
+		}
+		if ev.Ts.Unix() < since {
+			continue
+		}
+		*out = append(*out, ev)
+	}
+	if err := sc.Err(); err != nil {
+		return fmt.Errorf("eventlog: scan %s: %w", path, err)
+	}
+	return nil
+}
 
 // tailChunkSize is the read-backwards window. 4 KB is comfortably larger
 // than any single Event line and small enough that we don't over-read for
