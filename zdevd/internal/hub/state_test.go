@@ -1067,11 +1067,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v20 (TeamMember.Status +
-	// WindowID replaced the Idle/Waiting bools for Agent Teams slice B).
-	t.Run("H_schema_version_is_phase4_v20", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v20" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v20")
+	// Test H: proto.SchemaVersion must be phase4-v21 (Snapshot.ReviewGauge
+	// added for the S3 landing-readiness gauge, roadmap NOW#4).
+	t.Run("H_schema_version_is_phase4_v21", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v21" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v21")
 		}
 	})
 }

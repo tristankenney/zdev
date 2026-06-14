@@ -79,8 +79,8 @@ func TestServeDiag(t *testing.T) {
 	if r.Schema != proto.SchemaVersion {
 		t.Errorf("Reply.Schema = %q, want %q", r.Schema, proto.SchemaVersion)
 	}
-	if r.Schema != "phase4-v20" {
-		t.Errorf("Reply.Schema = %q, want %q (phase4-v20 bump for Agent Teams slice B)", r.Schema, "phase4-v20")
+	if r.Schema != "phase4-v21" {
+		t.Errorf("Reply.Schema = %q, want %q (phase4-v21 bump for the S3 review gauge)", r.Schema, "phase4-v21")
 	}
 	if r.Socket != path {
 		t.Errorf("Reply.Socket = %q, want %q", r.Socket, path)

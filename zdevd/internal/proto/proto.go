@@ -158,7 +158,20 @@ import (
 // it was committed under its own message. The change is correct and gated; this
 // comment + the later doc commit carry the story a grep for the bump won't find
 // in those subjects.
-const SchemaVersion = "phase4-v20"
+//
+// phase4-v21 (S3 review gauge, roadmap NOW#4): adds Snapshot.ReviewGauge
+// (*ReviewGauge) — the landing-readiness gauge that replaces the demoted
+// sidebar triage strip. Per-repo READY / NEEDS-FIX / WILL-ROT bucket counts
+// plus the contributing rows, grouped by resolved owner/repo (agora-a/b/c →
+// one repo) and ordered longest-rotting-first. Decoupled entirely from the
+// flaky `finished` glyph — it reads PROpen/CI/FailingChecks/PendingChecks/
+// DirtyCount, all already on the wire. The field is a pointer and omitempty:
+// nil = empty gauge (nothing ready/needs-fix/will-rot), which is exactly the
+// kill-criterion observable (does the gauge ever populate / move). A v20
+// renderer ignores the field silently (no gauge row), so this is forward-
+// compatible in practice, but bumped for strict-equality validation. Restart
+// all zdev-sidebar-render instances after deploying the new zdevd binary.
+const SchemaVersion = "phase4-v21"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -256,6 +269,13 @@ type Snapshot struct {
 	// feature is unused — non-team fleets see no change.
 	TeamGroups []TeamGroup `json:"team_groups,omitempty"`
 
+	// ReviewGauge (phase4-v21) is the S3 landing-readiness gauge: per-repo
+	// READY / NEEDS-FIX / WILL-ROT counts plus contributing rows, grouped by
+	// resolved owner/repo and ordered longest-rotting-first. nil when nothing
+	// in the fleet is ready-to-land, needs-a-fix, or will-rot — that nil/
+	// non-nil distinction IS the gauge's kill-criterion observable. Computed
+	// once per snapshot by hub.computeReviewGauge.
+	ReviewGauge *ReviewGauge `json:"review_gauge,omitempty"`
 	// TeamRows (phase4-v20) is the DAEMON's ZDEV_TEAM_WINDOWS state. The
 	// renderer must derive member-row layout from THIS flag, never its own
 	// environment: CursorRow indexes the flattened row list (FlatRows),
@@ -307,6 +327,57 @@ type TeamMember struct {
 	// switching sessions.
 	WindowID string `json:"window_id,omitempty"`
 }
+
+// ReviewGauge (phase4-v21, roadmap NOW#4) is the landing-readiness gauge —
+// the permanent occupant of the slot the demoted triage strip vacated. It
+// answers "what can I ship right now, longest-rotting first" across a fleet of
+// worktrees, the one signal no per-tool agent view models (each reports only on
+// agents IT launched; nobody models review-bandwidth across repos).
+//
+// Repos are grouped by resolved owner/repo so agora-a/b/c collapse into one
+// entry, and ordered longest-rotting-first (ReviewRepo.OldestSec desc, repo
+// name as the stable tiebreak). Empty/nil when nothing is ready, needs-a-fix,
+// or will-rot.
+type ReviewGauge struct {
+	Repos []ReviewRepo `json:"repos,omitempty"`
+}
+
+// ReviewRepo is one resolved repository's review debt. Counts are the bucket
+// tallies; Rows carries the contributing project rows (ordered the same way).
+type ReviewRepo struct {
+	Repo string `json:"repo"` // resolved "owner/repo", or the project name when unresolved
+	// Ready: PR open + CI green + clean tree — landable right now.
+	Ready int `json:"ready"`
+	// NeedsFix: PR open with at least one failing check.
+	NeedsFix int `json:"needs_fix,omitempty"`
+	// WillRot: uncommitted work (DirtyCount>0) on a non-default branch.
+	WillRot int `json:"will_rot,omitempty"`
+	// OldestSec is the age in seconds of this repo's longest-rotting row —
+	// the repo-ordering sort key. Proxy clock for v1: now - LastActivityTS
+	// (see ReviewRow.AgeSec). 0 when no contributing row carried an activity
+	// timestamp.
+	OldestSec int64       `json:"oldest_sec,omitempty"`
+	Rows      []ReviewRow `json:"rows,omitempty"`
+}
+
+// ReviewRow is one project's contribution to a repo's review debt.
+type ReviewRow struct {
+	Project string `json:"project"` // canonical slash-form project name
+	Bucket  string `json:"bucket"`  // ReviewBucket* — "ready" | "needs-fix" | "will-rot"
+	// AgeSec is how long this row has rotted, as now - LastActivityTS. v1
+	// proxy clock: it measures untouched-time, not the precise "ready-since"
+	// (PR-open + CI-green + clean-tree all true), which is a deliberate
+	// fast-follow over eventlog.Scan once the gauge earns its keep. 0 when
+	// LastActivityTS is unknown.
+	AgeSec int64 `json:"age_sec,omitempty"`
+}
+
+// Review bucket discriminators for ReviewRow.Bucket.
+const (
+	ReviewBucketReady    = "ready"     // PR open + CI green + clean tree
+	ReviewBucketNeedsFix = "needs-fix" // PR open + failing checks
+	ReviewBucketWillRot  = "will-rot"  // dirty tree on a non-default branch
+)
 
 // Project is the per-row metadata in a Snapshot.
 //
