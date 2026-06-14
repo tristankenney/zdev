@@ -175,8 +175,17 @@ type NotifSeen struct {
 // observes a directory CREATE/REMOVE OR when the daemon initially shells out
 // to `zdev --list-projects`. Names are the canonical project names; the
 // hub maps them to tmux session names by replacing "/" with "-".
+//
+// Repos (S3 review gauge, phase4-v21) carries the Lister's resolved
+// owner/repo for each name (projects.Lister.Repo) so the hub can group the
+// review gauge by repository (agora-a/b/c → one repo) without an impure
+// resolver call during buildSnapshot. Additive and optional: a nil/empty map
+// (e.g. when repo resolution is disabled) leaves the gauge ungrouped — each
+// project falls back to its own name as the repo key. Keyed by the canonical
+// project name (same key space as Names).
 type ProjectListChanged struct {
 	Names []string
+	Repos map[string]string
 }
 
 func (DataRefresh) isEvent()        {}

@@ -127,6 +127,64 @@ func TestLister_RepoCache(t *testing.T) {
 	}
 }
 
+// TestLister_RefreshEmitsRepos verifies the resolved owner/repo map rides the
+// ProjectListChanged event (S3 review-gauge grouping) — the producer end of the
+// Lister.Refresh → ProjectListChanged → applyEvent → st.projectRepos chain.
+func TestLister_RefreshEmitsRepos(t *testing.T) {
+	workspace := t.TempDir()
+	for _, p := range []string{"agora-a", "agora-b", "missing"} {
+		_ = osMkdirAll(t, workspace, p)
+	}
+
+	orig := resolverExecFunc
+	defer func() { resolverExecFunc = orig }()
+	resolverExecFunc = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		var dir string
+		for i, a := range args {
+			if (a == "-R" || a == "-C") && i+1 < len(args) {
+				dir = args[i+1]
+			}
+		}
+		// agora-a and agora-b resolve to the SAME repo — the agora-a/b/c → one
+		// repo grouping the gauge depends on.
+		if name == "sl" && (dir == workspace+"/agora-a" || dir == workspace+"/agora-b") {
+			return []byte("https://github.com/zitcha/agora.git\n"), nil
+		}
+		return nil, errors.New("no remote")
+	}
+
+	var (
+		mu   sync.Mutex
+		got  tmuxctl.ProjectListChanged
+		seen bool
+	)
+	l := NewLister(func(ev tmuxctl.Event) {
+		if plc, ok := ev.(tmuxctl.ProjectListChanged); ok {
+			mu.Lock()
+			got, seen = plc, true
+			mu.Unlock()
+		}
+	}, workspace)
+	l.execFunc = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return []byte("agora-a\nagora-b\nmissing\n"), nil
+	}
+	if err := l.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !seen {
+		t.Fatal("Refresh emitted no ProjectListChanged")
+	}
+	if got.Repos["agora-a"] != "zitcha/agora" || got.Repos["agora-b"] != "zitcha/agora" {
+		t.Errorf("Repos = %v; want agora-a and agora-b both → zitcha/agora", got.Repos)
+	}
+	if got.Repos["missing"] != "" {
+		t.Errorf("Repos[missing] = %q; want \"\" (known-but-unresolvable)", got.Repos["missing"])
+	}
+}
+
 func TestLister_RefreshError(t *testing.T) {
 	l := NewLister(func(tmuxctl.Event) {}, "")
 	l.execFunc = func(ctx context.Context, name string, args ...string) ([]byte, error) {

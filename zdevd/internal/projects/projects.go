@@ -139,7 +139,19 @@ func (l *Lister) Refresh(ctx context.Context) error {
 
 	cp := make([]string, len(names))
 	copy(cp, names)
-	l.submit(tmuxctl.ProjectListChanged{Names: cp})
+	// Carry the resolved owner/repo map to the hub (S3 review gauge) so it can
+	// group by repository without an impure resolver call mid-snapshot. Copy
+	// so the hub never aliases the cache we just replaced. nil when repo
+	// resolution is disabled (workspace == "") — the gauge then falls back to
+	// per-name grouping.
+	var reposCopy map[string]string
+	if len(repos) > 0 {
+		reposCopy = make(map[string]string, len(repos))
+		for k, v := range repos {
+			reposCopy[k] = v
+		}
+	}
+	l.submit(tmuxctl.ProjectListChanged{Names: cp, Repos: reposCopy})
 	return nil
 }
 

@@ -93,6 +93,7 @@ type state struct {
 	prCounts         map[string]prCount     // last-known PR counts per project (for edge detect)
 	celebrateUntil   map[string]int64       // unix-second deadline for celebration; 0 = none
 	projectListNames []string               // canonical names from ProjectListChanged
+	projectRepos     map[string]string      // canonical name → resolved "owner/repo" (S3 review-gauge grouping); empty when unresolved
 
 	// showUnmanaged mirrors config.ShowUnmanaged. When true, buildSnapshot
 	// appends tmux sessions without a projects-file entry below the managed
@@ -324,6 +325,7 @@ func newState() *state {
 		projectData:         make(map[string]projectData),
 		prCounts:            make(map[string]prCount),
 		celebrateUntil:      make(map[string]int64),
+		projectRepos:        make(map[string]string),
 		paneCaptureFailures: make(map[string]int),
 		sessionSocket:       make(map[string]string),
 		agents:              agents.NewRegistry(agents.Builtin()),
@@ -944,6 +946,15 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			evictKey(k)
 		}
 		s.projectListNames = append(s.projectListNames[:0], e.Names...)
+		// Replace the repo map wholesale (S3 review gauge). A fresh map each
+		// time so a project that lost its remote between Refreshes doesn't keep
+		// a stale "owner/repo" entry. Pure store — no resolution happens here
+		// (the Lister did that off the hub goroutine); buildSnapshot reads this
+		// to group the gauge by repository.
+		s.projectRepos = make(map[string]string, len(e.Repos))
+		for k, v := range e.Repos {
+			s.projectRepos[k] = v
+		}
 
 	case tmuxctl.PaneCommandChanged:
 		// DATA-03: populate ShellCmd ONLY when the pane title is "shell"

@@ -1076,6 +1076,36 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 	})
 }
 
+// TestApplyEvent_ProjectListChanged_StoresRepos verifies the consumer end of
+// the S3 repo-threading chain (Lister.Refresh → ProjectListChanged →
+// applyEvent → st.projectRepos): the resolved owner/repo map lands in state,
+// and a later Refresh that drops a project replaces the map wholesale rather
+// than leaving a stale entry behind.
+func TestApplyEvent_ProjectListChanged_StoresRepos(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.ProjectListChanged{
+		Names: []string{"zitcha/agora-a", "zitcha/agora-b"},
+		Repos: map[string]string{
+			"zitcha/agora-a": "zitcha/agora",
+			"zitcha/agora-b": "zitcha/agora",
+		},
+	}, nil)
+	if s.projectRepos["zitcha/agora-a"] != "zitcha/agora" ||
+		s.projectRepos["zitcha/agora-b"] != "zitcha/agora" {
+		t.Errorf("projectRepos = %v; want both agora-a/b → zitcha/agora", s.projectRepos)
+	}
+
+	// agora-b drops out of the workspace; the new event omits it. The map must
+	// not retain the stale "agora-b → zitcha/agora" entry.
+	applyEvent(s, tmuxctl.ProjectListChanged{
+		Names: []string{"zitcha/agora-a"},
+		Repos: map[string]string{"zitcha/agora-a": "zitcha/agora"},
+	}, nil)
+	if _, ok := s.projectRepos["zitcha/agora-b"]; ok {
+		t.Errorf("projectRepos retained stale agora-b entry after it dropped: %v", s.projectRepos)
+	}
+}
+
 // --- 260509-gfz: CIRefresh tests ---
 
 // TestApplyEvent_CIRefresh_WritesProjectData verifies that CIRefresh populates
