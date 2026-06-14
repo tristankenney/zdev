@@ -1,0 +1,68 @@
+{
+    "v": 1,
+    "type": "snapshot",
+    "schema": "phase4-v21",
+    "seq": 21,
+    "sent_at": "2026-05-04T12:00:00Z",
+    "sessions": [
+        "zitcha/agora-a",
+        "zitcha/agora-b",
+        "zitcha/backend",
+        "solo/tool"
+    ],
+    "projects": [
+        {
+            "name": "zitcha/agora-a",
+            "status": "alive",
+            "branch": "feature/x",
+            "pr_open": 1
+        },
+        {
+            "name": "zitcha/agora-b",
+            "status": "alive",
+            "branch": "feature/y",
+            "pr_open": 1
+        },
+        {
+            "name": "zitcha/backend",
+            "status": "alive",
+            "branch": "feature/z",
+            "pr_open": 1
+        },
+        {
+            "name": "solo/tool",
+            "status": "alive",
+            "branch": "feature/w",
+            "dirty_count": 3
+        }
+    ],
+    "current_session": "",
+    "review_gauge": {
+        "repos": [
+            {
+                "repo": "zitcha/agora",
+                "ready": 2,
+                "oldest_sec": 1860,
+                "rows": [
+                    {"project": "zitcha/agora-a", "bucket": "ready", "age_sec": 1860},
+                    {"project": "zitcha/agora-b", "bucket": "ready", "age_sec": 900}
+                ]
+            },
+            {
+                "repo": "solo/tool",
+                "will_rot": 1,
+                "oldest_sec": 720,
+                "rows": [
+                    {"project": "solo/tool", "bucket": "will-rot", "age_sec": 720}
+                ]
+            },
+            {
+                "repo": "zitcha/backend",
+                "needs_fix": 1,
+                "rows": [
+                    {"project": "zitcha/backend", "bucket": "needs-fix", "age_sec": 0}
+                ]
+            }
+        ]
+    }
+}

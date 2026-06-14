@@ -142,6 +142,16 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// is preserved; the section is the ranking surface.
 	renderTriageSection(&buf, snap, width, animator, nowFn)
 
+	// Review gauge (phase4-v21, roadmap NOW#4): the S3 landing-readiness
+	// gauge — the permanent occupant of the slot the demoted triage strip
+	// vacated. Like the strip it renders ZERO rows when disabled
+	// (ZDEV_SIDEBAR_REVIEW unset, the default) or when the gauge is empty,
+	// so quiet/gauge-off sidebars are byte-identical to the pre-gauge layout;
+	// when populated it adds up to reviewGaugeSectionMax repo rows plus one
+	// closing divider, shifting the project section down by exactly that. The
+	// main list is never reordered.
+	renderReviewGauge(&buf, snap, width)
+
 	// Team badge lookup (phase4-v16, slice 4): lead project row → its
 	// team. Rendered inline on the lead's row so click-row math is
 	// untouched; multiple teams led from one row concatenate.

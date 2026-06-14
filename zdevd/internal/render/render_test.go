@@ -70,6 +70,12 @@ var fixtureCases = []struct {
 	{"cursor-active-row-0", "cursor-active-row-0", 0, 0, ""},
 	// cursor-inactive: CursorActive=false → pixel-identical to a snapshot with no cursor fields.
 	{"cursor-inactive", "cursor-inactive", 0, 0, ""},
+	// review-gauge: the S3 landing-readiness gauge rendered in the freed strip
+	// slot (ZDEV_SIDEBAR_REVIEW=1). Exercises all three bucket glyphs across
+	// repos ordered longest-rotting-first. Enabled via the prefix check in the
+	// loop below; every other case leaves ReviewGaugeEnabled at its default off,
+	// so their goldens are byte-identical to before this feature.
+	{"review-gauge", "review-gauge", 0, 0, ""},
 }
 
 // TestVisualParity exercises the Go renderer against 14 VIS + 10 DATA golden
@@ -120,6 +126,15 @@ func TestVisualParity(t *testing.T) {
 				orig := DemoteMode
 				DemoteMode = tc.demoteMode
 				defer func() { DemoteMode = orig }()
+			}
+
+			// The review-gauge fixture is the only case that enables the gauge
+			// (ZDEV_SIDEBAR_REVIEW=1). Restore after so the default-off
+			// invariant holds for every other case.
+			if tc.prefix == "review-gauge" {
+				orig := ReviewGaugeEnabled
+				ReviewGaugeEnabled = true
+				defer func() { ReviewGaugeEnabled = orig }()
 			}
 
 			got := Render(&snap, 50, anim, nowFnFixed)

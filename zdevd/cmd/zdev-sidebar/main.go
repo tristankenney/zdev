@@ -241,6 +241,10 @@ func run() error {
 	// scale the strip duplicates main-list rows without adding signal).
 	render.TriageStripEnabled = os.Getenv("ZDEV_SIDEBAR_TRIAGE") == "1"
 
+	// Review gauge opt-in (default off — roadmap NOW#4): the S3 landing-
+	// readiness gauge in the freed strip slot. Off ⇒ byte-identical to today.
+	render.ReviewGaugeEnabled = os.Getenv("ZDEV_SIDEBAR_REVIEW") == "1"
+
 	// Footer style (dogfood #4): full (worded, default) | compact
 	// (legacy glyph tally) | off. Unknown values fall back to full.
 	switch os.Getenv("ZDEV_SIDEBAR_FOOTER") {
