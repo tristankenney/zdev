@@ -59,6 +59,9 @@ jobs:
       - name: codex notify adapter contract
         run: bash scripts/test-codex-notify.sh
 
+      - name: remote-push notify adapter contract
+        run: bash scripts/test-notify-adapters.sh
+
       - name: make test (lint + anti-fork gates + go test -race)
         run: make -C zdevd test
 
