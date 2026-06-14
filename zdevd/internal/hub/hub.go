@@ -974,6 +974,49 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	if !teamGroupsEqual(a.TeamGroups, b.TeamGroups) {
 		return false
 	}
+	// ReviewGauge (phase4-v21): a bucket flip, a new/removed ready PR, or a
+	// genuine reorder must publish so the gauge surface stays correct.
+	if !reviewGaugeEqual(a.ReviewGauge, b.ReviewGauge) {
+		return false
+	}
+	return true
+}
+
+// reviewGaugeEqual deep-compares two review gauges down to each row's bucket so
+// a row changing bucket (needs-fix → ready, say), a new/removed ready PR, or a
+// repo entering/leaving the gauge all republish. computeReviewGauge orders
+// repos and rows deterministically, so positional comparison is sufficient.
+//
+// The monotonic age fields (ReviewRepo.OldestSec, ReviewRow.AgeSec) are
+// DELIBERATELY EXCLUDED — they are now-LastActivityTS and tick every second,
+// so including them would republish on every 1Hz heartbeat whenever the gauge
+// is non-empty, the exact idempotent-poll storm snapshotEqualsCore exists to
+// prevent (identical reasoning to DaemonLastEventTS's exclusion above). A pure
+// age tick never reorders the gauge (an older timestamp stays older), so every
+// MEANINGFUL change is still caught by the structural comparison.
+func reviewGaugeEqual(a, b *proto.ReviewGauge) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if len(a.Repos) != len(b.Repos) {
+		return false
+	}
+	for i := range a.Repos {
+		ra, rb := a.Repos[i], b.Repos[i]
+		if ra.Repo != rb.Repo ||
+			ra.Ready != rb.Ready ||
+			ra.NeedsFix != rb.NeedsFix ||
+			ra.WillRot != rb.WillRot ||
+			len(ra.Rows) != len(rb.Rows) {
+			return false
+		}
+		for j := range ra.Rows {
+			if ra.Rows[j].Project != rb.Rows[j].Project ||
+				ra.Rows[j].Bucket != rb.Rows[j].Bucket {
+				return false
+			}
+		}
+	}
 	return true
 }
 

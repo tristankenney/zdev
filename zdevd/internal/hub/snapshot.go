@@ -304,7 +304,152 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// TeamRows: the daemon's knob is the single row-order authority —
 		// the renderer reads this, not its own env (see proto.Snapshot).
 		TeamRows: st.teamWindows,
+		// ReviewGauge (phase4-v21): the S3 landing-readiness gauge, computed
+		// from the rows just assembled and grouped by resolved repo. nil when
+		// the fleet carries no review debt.
+		ReviewGauge: computeReviewGauge(projects, st.projectRepos, now),
 	}
+}
+
+// computeReviewGauge builds the S3 landing-readiness gauge (proto.ReviewGauge)
+// from the already-assembled project rows. It is the load-bearing differentiator:
+// "what can I ship right now, longest-rotting first", grouped across a fleet of
+// worktrees that no per-tool agent view models.
+//
+// Each project is classified into at most one bucket (classifyReview), then
+// rows are grouped by resolved repo (repos[name], so agora-a/b/c collapse into
+// one entry; falls back to the project name when unresolved). Repos are ordered
+// longest-rotting-first (OldestSec desc, repo name as the stable tiebreak — the
+// same determinism discipline RigGroups needed), and rows within a repo the
+// same. Returns nil when nothing is ready, needs-a-fix, or will-rot — the
+// nil/non-nil distinction is the gauge's kill-criterion observable on the wire.
+//
+// Decoupled ENTIRELY from the flaky `finished` glyph (the signal that killed
+// the triage strip): classification reads only PROpen / CI / FailingChecks /
+// PendingChecks / DirtyCount / Branch.
+//
+// now is threaded (no time.Now() here) so the age proxy is deterministic per
+// pass. AgeSec/OldestSec are the v1 proxy clock (now - LastActivityTS); the
+// precise ready-since clock (derived by scanning the eventlog for when PR-open +
+// CI-green + clean-tree first all held) is a documented fast-follow on
+// eventlog.Scan, not a v1 blocker.
+func computeReviewGauge(projects []proto.Project, repos map[string]string, now int64) *proto.ReviewGauge {
+	type repoAgg struct {
+		repo                     string
+		ready, needsFix, willRot int
+		oldest                   int64
+		rows                     []proto.ReviewRow
+	}
+	byRepo := make(map[string]*repoAgg)
+	var order []string // first-seen repo keys; re-sorted into final order below
+	for _, p := range projects {
+		bucket, ok := classifyReview(p)
+		if !ok {
+			continue
+		}
+		var age int64
+		if p.LastActivityTS > 0 && now > p.LastActivityTS {
+			age = now - p.LastActivityTS
+		}
+		key := p.Name
+		if r := repos[p.Name]; r != "" {
+			key = r
+		}
+		agg := byRepo[key]
+		if agg == nil {
+			agg = &repoAgg{repo: key}
+			byRepo[key] = agg
+			order = append(order, key)
+		}
+		switch bucket {
+		case proto.ReviewBucketReady:
+			agg.ready++
+		case proto.ReviewBucketNeedsFix:
+			agg.needsFix++
+		case proto.ReviewBucketWillRot:
+			agg.willRot++
+		}
+		agg.rows = append(agg.rows, proto.ReviewRow{Project: p.Name, Bucket: bucket, AgeSec: age})
+		if age > agg.oldest {
+			agg.oldest = age
+		}
+	}
+	if len(byRepo) == 0 {
+		return nil
+	}
+	out := make([]proto.ReviewRepo, 0, len(byRepo))
+	for _, key := range order {
+		agg := byRepo[key]
+		rows := agg.rows
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].AgeSec != rows[j].AgeSec {
+				return rows[i].AgeSec > rows[j].AgeSec // longest-rotting first
+			}
+			return rows[i].Project < rows[j].Project // stable tiebreak
+		})
+		out = append(out, proto.ReviewRepo{
+			Repo:      agg.repo,
+			Ready:     agg.ready,
+			NeedsFix:  agg.needsFix,
+			WillRot:   agg.willRot,
+			OldestSec: agg.oldest,
+			Rows:      rows,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].OldestSec != out[j].OldestSec {
+			return out[i].OldestSec > out[j].OldestSec // longest-rotting repo first
+		}
+		return out[i].Repo < out[j].Repo // stable tiebreak — no byte flap on equal ages
+	})
+	return &proto.ReviewGauge{Repos: out}
+}
+
+// classifyReview assigns a project to at most one review-gauge bucket. Order is
+// a precedence: a PR with failing checks is NEEDS-FIX even if also dirty (the
+// PR problem is the actionable one); a clean, CI-green open PR is READY; dirty
+// work on a feature branch that isn't either is WILL-ROT. Returns ("", false)
+// when the project carries no review debt.
+func classifyReview(p proto.Project) (string, bool) {
+	if p.PROpen > 0 && len(p.FailingChecks) > 0 {
+		return proto.ReviewBucketNeedsFix, true
+	}
+	if p.PROpen > 0 && reviewCIGreen(p) && p.DirtyCount == 0 {
+		return proto.ReviewBucketReady, true
+	}
+	if p.DirtyCount > 0 && !isDefaultBranch(p.Branch) {
+		return proto.ReviewBucketWillRot, true
+	}
+	return "", false
+}
+
+// reviewCIGreen reports whether an open PR's checks are landable: no failing
+// and no pending checks, and CI either concluded success or was never
+// configured. JUDGMENT CALL (v1): a PR with NO CI signal at all (CIStatus=="" &&
+// CIConclusion=="") counts as green — plenty of repos run no CI, and with
+// nothing red or pending there is nothing blocking the land. A failure or
+// in-progress conclusion is never green.
+func reviewCIGreen(p proto.Project) bool {
+	if len(p.FailingChecks) > 0 || len(p.PendingChecks) > 0 {
+		return false
+	}
+	if p.CIStatus == "" && p.CIConclusion == "" {
+		return true
+	}
+	return p.CIConclusion == "success"
+}
+
+// isDefaultBranch reports whether b is a branch a repo lands ONTO rather than
+// rots on. The repo's true default branch isn't on the wire, so this is a
+// heuristic set; an empty/unknown branch is treated as default so WILL-ROT is
+// never raised on a branch we can't confirm is a feature branch (conservative —
+// avoids false "your work will rot" noise on detached/unknown checkouts).
+func isDefaultBranch(b string) bool {
+	switch b {
+	case "", "main", "master", "develop", "trunk":
+		return true
+	}
+	return false
 }
 
 // teamGroupsFor converts the hub's Agent Teams state to wire TeamGroups,
