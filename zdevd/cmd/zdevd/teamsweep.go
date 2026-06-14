@@ -23,9 +23,14 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/teams"
 )
 
-// teamSweepJoinWait bounds the mid-join poll. Observed joins resolve within
-// ~1-2s; 5s covers a loaded machine without leaving hook processes lingering.
-const teamSweepJoinWait = 5 * time.Second
+// teamSweepJoinWait bounds the mid-join poll. A single hook fire now corrals
+// the WHOLE team (the loop keeps polling as members register, not just until
+// the first sweep), so this must outlast the slowest config write under a
+// rapid multi-spawn: 5s stranded a second teammate whose tmuxPaneId landed
+// late on a busy machine (dogfood 2026-06-15). 15s covers it; the poll exits
+// early the instant no join is in flight, so the wait only bites a genuine
+// straggler.
+const teamSweepJoinWait = 15 * time.Second
 
 // teamWindowsEnabled gates the whole feature (ZDEV_TEAM_WINDOWS=1). Read in
 // the cmd layer — internal/ never reads the environment. config.ApplyUserEnv
@@ -45,22 +50,24 @@ func (e *layoutEngine) teamSweep(windowID, teamsDir string) int {
 	for {
 		members, joinPending := memberPanes(teams.LoadAll(teamsDir))
 		if len(members) > 0 {
-			swept := false
 			if windowID != "" {
-				swept = e.sweepWindow(ctx, windowID, members)
+				e.sweepWindow(ctx, windowID, members)
 			} else {
 				for _, wid := range e.allWindows(ctx) {
-					if e.sweepWindow(ctx, wid, members) {
-						swept = true
-					}
+					e.sweepWindow(ctx, wid, members)
 				}
 			}
-			if swept {
-				return 0
-			}
 		}
-		// Nothing relocated. Keep waiting only while a join is visibly in
-		// flight — a human split with no pending join exits immediately.
+		// Stop only when no teammate join is still in flight (everything
+		// placeable has been placed) or the join window elapsed. Crucially
+		// we do NOT stop merely because a sweep succeeded: when teammates
+		// spawn in rapid succession (a multi-agent spawn in one message),
+		// the first member's pane lands and sweeps while the second is still
+		// mid-join with an empty tmuxPaneId. Returning here abandoned that
+		// second teammate to its OWN after-split-window hook — which does not
+		// fire reliably under load — and stranded it in the lead's window
+		// (dogfood 2026-06-15). One hook fire now corrals the whole team:
+		// we keep polling as members register, up to the deadline.
 		if !joinPending || time.Now().After(deadline) {
 			return 0
 		}
