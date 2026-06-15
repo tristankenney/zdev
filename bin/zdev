@@ -158,6 +158,8 @@ Usage:
   zdev next                      Jump to the session that most needs you
                                  (tmux: bind-key n run-shell "zdev next")
   zdev triage                    Show the ranked attention queue
+  zdev review [--json|--tsv]      Show the landing-readiness queue
+                                 (per-repo ready/fix/rot, longest-rotting first)
   zdev ack [--all|<project>]     Acknowledge statuses — like "read all"
                                  (tmux: bind -n M-r run-shell "zdev ack --all")
   zdev notify {mute [DUR]|unmute|toggle|status}
@@ -610,6 +612,14 @@ case "$1" in
         # Human-readable ranked attention queue (same ordering zdev next
         # consumes). Pure passthrough to the daemon snapshot.
         exec zdev-show triage
+        ;;
+    review)
+        # Human-readable landing-readiness queue (S3): per-repo READY /
+        # NEEDS-FIX / WILL-ROT counts, longest-rotting first. Subargs
+        # (--json, --tsv) pass through to zdev-show. Pure passthrough to the
+        # daemon snapshot.
+        shift
+        exec zdev-show review "$@"
         ;;
     ack)
         shift

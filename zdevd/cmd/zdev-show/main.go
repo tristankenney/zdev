@@ -148,6 +148,30 @@ func run() int {
 		return 0
 	}
 
+	// `review` (S3) is the human-readable landing-readiness queue: one line
+	// per repo in daemon rank order (longest-rotting-first), with the
+	// READY / NEEDS-FIX / WILL-ROT bucket counts and the repo's oldest age.
+	// `review --tsv` is the fzf/machine variant (<repo>\t<colored display>);
+	// `review --json` is the structured gauge — the kill-criterion observable
+	// a dogfood week reads: `[]` means the gauge never populated (the bet that
+	// review-bandwidth is the bottleneck is falsified), non-empty means it did.
+	if os.Args[1] == "review" {
+		switch {
+		case len(os.Args) >= 3 && os.Args[2] == "--tsv":
+			fmt.Print(formatReviewTSV(snap))
+		case len(os.Args) >= 3 && os.Args[2] == "--json":
+			out, err := formatReviewJSON(snap)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+				return 1
+			}
+			fmt.Println(out)
+		default:
+			fmt.Print(formatReview(snap))
+		}
+		return 0
+	}
+
 	// `list --json` (S1): every project row as structured JSON — the
 	// whole-fleet counterpart to triage --json.
 	if os.Args[1] == "list" && len(os.Args) >= 3 && os.Args[2] == "--json" {
@@ -200,6 +224,13 @@ func formatLegend() string {
 	row(orange+"⚡"+reset, "cheap wait — y/n or numbered prompt, seconds to answer")
 	row(redPulse+"✗"+reset, "dead — tops the queue")
 	row(redPulse+"●"+reset+" / "+yellow+"◆"+reset, "decision wait / finished-for-review")
+
+	section("Review gauge (ZDEV_SIDEBAR_REVIEW=1 / zdev review)")
+	row(green+"◆"+reset, "repo has PR(s) ready to land — CI green + clean tree")
+	row(orange+"✗"+reset, "repo has open PR(s) with failing checks (needs a fix)")
+	row(yellow+"⌁"+reset, "repo has uncommitted work on a feature branch (will rot)")
+	row(green+"2 ready"+reset+dim+" · "+reset+orange+"1 fix"+reset+dim+" · "+reset+yellow+"1 rot"+reset, "per-repo bucket counts (non-zero only)")
+	row(dim+"31m"+reset, "longest-rotting age in the repo — the queue is ordered by it, oldest first")
 
 	section("Branch chip")
 	row("feature/foo… ", "current branch (truncated to fit)")
@@ -498,6 +529,94 @@ func formatListJSON(snap *proto.Snapshot, now int64) (string, error) {
 	}
 	b, err := json.Marshal(entries)
 	return string(b), err
+}
+
+// formatReview renders the S3 landing-readiness queue, one line per repo in
+// daemon rank order (longest-rotting-first):
+//
+//  1. ◆ zitcha/agora           31m  2 ready
+//  2. ⌁ solo/tool              12m  1 rot
+//  3. ✗ zitcha/backend          -   1 fix
+//
+// The ordering and grouping come verbatim from Snapshot.ReviewGauge; this
+// function never re-ranks. Empty/nil gauge → the "nothing ready" line, which
+// is itself the kill-criterion signal (the gauge never populated).
+func formatReview(snap *proto.Snapshot) string {
+	if snap.ReviewGauge == nil || len(snap.ReviewGauge.Repos) == 0 {
+		return "(nothing ready to review)\n"
+	}
+	var b strings.Builder
+	for i, r := range snap.ReviewGauge.Repos {
+		fmt.Fprintf(&b, "%d. %s %-24s %s%5s%s  %s\n",
+			i+1, reviewRepoGlyph(r), r.Repo, dim, reviewAge(r), reset, reviewCounts(r))
+	}
+	return b.String()
+}
+
+// formatReviewTSV is the machine variant behind `zdev-show review --tsv`: one
+// repo per line as <repo>\t<colored display>, mirroring triage --tsv for an
+// fzf picker (field 1 is the actionable repo, field 2+ the --ansi display).
+// Empty gauge → empty output.
+func formatReviewTSV(snap *proto.Snapshot) string {
+	if snap.ReviewGauge == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range snap.ReviewGauge.Repos {
+		fmt.Fprintf(&b, "%s\t%s %-24s %s%5s%s  %s\n",
+			r.Repo, reviewRepoGlyph(r), r.Repo, dim, reviewAge(r), reset, reviewCounts(r))
+	}
+	return b.String()
+}
+
+// formatReviewJSON marshals the gauge's per-repo entries (proto.ReviewRepo, with
+// its bucket counts and contributing rows) in rank order. Emits `[]` for an
+// empty/nil gauge — the explicit, parseable kill-criterion observable.
+func formatReviewJSON(snap *proto.Snapshot) (string, error) {
+	repos := []proto.ReviewRepo{}
+	if snap.ReviewGauge != nil {
+		repos = snap.ReviewGauge.Repos
+	}
+	b, err := json.Marshal(repos)
+	return string(b), err
+}
+
+// reviewRepoGlyph picks the dominant-bucket glyph for a repo: ready (green ◆ —
+// landable now) outranks needs-fix (orange ✗) outranks will-rot (yellow ⌁).
+// Mirrors the sidebar gauge's glyph precedence (internal/render/review_gauge.go).
+func reviewRepoGlyph(r proto.ReviewRepo) string {
+	switch {
+	case r.Ready > 0:
+		return green + "◆" + reset
+	case r.NeedsFix > 0:
+		return orange + "✗" + reset
+	default:
+		return yellow + "⌁" + reset
+	}
+}
+
+// reviewCounts renders the non-zero bucket counts, each in its bucket color,
+// joined by a dim middot: "2 ready", "1 fix · 1 rot".
+func reviewCounts(r proto.ReviewRepo) string {
+	var parts []string
+	if r.Ready > 0 {
+		parts = append(parts, fmt.Sprintf("%s%d ready%s", green, r.Ready, reset))
+	}
+	if r.NeedsFix > 0 {
+		parts = append(parts, fmt.Sprintf("%s%d fix%s", orange, r.NeedsFix, reset))
+	}
+	if r.WillRot > 0 {
+		parts = append(parts, fmt.Sprintf("%s%d rot%s", yellow, r.WillRot, reset))
+	}
+	return strings.Join(parts, dim+" · "+reset)
+}
+
+// reviewAge formats a repo's longest-rotting age, or "-" when unknown.
+func reviewAge(r proto.ReviewRepo) string {
+	if r.OldestSec > 0 {
+		return formatAge(r.OldestSec)
+	}
+	return "-"
 }
 
 // formatAge matches the renderer's fmt_age buckets: seconds under a
