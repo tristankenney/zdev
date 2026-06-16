@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
-# Fast project switcher — fzf over zdev's project list.
-# Bind in tmux to open as a popup. Switches to (or starts) the session.
+# Fast switcher — fzf over zdev's projects AND, nested beneath each, the
+# live agent-team members the orchestrator spawned (each corralled into
+# its own window by `zdevd layout team-sweep`, tagged @zdev-team).
+#
+# Behaviour:
+#   - project with NO team running → switches to / starts its session
+#     (the classic switcher, byte-for-byte unchanged).
+#   - project WITH a team running → the project row jumps to the
+#     ORCHESTRATOR window (the lead — the session's non-teammate window),
+#     and each teammate nests below it; picking one jumps to that window.
+#
+# Reads live from tmux in a SINGLE awk pass (no per-project subprocess),
+# so it populates instantly even with a large fleet. Bound as a popup (M-p).
 set -euo pipefail
 
 if ! command -v fzf >/dev/null 2>&1; then
@@ -8,8 +19,8 @@ if ! command -v fzf >/dev/null 2>&1; then
     exit 1
 fi
 
-# Rose Pine palette — keeps the popup visually consistent with the
-# tmux theme. Appends to any existing FZF_DEFAULT_OPTS so user overrides win.
+# Rose Pine palette — keeps the popup visually consistent with the tmux
+# theme. Appends to any existing FZF_DEFAULT_OPTS so user overrides win.
 export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
   --color=fg:#908caa,bg:#191724,hl:#ebbcba \
   --color=fg+:#e0def4,bg+:#26233a,hl+:#ebbcba \
@@ -17,7 +28,72 @@ export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
   --color=spinner:#f6c177,info:#9ccfd8 \
   --color=pointer:#c4a7e7,marker:#eb6f92,prompt:#908caa"
 
-PROJECT=$(zdev --list-projects | fzf --prompt='project › ' --height=100% --reverse) || exit 0
-[[ -z "$PROJECT" ]] && exit 0
+TAB=$(printf '\t')
 
-exec zdev "$PROJECT"
+# All tmux windows (one call): session, window id, name, @zdev-team tag,
+# pane title. Empty when not inside tmux — the awk below then just lists
+# projects.
+windows() {
+    [ -n "${TMUX:-}" ] || return 0
+    command -v tmux >/dev/null 2>&1 || return 0
+    tmux list-windows -a \
+        -F "#{session_name}${TAB}#{window_id}${TAB}#{window_name}${TAB}#{@zdev-team}${TAB}#{pane_title}" \
+        2>/dev/null || true
+}
+
+# One awk pass: first ingest the window list (NR==FNR), bucketing each
+# session's teammate windows (@zdev-team set) and remembering its first
+# non-teammate window as the orchestrator. Then walk the project list and
+# emit each project — as a jump-to-orchestrator row when a team is running
+# under it, else the classic switch row — with teammates nested below.
+#
+# Each line is "<display><TAB><action…>"; fzf shows only the display
+# (--with-nth=1) and the handler dispatches on the action fields:
+#   P <TAB> <project>            → switch to / start the project session
+#   W <TAB> <session> <TAB> <id> → jump to a specific window
+build_list() {
+    awk -F"$TAB" -v T="$TAB" '
+        NR==FNR {
+            if ($0=="") next
+            s=$1; wid=$2; wn=$3; team=$4
+            if (team!="") {
+                n=split($5,a," "); g=(n>0 ? a[1] : "")
+                nested[s]=nested[s] sprintf("  \xe2\x86\xb3 %s  %s%sW%s%s%s%s\n", wn, g, T, T, s, T, wid)
+                hasteam[s]=1
+            } else if (!(s in orchwid)) {
+                orchwid[s]=wid
+            }
+            next
+        }
+        {
+            proj=$0; if (proj=="") next
+            sess=proj; gsub(/\//,"-",sess)
+            if ((sess in hasteam) && (sess in orchwid)) {
+                printf "%s%sW%s%s%s%s\n", proj, T, T, sess, T, orchwid[sess]
+                printf "%s", nested[sess]
+            } else {
+                printf "%s%sP%s%s\n", proj, T, T, proj
+            }
+        }
+    ' <(windows) <(zdev --list-projects 2>/dev/null)
+}
+
+SEL=$(build_list | fzf --prompt='go › ' --height=100% --reverse \
+        --delimiter="$TAB" --with-nth=1) || exit 0
+[ -z "$SEL" ] && exit 0
+
+KIND=$(printf '%s' "$SEL" | cut -d"$TAB" -f2)
+case "$KIND" in
+  P)
+    PROJECT=$(printf '%s' "$SEL" | cut -d"$TAB" -f3)
+    [ -z "$PROJECT" ] && exit 0
+    exec zdev "$PROJECT"
+    ;;
+  W)
+    WSESS=$(printf '%s' "$SEL" | cut -d"$TAB" -f3)
+    WID=$(printf '%s' "$SEL" | cut -d"$TAB" -f4)
+    [ -z "$WID" ] && exit 0
+    tmux switch-client -t "=$WSESS" 2>/dev/null || true
+    exec tmux select-window -t "$WID"
+    ;;
+esac
