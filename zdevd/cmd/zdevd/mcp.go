@@ -22,8 +22,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -167,13 +169,82 @@ func mcpTools() []mcpTool {
 }
 
 // mcpSubcmd implements `zdevd mcp`: the stdio JSON-RPC serve loop.
-func mcpSubcmd(_ []string) int {
+func mcpSubcmd(args []string) int {
+	fs := flag.NewFlagSet("zdevd mcp", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	httpAddr := fs.String("http", "", "serve MCP over HTTP at this address (e.g. 127.0.0.1:7399) instead of stdio; phase 2 binds this to a tailnet (tsnet) listener")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	tools := mcpTools()
 	byName := make(map[string]mcpTool, len(tools))
 	for _, t := range tools {
 		byName[t.Name] = t
 	}
+	if *httpAddr != "" {
+		return serveMCPHTTP(*httpAddr, tools, byName)
+	}
 	return serveMCP(os.Stdin, os.Stdout, tools, byName)
+}
+
+// handleRPC dispatches one JSON-RPC request to its response. reply is false
+// for notifications and other no-response cases, so both transports know to
+// stay silent. Transport-agnostic on purpose: the stdio loop and the HTTP
+// handler share this exact dispatch — and the tsnet (tailnet) listener in
+// phase 2 reuses serveMCPHTTP unchanged.
+func handleRPC(req rpcRequest, tools []mcpTool, byName map[string]mcpTool) (resp *rpcResponse, reply bool) {
+	isNotification := len(req.ID) == 0
+	switch req.Method {
+	case "initialize":
+		pv := mcpProtocolVersion
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if json.Unmarshal(req.Params, &p) == nil && p.ProtocolVersion != "" {
+			pv = p.ProtocolVersion
+		}
+		return &rpcResponse{ID: req.ID, Result: map[string]any{
+			"protocolVersion": pv,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "zdev", "version": version},
+		}}, true
+	case "notifications/initialized", "notifications/cancelled":
+		return nil, false
+	case "ping":
+		if isNotification {
+			return nil, false
+		}
+		return &rpcResponse{ID: req.ID, Result: map[string]any{}}, true
+	case "tools/list":
+		return &rpcResponse{ID: req.ID, Result: map[string]any{"tools": tools}}, true
+	case "tools/call":
+		var p struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		t, ok := byName[p.Name]
+		if !ok {
+			return &rpcResponse{ID: req.ID, Error: &rpcError{Code: -32602, Message: "unknown tool: " + p.Name}}, true
+		}
+		text, err := t.run(context.Background(), p.Arguments)
+		if err != nil {
+			// Tool failure is reported in-band (isError), not as a transport
+			// error — the model sees and can react to it.
+			return &rpcResponse{ID: req.ID, Result: map[string]any{
+				"content": []map[string]any{{"type": "text", "text": "error: " + err.Error()}},
+				"isError": true,
+			}}, true
+		}
+		return &rpcResponse{ID: req.ID, Result: map[string]any{
+			"content": []map[string]any{{"type": "text", "text": text}},
+		}}, true
+	default:
+		if isNotification {
+			return nil, false
+		}
+		return &rpcResponse{ID: req.ID, Error: &rpcError{Code: -32601, Message: "method not found: " + req.Method}}, true
+	}
 }
 
 func serveMCP(in io.Reader, out io.Writer, tools []mcpTool, byName map[string]mcpTool) int {
@@ -199,57 +270,46 @@ func serveMCP(in io.Reader, out io.Writer, tools []mcpTool, byName map[string]mc
 			writeResp(&rpcResponse{Error: &rpcError{Code: -32700, Message: "parse error"}})
 			return 1
 		}
-		isNotification := len(req.ID) == 0
-		switch req.Method {
-		case "initialize":
-			pv := mcpProtocolVersion
-			var p struct {
-				ProtocolVersion string `json:"protocolVersion"`
-			}
-			if json.Unmarshal(req.Params, &p) == nil && p.ProtocolVersion != "" {
-				pv = p.ProtocolVersion
-			}
-			writeResp(&rpcResponse{ID: req.ID, Result: map[string]any{
-				"protocolVersion": pv,
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "zdev", "version": version},
-			}})
-		case "notifications/initialized", "notifications/cancelled":
-			// fire-and-forget; no response
-		case "ping":
-			if !isNotification {
-				writeResp(&rpcResponse{ID: req.ID, Result: map[string]any{}})
-			}
-		case "tools/list":
-			writeResp(&rpcResponse{ID: req.ID, Result: map[string]any{"tools": tools}})
-		case "tools/call":
-			var p struct {
-				Name      string         `json:"name"`
-				Arguments map[string]any `json:"arguments"`
-			}
-			_ = json.Unmarshal(req.Params, &p)
-			t, ok := byName[p.Name]
-			if !ok {
-				writeResp(&rpcResponse{ID: req.ID, Error: &rpcError{Code: -32602, Message: "unknown tool: " + p.Name}})
-				break
-			}
-			text, err := t.run(context.Background(), p.Arguments)
-			if err != nil {
-				// Tool failure is reported in-band (isError), not as a
-				// transport error — the model sees and can react to it.
-				writeResp(&rpcResponse{ID: req.ID, Result: map[string]any{
-					"content": []map[string]any{{"type": "text", "text": "error: " + err.Error()}},
-					"isError": true,
-				}})
-				break
-			}
-			writeResp(&rpcResponse{ID: req.ID, Result: map[string]any{
-				"content": []map[string]any{{"type": "text", "text": text}},
-			}})
-		default:
-			if !isNotification {
-				writeResp(&rpcResponse{ID: req.ID, Error: &rpcError{Code: -32601, Message: "method not found: " + req.Method}})
-			}
+		if resp, reply := handleRPC(req, tools, byName); reply {
+			writeResp(resp)
 		}
 	}
+}
+
+// serveMCPHTTP serves the SAME dispatch over a minimal Streamable-HTTP
+// transport: one POST endpoint that takes a single JSON-RPC message and
+// returns its response (202 for a notification). Server-initiated SSE streams
+// aren't needed yet — every tool is request/response — so this is the minimal
+// compliant shape Claude Code's `--transport http` consumes. Phase 2 swaps
+// this listener for a tsnet (tailnet-only) one; the handler is unchanged.
+func serveMCPHTTP(addr string, tools []mcpTool, byName map[string]mcpTool) int {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mcp", func(wr http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(wr, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		defer r.Body.Close()
+		var req rpcRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+			wr.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(wr).Encode(&rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+			return
+		}
+		resp, reply := handleRPC(req, tools, byName)
+		if !reply {
+			wr.WriteHeader(http.StatusAccepted)
+			return
+		}
+		resp.JSONRPC = "2.0"
+		wr.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(wr).Encode(resp)
+	})
+	fmt.Fprintf(os.Stderr, "zdevd mcp: serving HTTP at %s/mcp\n", addr)
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	if err := srv.ListenAndServe(); err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd mcp: http serve: %v\n", err)
+		return 1
+	}
+	return 0
 }
