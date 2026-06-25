@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Shortcut + legend popup (roadmap NOW#8) — answers "what can I press,
-# and what do the glyphs mean" without leaving tmux. Bind:
+# Help popup (roadmap NOW#8) — "how do I drive my fleet, and what can I
+# press." Bind:
 #
 #   bind -n 'M-?' display-popup -E -w 70% -h 80% "$HOME/.local/bin/zdev-help-popup"
 #
-# The keybinding section is parsed from `tmux list-keys`, NOT from the
-# sample conf — it shows what is ACTUALLY bound on this server, including
-# user remaps, and silently omits bindings the user never enabled. The
-# glyph legend is `zdev-show --legend` (single source of truth, mirrors
-# internal/render). Works as a plain command outside tmux too.
+# Keys are read LIVE from `tmux list-keys` (only what's actually bound on
+# this server, including remaps) and each is given a human description via
+# describe(); unknown zdev bindings fall back to the cleaned command. The
+# full glyph legend lives in `zdev-show --legend` and is pointed to rather
+# than inlined — the help stays a short guide, not a glyph dump. Works as a
+# plain command outside tmux too.
 set -euo pipefail
 
 BOLD=$'\033[1m'
@@ -16,52 +17,81 @@ DIM=$'\033[90m'
 CYAN=$'\033[36m'
 RESET=$'\033[0m'
 
-# The shortcut list + legend is taller than most popups — render the
-# whole document into a function and page it through `less -R` (j/k or
-# wheel to scroll, q to close) instead of printing and hoping it fits.
-render_help() {
-printf '%szdev shortcuts%s\n' "$BOLD" "$RESET"
-printf '%s(live from tmux list-keys — only what is bound on this server)%s\n\n' "$DIM" "$RESET"
+# describe maps a bound key's (cleaned) command to a plain-English purpose.
+# Substring match so it survives path/flag noise. Falls back to the command.
+describe() {
+    case "$1" in
+        *zdev-pick*)             echo "switch project — or jump into an agent team (members nested below the lead)" ;;
+        *zdev\ next*|*zdev-show\ next*) echo "jump to whatever needs you most" ;;
+        *zdev-triage-popup*)     echo "ranked attention queue (pick one to jump)" ;;
+        *triage*)                echo "ranked attention queue" ;;
+        *zdev\ ack*|*ack*)       echo "mark every status read (waiting/done/dead)" ;;
+        *zdev-broadcast-claude*) echo "broadcast a prompt to every claude pane" ;;
+        *zdev-prompt-picker*)    echo "insert a saved prompt into this pane" ;;
+        *zdev-timeline-popup*)   echo "fleet activity timeline" ;;
+        *zdev-help-popup*)       echo "this help" ;;
+        *notify*)                echo "toggle tier-notification mute" ;;
+        *) echo "$1" ;;
+    esac
+}
 
+render_help() {
+printf '%szdev — drive your fleet%s\n' "$BOLD" "$RESET"
+printf '%sfull glyph legend: zdev-show --legend%s\n\n' "$DIM" "$RESET"
+
+# --- bound keys (live; only what this server actually has) ---
+printf '%sKEYS%s %s(bound on this server)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
 FOUND=0
 while IFS= read -r line; do
     [[ "$line" != *zdev* ]] && continue
-    # `tmux list-keys` rows: bind-key -T <table> <key> <command...>
-    # Reduce the command to its zdev intent: strip bind plumbing, popup
-    # geometry flags, quoting, and absolute paths — "M-t  zdev-timeline-popup"
-    # reads better than the full display-popup invocation.
     key=$(awk '{print $4}' <<<"$line")
     cmd=$(printf '%s' "$line" \
         | sed -E 's/^bind-key +-T +[^ ]+ +[^ ]+ +//' \
         | sed -E 's/(run-shell|display-popup|tmux) +//g; s/-[EbA-Z] +//g; s/-[wh] +"?[0-9]+%"? +//g' \
         | sed -E "s/'//g" | sed -E 's/^[" ]+//; s/[" ]+$//' \
         | sed -E 's|[^ "'\'']*/bin/||g')
-    printf '  %s%-8s%s %s\n' "$CYAN" "$key" "$RESET" "$cmd"
+    printf '  %s%-7s%s %s\n' "$CYAN" "$key" "$RESET" "$(describe "$cmd")"
     FOUND=1
 done < <(tmux list-keys 2>/dev/null || true)
 if [[ "$FOUND" -eq 0 ]]; then
-    printf '  %sno zdev keys bound — see config/zdev.tmux.conf for suggested bindings%s\n' "$DIM" "$RESET"
+    printf '  %sno zdev keys bound — see config/zdev.tmux.conf for the suggested set%s\n' "$DIM" "$RESET"
 fi
 
-printf '\n%szdev commands%s %s(no binding required)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s%-8s%s %s\n' "$CYAN" "next" "$RESET" "jump to the session that most needs you"
-printf '  %s%-8s%s %s\n' "$CYAN" "triage" "$RESET" "ranked attention queue"
-printf '  %s%-8s%s %s\n' "$CYAN" "ack" "$RESET" "zdev ack --all — clear every status (read all)"
-printf '\n'
+# --- commands (no binding needed) ---
+printf '\n%sCOMMANDS%s %s(any shell)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %szdev <project>%s          start / switch to a project session\n' "$CYAN" "$RESET"
+printf '  %szdev run <proj> "..."%s   spawn a SUPERVISED agent loop\n' "$CYAN" "$RESET"
+printf '  %s                       e.g. zdev run backend "/rigorous-review #1234"%s\n' "$DIM" "$RESET"
+printf '  %szdev next%s               jump to what needs you most\n' "$CYAN" "$RESET"
+printf '  %szdev review%s             landing-readiness: what is ready to ship\n' "$CYAN" "$RESET"
+printf '  %szdev triage%s             the ranked attention queue\n' "$CYAN" "$RESET"
+printf '  %szdev ack --all%s          mark everything read\n' "$CYAN" "$RESET"
+printf '  %szdev --help%s             full command list\n' "$CYAN" "$RESET"
 
-# Glyph legend — the single source of truth lives in zdev-show.
-if command -v zdev-show >/dev/null 2>&1; then
-    zdev-show --legend
-else
-    printf '%szdev-show not installed (run make -C zdevd install) — legend unavailable%s\n' "$DIM" "$RESET"
-fi
+# --- drive from Claude over MCP ---
+printf '\n%sDRIVE FROM CLAUDE%s %s(MCP — registered as a connector)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  In any Claude Code session, just ask — Claude calls zdev'\''s tools:\n'
+printf '  %s"check the zdev fleet" . "what is in triage" . "what is ready to review"%s\n' "$DIM" "$RESET"
+printf '  %s"run /rigorous-review on backend"%s\n' "$DIM" "$RESET"
+
+# --- agent teams ---
+printf '\n%sAGENT TEAMS%s\n' "$BOLD" "$RESET"
+printf '  Teammates auto-move into their own windows; the sidebar nests them\n'
+printf '  under the lead project. %sM-p%s -> pick the project (lands on the\n' "$CYAN" "$RESET"
+printf '  orchestrator) or a member (jumps to that teammate'\''s window).\n'
+
+# --- glyph cheatsheet (full legend: zdev-show --legend) ---
+printf '\n%sGLYPHS%s %s(quick — full set: zdev-show --legend)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s●%s waiting  %s◐%s working  %s◆%s done  %s✗%s dead  %s·%s idle\n' \
+    $'\033[1;91m' "$RESET" "$CYAN" "$RESET" $'\033[33m' "$RESET" $'\033[1;91m' "$RESET" "$DIM" "$RESET"
+printf '  %s◆%s ready to land  %s⌁%s will rot  %s⊛%s agent team\n' \
+    $'\033[32m' "$RESET" $'\033[33m' "$RESET" "$DIM" "$RESET"
 }
 
 # Interactive (popup or terminal): page so the content scrolls and the
 # popup stays open until q. Piped/captured: plain print.
 if [[ -t 1 ]] && command -v less >/dev/null 2>&1; then
-    # -R pass ANSI colors; -~ hide EOF tildes; custom prompt hints keys.
-    render_help | less -R -~ -P'?eEND — q to close:j/k scroll · q close'
+    render_help | less -R -~ -P'?eEND — q to close:j/k scroll . q close'
 else
     render_help
 fi
