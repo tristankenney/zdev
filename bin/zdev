@@ -167,6 +167,8 @@ Usage:
   zdev notify {mute [DUR]|unmute|toggle|status}
                                  Runtime mute for tier notification banners
                                  (tmux: bind -n M-/ run-shell "zdev notify toggle")
+  zdev restart [--build]         Restart everything: daemon + all sidebars
+                                 (--build: reinstall from source first)
   zdev doctor [--probe]          Diagnose the setup (--probe: live end-to-end test)
   zdev list                      Show configured vs running sessions
   zdev kill <project>...         Kill named sessions
@@ -700,6 +702,70 @@ case "$1" in
             tmux switch-client -t "=$run_session" 2>/dev/null || true
             tmux select-window -t "$run_win" 2>/dev/null || true
         fi
+        exit 0
+        ;;
+    restart)
+        # zdev restart [--build]
+        # Restart everything live: the daemon (launchd/systemd) and every
+        # sidebar renderer. --build reinstalls binaries from the source repo
+        # first (after code changes). The reaper timer is left alone; the MCP
+        # connector just dials the fresh daemon on next use.
+        shift
+        do_build=0
+        for a in ${@+"$@"}; do
+            case "$a" in
+                --build) do_build=1 ;;
+                *) echo "usage: zdev restart [--build]" >&2; exit 2 ;;
+            esac
+        done
+        if (( do_build )); then
+            self="$(readlink "$0" 2>/dev/null || echo "$0")"
+            repo="$(cd "$(dirname "$self")/.." 2>/dev/null && pwd)"
+            if [[ -f "$repo/zdevd/Makefile" ]]; then
+                echo "zdev restart: reinstalling from $repo ..."
+                make -C "$repo/zdevd" install || { echo "zdev restart: make install failed" >&2; exit 1; }
+            else
+                echo "zdev restart: --build: source repo not found from $self" >&2
+                exit 1
+            fi
+        fi
+        echo "zdev restart: restarting daemon..."
+        case "$(uname -s)" in
+            Darwin)
+                launchctl kickstart -k "gui/$(id -u)/com.zdev.zdevd" 2>/dev/null \
+                    || { echo "  launchd job not loaded — starting detached"; nohup zdevd >/dev/null 2>&1 & }
+                ;;
+            Linux)
+                systemctl --user restart zdevd.service 2>/dev/null \
+                    || { echo "  systemd unit not active — starting detached"; nohup zdevd >/dev/null 2>&1 & }
+                ;;
+            *)
+                echo "  unknown platform $(uname -s) — restart the daemon manually" >&2
+                ;;
+        esac
+        echo "zdev restart: respawning sidebars..."
+        restart_n=0
+        while IFS= read -r restart_pane; do
+            [[ -z "$restart_pane" ]] && continue
+            tmux respawn-pane -k -t "$restart_pane" 2>/dev/null && restart_n=$((restart_n + 1))
+        done < <(tmux list-panes -a -F '#{pane_id} #{pane_title}' 2>/dev/null \
+            | awk '$2 == "zdev-sidebar" {print $1}')
+        echo "  respawned $restart_n sidebar pane(s)"
+        if command -v zdevd >/dev/null 2>&1; then
+            echo "zdev restart: waiting for daemon..."
+            restart_diag=""
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+                restart_diag="$(zdevd diag 2>/dev/null | grep -E 'uptime|schema|subscribers|errors_1h')"
+                [[ -n "$restart_diag" ]] && break
+                sleep 1
+            done
+            if [[ -n "$restart_diag" ]]; then
+                printf '%s\n' "$restart_diag" | sed 's/^/  /'
+            else
+                echo "  daemon not answering yet — check: zdev doctor"
+            fi
+        fi
+        echo "zdev restart: done."
         exit 0
         ;;
 esac

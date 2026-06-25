@@ -66,6 +66,7 @@ printf '  %szdev next%s               jump to what needs you most\n' "$CYAN" "$R
 printf '  %szdev review%s             landing-readiness: what is ready to ship\n' "$CYAN" "$RESET"
 printf '  %szdev triage%s             the ranked attention queue\n' "$CYAN" "$RESET"
 printf '  %szdev ack --all%s          mark everything read\n' "$CYAN" "$RESET"
+printf '  %szdev restart%s            restart everything: daemon + all sidebars\n' "$CYAN" "$RESET"
 printf '  %szdev --help%s             full command list\n' "$CYAN" "$RESET"
 
 # --- drive from Claude over MCP ---
