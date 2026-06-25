@@ -157,6 +157,8 @@ Usage:
   zdev up                        Start projects marked * (favorites)
   zdev next                      Jump to the session that most needs you
                                  (tmux: bind-key n run-shell "zdev next")
+  zdev run <project> "<prompt>"  Spawn a supervised agent loop in <project>
+                                 [--name NAME] [--switch]  (the trigger/MCP actuator)
   zdev triage                    Show the ranked attention queue
   zdev review [--json|--tsv]      Show the landing-readiness queue
                                  (per-repo ready/fix/rot, longest-rotting first)
@@ -634,6 +636,71 @@ case "$1" in
     doctor)
         shift
         exec "$(dirname "$(readlink "$0" 2>/dev/null || echo "$0")")/zdev-doctor" "$@"
+        ;;
+    run)
+        # zdev run <project> "<prompt>" [--name NAME] [--switch]
+        #
+        # The ACTUATOR (DIRECTION / agent operations plane, phase 1a): spawn a
+        # SUPERVISED agent loop in <project> — ensure the session, open a new
+        # window in it running claude seeded with <prompt>, and leave it for
+        # zdev to supervise (sidebar/triage/death detection as usual). Every
+        # trigger (GitHub/Slack/cron) and every MCP client ultimately calls
+        # this. Background by default (no focus steal); --switch to jump to it.
+        shift
+        run_name=""
+        run_switch=0
+        run_args=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --name)   run_name="$2"; shift 2 ;;
+                --name=*) run_name="${1#*=}"; shift ;;
+                --switch) run_switch=1; shift ;;
+                *)        run_args+=("$1"); shift ;;
+            esac
+        done
+        if (( ${#run_args[@]} < 2 )); then
+            echo "usage: zdev run <project> \"<prompt>\" [--name NAME] [--switch]" >&2
+            exit 2
+        fi
+        run_project="${run_args[0]}"
+        run_prompt="${run_args[1]}"
+        if ! is_known_project "$run_project"; then
+            echo "zdev run: unknown project: $run_project" >&2
+            exit 1
+        fi
+        run_dir="$WORKSPACE/$run_project"
+        if [[ ! -d "$run_dir" ]]; then
+            echo "zdev run: directory not found: $run_dir" >&2
+            exit 1
+        fi
+        run_session=$(session_name "$run_project")
+        if ! tmux has-session -t "=$run_session" 2>/dev/null; then
+            build_layout "$run_session" "$run_dir"
+        fi
+        # Window name: explicit --name, else a short slug of the prompt.
+        if [[ -z "$run_name" ]]; then
+            run_name=$(printf '%s' "$run_prompt" | tr -cs 'A-Za-z0-9' '-' \
+                | sed 's/^-*//;s/-*$//' | cut -c1-24)
+            [[ -z "$run_name" ]] && run_name="run"
+        fi
+        # Launch claude seeded with the prompt in a login shell so PATH is
+        # populated (hook/popup contexts strip it), passed DIRECTLY to
+        # new-window to avoid the send-keys race (see build_layout). Triggered
+        # loops run unattended → --dangerously-skip-permissions. The prompt may
+        # be a slash command (e.g. "/rigorous-review #1234").
+        run_inner="if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions $(printf '%q' "$run_prompt"); fi; echo 'zdev run: claude not found on PATH' >&2; exec ${SHELL:-/bin/sh} -i"
+        run_launch="${SHELL:-/bin/sh} -lic $(printf '%q' "$run_inner")"
+        run_win=$(tmux new-window -d -t "=$run_session" -c "$run_dir" -n "$run_name" \
+            -P -F '#{window_id}' "$run_launch")
+        # Tag the window as a zdev-run loop (greppable; the fleet view, reap,
+        # and later federation/migration key off this), recording the prompt.
+        tmux set-option -w -t "$run_win" @zdev-run "$run_prompt" 2>/dev/null || true
+        echo "zdev run: spawned ${run_session}:${run_name} (${run_win})"
+        if (( run_switch )) && [[ -n "${TMUX:-}" ]]; then
+            tmux switch-client -t "=$run_session" 2>/dev/null || true
+            tmux select-window -t "$run_win" 2>/dev/null || true
+        fi
+        exit 0
         ;;
 esac
 
