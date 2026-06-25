@@ -172,6 +172,110 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
 
 ---
 
+## DIRECTION — the federated agent operations plane *(north star, 2026-06-25)*
+
+The largest reframe since launch: zdev evolves from a single-host local cockpit
+into a **federated agent operations plane** — a fast local node AND an always-on
+remote node, joined over Tailscale and unified by one MCP control plane — so work
+runs *blindingly fast locally when you're at the desk* and *persists and triggers
+remotely when you're away*. **MCP is the universal seam:** zdev's verbs become MCP
+tools, and every surface — local Claude Code, the phone, Slack, GitHub, cron — is
+just a client of the same tools. Triggering is autonomous (no human gate): events
+START loops.
+
+**Provenance.** Two further adversarially-verified research passes (claim-level
+refutation voting): (1) trigger/automation engines; (2) hosting + remote-MCP +
+channel-ingress + interpreter + autonomy-safety. Verified picks named inline.
+
+**Positioning evolution (deliberate).** The founding line says zdev "never opens a
+network listener." This keeps the *spirit* — no PUBLIC inbound listener — while
+evolving the letter: reach is **outbound-dialed, tailnet-only** (`tsnet`), ingress
+is **outbound** (Slack Socket Mode), and any public endpoint (Cloudflare Workers
+MCP, OAuth-gated) is opt-in only for clients that can't join the tailnet. Transport
+stays user-owned. The headline positioning should be updated to reflect this.
+
+**Arc kill criterion.** If standing up the remote node never changes behaviour the
+operator wants while away (loops never fire unattended; the local node alone covers
+every real need), the remote half is dead weight — stay local-only and cut the plane.
+
+### Architecture (verified off-the-shelf picks; only two seams are bespoke)
+- **Reach — `tsnet`:** embed a Tailscale node in zdevd (Go-native; `Server.Listen`
+  is tailnet-only and returns a stdlib `net.Listener`, so a Go MCP server drops in
+  unmodified). Cloudflare Tunnel/Workers (OAuth-gated) only for clients that can't
+  join the tailnet (phone/claude.ai).
+- **Control — MCP server** (Streamable HTTP) exposing zdev's verbs as tools, bound
+  to the tailnet; all clients and triggers call it.
+- **GitHub triggers — free:** react to zdev's existing eventlog (already emits
+  pr-count/CI/state-change from polling probes) — no webhook, no tunnel.
+- **Slack ingress — Socket Mode** (outbound, listener-free): a thin Bolt app, or
+  OpenClaw (= "Moltbot"; MIT, 20+ channels), or claude-code-slack-channel (itself
+  an MCP server). Channel-posted alerts (Datadog/Sentry/PagerDuty) are triggers too.
+- **Interpreter — bespoke seam #1:** no drop-in does NL→{intent, repo, loop};
+  semantic-router (embedding kNN) for route selection + a small LLM for slot-fill.
+- **Safety — capability-scoped (gateless):** OAuth scopes *who* connects; per-tool
+  capability scoping bounds *what* a trigger may fire (a Slack trigger spawns a
+  debug loop, never a deploy); plus Claude Code allowlists, sandboxed hands, budget
+  caps, and a remote kill-switch. `require_approval` collapses to `deny` (no gate).
+- **`zdev.run`/control tool — bespoke seam #2** (thin): the verb every ingress calls
+  to spawn and host-route a supervised loop.
+
+Only the interpreter and `zdev.run` are hand-built; every other layer is off-shelf.
+
+### Slices (staged, each killable)
+- **Plane MVP — two nodes, unfederated.** Keep local zdev unchanged (fast); stand
+  up an always-on cheap VM running its own zdev + the MCP control plane + Slack/
+  GitHub/cron ingress over `tsnet`. Both abilities at once (fast local + always-on
+  remote), as two cockpits. Effort: ~week. Depends: none (rides existing zdev +
+  off-shelf). Kill: if the VM sits idle because nothing triggers it while away,
+  stop here and stay local.
+- **Symmetric watchers / loops.** Watchers, recurring jobs, and triggers are
+  first-class on EITHER node — a watcher can run locally and act locally for speed,
+  not remote-only. Effort: rides MVP. Kill: if local watchers only duplicate work
+  the remote node should own, make them remote-only.
+- **Federation — one cockpit across nodes.** Aggregate both daemons' snapshots into
+  one host-tagged sidebar + one MCP surface; host-aware `zdev run`/lease routing
+  (interactive→local, away/long-running→remote). An extension of zdev's existing
+  session-aggregation, NOT an execution rewrite — the fast local path is untouched.
+  Effort: weeks. Depends: MVP. Kill: if unifying the view confuses more than
+  two-cockpits clarifies at real fleet size, keep them separate.
+- **Local↔remote migration — git-backed, agent-aware, drain-on-suspend.** *(the
+  load-bearing new capability)* Move a LIVE loop between nodes without losing work,
+  coordinated by git, with the agent a participant:
+  - *Mechanism (git, not file-sync):* capture the workspace as a commit — jj's
+    auto-snapshot working copy makes this near-free (the tree is *always* already a
+    change; this is what the jj trial buys us) — push the branch plus a structured
+    **handoff artifact** (task intent, progress, next step, session context — a
+    `.zdev/handoff` blob and/or the agent transcript) node-to-node over the tailnet
+    (or via GitHub); on the destination, `lease` a workspace at that commit and
+    resume the agent with the handoff. Reverse for remote→local.
+  - *Agent-aware:* the source agent is told to **checkpoint and hand off** (commit
+    WIP + serialize intent); the destination agent **rehydrates** (checkout + read
+    handoff + resume the loop) — a structured handoff the agent participates in, not
+    a blind file move. The move is recorded in the eventlog so the fleet view shows
+    the loop relocating.
+  - *Automatic on transition (drain-on-suspend):* the local node detecting it is
+    going away — laptop sleep / lid-close / logout — drains its in-flight loops to
+    the always-on remote node, so evening work continues overnight; optional
+    pull-back on wake. Manual `zdev migrate <task> --to remote|local` for explicit
+    moves.
+  - *Code coordinates via git/PRs + per-host workspaces — NEVER live working-tree
+    sync* (bidirectional Mutagen/Unison-style sync + two writers = conflict swamp;
+    refused by design). Effort: weeks; rides lease + the jj trial. Depends:
+    federation, lease. Kill: if handoffs lose/duplicate work or the agent can't
+    reliably resume from the checkpoint, fall back to "finish locally or restart
+    remotely" — no live migration.
+- **Hands elasticity (optional, far later).** If the always-on node's fixed
+  capacity ever saturates, add elastic ephemeral hands (Agent-SDK "hybrid sessions"
+  hydrating from a durable store, or Fly Sprites). This is the ONE piece that pivots
+  off raw tmux toward SDK-spawned sessions — a real execution-layer change, deferred
+  until capacity actually bites. Kill: if a fixed-capacity VM never saturates, never
+  build it.
+
+This **supersedes and absorbs** the `zdev lease` item below: lease *places* a
+workspace on a host; migration *moves* a live one between hosts.
+
+---
+
 ## LATER (3+ months)
 
 - **Worktree-or-clone session spawn (`zdev <project> --new`)** — rescoped
