@@ -154,6 +154,56 @@ func TestFormatList(t *testing.T) {
 	}
 }
 
+// TestFormatTeamsTSV verifies the M-p switcher feed: one tab line per team
+// MEMBER (never a project row), sourced from TeamGroups, with in-process
+// members (no window) carrying an empty window_id — the parity with the
+// sidebar that a tmux `@zdev-team` tag scrape can't provide.
+func TestFormatTeamsTSV(t *testing.T) {
+	snap := &proto.Snapshot{
+		Projects: []proto.Project{
+			{Name: "org/lead", Status: "alive"},
+			{Name: "org/solo", Status: "alive"}, // no team → no rows
+		},
+		TeamGroups: []proto.TeamGroup{
+			{
+				Name:        "team-x",
+				LeadProject: "org/lead",
+				Members: []proto.TeamMember{
+					{Name: "windowed", Status: "working", WindowID: "@42"},
+					{Name: "headless", Status: "", InProcess: true}, // in-process: no window
+				},
+			},
+		},
+	}
+	got := formatTeamsTSV(snap)
+
+	want := []string{
+		"org/lead\twindowed\tworking\t@42\n",
+		"org/lead\theadless\t\t\n", // empty status + empty window_id
+	}
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("teams TSV missing line %q; got:\n%q", w, got)
+		}
+	}
+	// Project rows must never leak into the feed — it is members only.
+	if strings.Contains(got, "org/solo") {
+		t.Errorf("teams TSV leaked a project row (org/solo); got:\n%q", got)
+	}
+	if n := strings.Count(got, "\n"); n != 2 {
+		t.Errorf("teams TSV should have exactly 2 member lines, got %d:\n%q", n, got)
+	}
+}
+
+// TestFormatTeamsTSV_NoTeam verifies an empty feed when no team is live — the
+// switcher then falls back to a plain project list.
+func TestFormatTeamsTSV_NoTeam(t *testing.T) {
+	snap := &proto.Snapshot{Projects: []proto.Project{{Name: "org/solo", Status: "alive"}}}
+	if got := formatTeamsTSV(snap); got != "" {
+		t.Errorf("teams TSV should be empty with no live team, got: %q", got)
+	}
+}
+
 // TestFormatList_NoWaiting verifies the empty-state message when no projects are waiting.
 func TestFormatList_NoWaiting(t *testing.T) {
 	snap := &proto.Snapshot{

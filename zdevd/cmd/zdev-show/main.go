@@ -15,6 +15,7 @@
 //	zdev-show triage --tsv     # machine variant for fzf (name\tdisplay)
 //	zdev-show triage --json    # structured queue (phone Shortcuts, widgets)
 //	zdev-show list --json      # every project row as structured JSON
+//	zdev-show teams            # live team members as TSV for the M-p switcher
 //
 // zdev-show dials the daemon's unix socket, reads one snapshot, and exits.
 // It never subscribes to the stream — the connection is closed immediately
@@ -169,6 +170,22 @@ func run() int {
 		default:
 			fmt.Print(formatReview(snap))
 		}
+		return 0
+	}
+
+	// `teams` (M-p switcher): one tab-separated line per live agent-team
+	// MEMBER, so the switcher can nest members under their lead project —
+	// sourced from the SAME snapshot the sidebar renders (proto.FlatRows over
+	// snap.TeamGroups), NOT from tmux `@zdev-team` window tags. That parity is
+	// the point: in-process teammates own no tmux window, so a tag scrape
+	// never sees them, but the sidebar (and now the switcher) does. Fields:
+	//   <lead_project>\t<member_name>\t<status>\t<window_id>
+	// window_id is empty for an in-process member — the switcher then just
+	// switches to the lead's session (where that member lives) without a
+	// select-window. Empty output (no live team) → the switcher shows a plain
+	// project list.
+	if os.Args[1] == "teams" {
+		fmt.Print(formatTeamsTSV(snap))
 		return 0
 	}
 
@@ -529,6 +546,28 @@ func formatListJSON(snap *proto.Snapshot, now int64) (string, error) {
 	}
 	b, err := json.Marshal(entries)
 	return string(b), err
+}
+
+// formatTeamsTSV emits one tab-separated line per live team member for the
+// M-p switcher:
+//
+//	<lead_project>\t<member_name>\t<status>\t<window_id>
+//
+// It walks proto.FlatRows(snap, true) — the canonical navigation order the
+// sidebar and hub cursor already share — and keeps only member rows. Ordering
+// therefore matches the sidebar's nested rows exactly, and in-process members
+// (WindowID == "") are included: the switcher jumps to the lead's session
+// (SwitchTo) and only select-windows when a WindowID is present. Empty when no
+// team is live.
+func formatTeamsTSV(snap *proto.Snapshot) string {
+	var b strings.Builder
+	for _, r := range proto.FlatRows(snap, true) {
+		if !r.IsMember() {
+			continue
+		}
+		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.SwitchTo, r.Member.Name, r.Member.Status, r.WindowID)
+	}
+	return b.String()
 }
 
 // formatReview renders the S3 landing-readiness queue, one line per repo in

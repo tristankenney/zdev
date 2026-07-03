@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # Fast switcher — fzf over zdev's projects AND, nested beneath each, the
-# live agent-team members the orchestrator spawned (each corralled into
-# its own window by `zdevd layout team-sweep`, tagged @zdev-team).
+# live agent-team members the orchestrator spawned.
+#
+# Team members are sourced from `zdev-show teams` (the daemon snapshot the
+# SIDEBAR renders), NOT from tmux `@zdev-team` window tags. That parity is
+# deliberate: in-process teammates own no tmux window, so a tag scrape can't
+# see them — but the sidebar does, and now so does this switcher.
 #
 # Behaviour:
-#   - project with NO team running → switches to / starts its session
-#     (the classic switcher, byte-for-byte unchanged).
-#   - project WITH a team running → the project row jumps to the
-#     ORCHESTRATOR window (the lead — the session's non-teammate window),
-#     and each teammate nests below it; picking one jumps to that window.
+#   - project with NO team → switches to / starts its session (classic).
+#   - project WITH a team → still switches to that session (where the lead
+#     runs); each member nests below it. Picking a member switches to the
+#     lead's session and, when the member owns a tmux window, select-windows
+#     into it (in-process members have no window → you land on the lead).
 #
-# Reads live from tmux in a SINGLE awk pass (no per-project subprocess),
-# so it populates instantly even with a large fleet. Bound as a popup (M-p).
+# Reads the fleet in a SINGLE awk pass so it populates instantly. Bound as a
+# popup (M-p). Outside tmux, or with no daemon/team, it lists projects only.
 set -euo pipefail
 
 if ! command -v fzf >/dev/null 2>&1; then
@@ -30,55 +34,56 @@ export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
 
 TAB=$(printf '\t')
 
-# All tmux windows (one call): session, window id, name, @zdev-team tag,
-# pane title. Empty when not inside tmux — the awk below then just lists
-# projects.
-windows() {
+# Live team members, one per line: <lead_project>\t<member>\t<status>\t<wid>.
+# Sourced from the daemon (same as the sidebar). Empty outside tmux — nesting
+# only helps where we can actually jump — or when no team is live.
+teams() {
     [ -n "${TMUX:-}" ] || return 0
-    command -v tmux >/dev/null 2>&1 || return 0
-    tmux list-windows -a \
-        -F "#{session_name}${TAB}#{window_id}${TAB}#{window_name}${TAB}#{@zdev-team}${TAB}#{pane_title}" \
-        2>/dev/null || true
+    command -v zdev-show >/dev/null 2>&1 || return 0
+    zdev-show teams 2>/dev/null || true
 }
 
-# One awk pass: first ingest the window list (NR==FNR), bucketing each
-# session's teammate windows (@zdev-team set) and remembering its first
-# non-teammate window as the orchestrator. Then walk the project list and
-# emit each project — as a jump-to-orchestrator row when a team is running
-# under it, else the classic switch row — with teammates nested below.
+# One awk pass: ingest the team feed (NR==FNR), bucketing each lead project's
+# members with a status glyph and a jump action; then walk the project list and
+# emit each project (a classic switch row) with its members nested below.
 #
 # Each line is "<display><TAB><action…>"; fzf shows only the display
 # (--with-nth=1) and the handler dispatches on the action fields:
-#   P <TAB> <project>            → switch to / start the project session
-#   W <TAB> <session> <TAB> <id> → jump to a specific window
+#   P <TAB> <project>                 → switch to / start the project session
+#   W <TAB> <lead-session> <TAB> <id> → switch to that session, select <id>
+#                                        when present (empty id ⇒ session only)
 build_list() {
-    awk -F"$TAB" -v T="$TAB" '
+    awk -F"$TAB" -v T="$TAB" \
+        -v cWait=$'\033[1;91m' -v cWork=$'\033[36m' -v cDone=$'\033[32m' \
+        -v cDead=$'\033[1;91m' -v cIdle=$'\033[90m' -v cR=$'\033[0m' '
+        # glyph maps a member status to a colored marker (mirrors the sidebar
+        # legend: ● waiting  ◐ working  ◆ done  ✗ dead  · idle/unknown).
+        function glyph(s,   gg,cc) {
+            if      (s=="waiting") { gg="\xe2\x97\x8f"; cc=cWait }
+            else if (s=="working") { gg="\xe2\x97\x90"; cc=cWork }
+            else if (s=="done")    { gg="\xe2\x97\x86"; cc=cDone }
+            else if (s=="dead")    { gg="\xe2\x9c\x97"; cc=cDead }
+            else                   { gg="\xc2\xb7";     cc=cIdle }
+            return cc gg cR
+        }
         NR==FNR {
             if ($0=="") next
-            s=$1; wid=$2; wn=$3; team=$4
-            if (team!="") {
-                n=split($5,a," "); g=(n>0 ? a[1] : "")
-                nested[s]=nested[s] sprintf("  \xe2\x86\xb3 %s  %s%sW%s%s%s%s\n", wn, g, T, T, s, T, wid)
-                hasteam[s]=1
-            } else if (!(s in orchwid)) {
-                orchwid[s]=wid
-            }
+            lead=$1; mem=$2; st=$3; wid=$4
+            lsess=lead; gsub(/\//,"-",lsess)
+            nested[lead]=nested[lead] sprintf("  \xe2\x86\xb3 %s  %s%sW%s%s%s%s\n", \
+                mem, glyph(st), T, T, lsess, T, wid)
+            hasteam[lead]=1
             next
         }
         {
             proj=$0; if (proj=="") next
-            sess=proj; gsub(/\//,"-",sess)
-            if ((sess in hasteam) && (sess in orchwid)) {
-                printf "%s%sW%s%s%s%s\n", proj, T, T, sess, T, orchwid[sess]
-                printf "%s", nested[sess]
-            } else {
-                printf "%s%sP%s%s\n", proj, T, T, proj
-            }
+            printf "%s%sP%s%s\n", proj, T, T, proj
+            if (proj in hasteam) printf "%s", nested[proj]
         }
-    ' <(windows) <(zdev --list-projects 2>/dev/null)
+    ' <(teams) <(zdev --list-projects 2>/dev/null)
 }
 
-SEL=$(build_list | fzf --prompt='go › ' --height=100% --reverse \
+SEL=$(build_list | fzf --prompt='go › ' --height=100% --reverse --ansi \
         --delimiter="$TAB" --with-nth=1) || exit 0
 [ -z "$SEL" ] && exit 0
 
@@ -92,8 +97,11 @@ case "$KIND" in
   W)
     WSESS=$(printf '%s' "$SEL" | cut -d"$TAB" -f3)
     WID=$(printf '%s' "$SEL" | cut -d"$TAB" -f4)
-    [ -z "$WID" ] && exit 0
+    [ -z "$WSESS" ] && exit 0
     tmux switch-client -t "=$WSESS" 2>/dev/null || true
-    exec tmux select-window -t "$WID"
+    # In-process members have no window — landing on the lead session is
+    # the correct destination, so a missing id is not an error.
+    [ -n "$WID" ] && exec tmux select-window -t "$WID"
+    exit 0
     ;;
 esac
