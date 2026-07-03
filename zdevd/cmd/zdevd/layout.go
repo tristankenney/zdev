@@ -211,11 +211,10 @@ func (e *layoutEngine) processWindow(windowID string) {
 	ctx := context.Background()
 
 	// Per-window lock — concurrent hook fires for the SAME window serialize;
-	// fires for different windows run in parallel. mkdir is the atomic
-	// primitive (mirrors the bash). A held lock means another fire is mid
-	// reconcile; skipping is correct.
+	// fires for different windows run in parallel. A held lock means another
+	// fire is mid reconcile; skipping is correct.
 	lock := lockDir(windowID)
-	if err := os.Mkdir(lock, 0o700); err != nil {
+	if !acquireWindowLock(lock) {
 		return
 	}
 	defer func() { _ = os.Remove(lock) }()
@@ -365,6 +364,40 @@ func shSingleQuote(s string) string {
 
 // lockDir is the per-window lock path: tmux ids contain non-path-safe chars
 // ('@'), so they're sanitized the same way the bash did.
+// acquireWindowLock takes the per-window reconcile lock via mkdir (the atomic
+// primitive, mirroring the bash). It returns true when the caller holds the
+// lock and must os.Remove it when done.
+//
+// A lock is only ever held for one reconcile — a handful of tmux execs,
+// sub-second even under load. A lock older than staleLockAge therefore means
+// its holder DIED between mkdir and the deferred remove (tmux server restart,
+// SIGKILL, crash), and nothing else will ever clean it up. Left alone it
+// wedges the window FOREVER: a 23-day-old leaked lock silently suppressed one
+// project's sidebar until it was found by hand. So a stale lock is stolen
+// rather than skipped on.
+func acquireWindowLock(lock string) bool {
+	if err := os.Mkdir(lock, 0o700); err == nil {
+		return true
+	}
+	// Lock exists. Steal it only if it is provably stale.
+	fi, statErr := os.Stat(lock)
+	if statErr != nil || time.Since(fi.ModTime()) < staleLockAge {
+		return false // fresh lock (another fire mid-reconcile) or a stat race
+	}
+	_ = os.Remove(lock)
+	// If a concurrent fire beat us to the steal, its fresh lock makes this
+	// re-mkdir fail — yield to it.
+	return os.Mkdir(lock, 0o700) == nil
+}
+
+// staleLockAge is how long a per-window lock may exist before a subsequent
+// fire treats it as leaked and steals it. A real reconcile holds the lock for
+// a sub-second burst of tmux execs, so 60s is far beyond any legitimate hold
+// yet finite enough that a leaked lock self-heals on the next hook fire
+// instead of wedging the window indefinitely. Matches the bash toggle's
+// `find -mmin +1` reclamation so both layout paths behave identically.
+const staleLockAge = 60 * time.Second
+
 func lockDir(windowID string) string {
 	tmp := os.Getenv("TMPDIR")
 	if tmp == "" {

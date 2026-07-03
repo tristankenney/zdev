@@ -5,9 +5,52 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/layout"
 )
+
+// TestAcquireWindowLock covers the three states of the per-window reconcile
+// lock, including the leaked-lock case that once wedged a project's sidebar
+// for 23 days: a stale lock must be stolen, never skipped on forever.
+func TestAcquireWindowLock(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("free lock is acquired", func(t *testing.T) {
+		lock := filepath.Join(dir, "free.lock")
+		if !acquireWindowLock(lock) {
+			t.Fatal("expected to acquire a free lock")
+		}
+		if _, err := os.Stat(lock); err != nil {
+			t.Errorf("lock dir not created: %v", err)
+		}
+	})
+
+	t.Run("fresh held lock is skipped", func(t *testing.T) {
+		lock := filepath.Join(dir, "fresh.lock")
+		if err := os.Mkdir(lock, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		// Just-created ⇒ well under staleLockAge ⇒ another fire owns it.
+		if acquireWindowLock(lock) {
+			t.Error("stole a fresh lock — would break serialization")
+		}
+	})
+
+	t.Run("stale held lock is stolen", func(t *testing.T) {
+		lock := filepath.Join(dir, "stale.lock")
+		if err := os.Mkdir(lock, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-2 * staleLockAge)
+		if err := os.Chtimes(lock, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if !acquireWindowLock(lock) {
+			t.Fatal("failed to steal a leaked (stale) lock — window would wedge forever")
+		}
+	})
+}
 
 func TestParseInventory(t *testing.T) {
 	// Two work panes + a sidebar. The sidebar's title intentionally

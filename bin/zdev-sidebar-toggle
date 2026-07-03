@@ -97,9 +97,20 @@ process_window() {
   fi
 
   # Per-window lock — concurrent hook fires for the same window are
-  # serialised; fires for different windows can run in parallel.
+  # serialised; fires for different windows can run in parallel. A lock is
+  # only ever held for one sub-second reconcile, so one older than a minute
+  # was leaked by a holder that died (tmux restart, SIGKILL) and would
+  # otherwise wedge this window's sidebar forever — steal it. (Parity with
+  # zdevd layout's acquireWindowLock / staleLockAge.)
   local lock_dir="${TMPDIR:-/tmp}/zdev-sidebar-${window_id//[^a-zA-Z0-9]/_}.lock"
-  mkdir "$lock_dir" 2>/dev/null || return 0
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    if [ -n "$(find "$lock_dir" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      rmdir "$lock_dir" 2>/dev/null || true
+      mkdir "$lock_dir" 2>/dev/null || return 0
+    else
+      return 0
+    fi
+  fi
   # Subshells don't inherit traps cleanly, so manually clean up at the
   # end of the function via a local cleanup.
   _cleanup() { rmdir "$lock_dir" 2>/dev/null || true; }
