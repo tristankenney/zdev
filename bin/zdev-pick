@@ -43,11 +43,15 @@ teams() {
     zdev-show teams 2>/dev/null || true
 }
 
-# One awk pass: ingest the team feed (NR==FNR), bucketing each lead project's
-# members with a status glyph and a jump action; then walk the project list and
-# emit each project (a classic switch row) with its members nested below.
+# One awk pass over BOTH feeds. Lines are told apart by field count, NOT file
+# position: a team line is tab-separated (4 fields), a project line is a bare
+# name (1 field, no tab). This is deliberate — the obvious NR==FNR "first file"
+# trick collapses when the team feed is empty (the common case: no team live),
+# because awk then treats the PROJECTS file as file 1 and never emits it. The
+# team feed always precedes the project list on the command line, so nested[]
+# is fully built before any project row is emitted.
 #
-# Each line is "<display><TAB><action…>"; fzf shows only the display
+# Each output line is "<display><TAB><action…>"; fzf shows only the display
 # (--with-nth=1) and the handler dispatches on the action fields:
 #   P <TAB> <project>                 → switch to / start the project session
 #   W <TAB> <lead-session> <TAB> <id> → switch to that session, select <id>
@@ -66,8 +70,8 @@ build_list() {
             else                   { gg="\xc2\xb7";     cc=cIdle }
             return cc gg cR
         }
-        NR==FNR {
-            if ($0=="") next
+        # Team member line (tab-separated): bucket it under its lead project.
+        NF>=2 {
             lead=$1; mem=$2; st=$3; wid=$4
             lsess=lead; gsub(/\//,"-",lsess)
             nested[lead]=nested[lead] sprintf("  \xe2\x86\xb3 %s  %s%sW%s%s%s%s\n", \
@@ -75,8 +79,9 @@ build_list() {
             hasteam[lead]=1
             next
         }
-        {
-            proj=$0; if (proj=="") next
+        # Project line (bare name): emit a switch row, then any nested members.
+        NF==1 && $0!="" {
+            proj=$0
             printf "%s%sP%s%s\n", proj, T, T, proj
             if (proj in hasteam) printf "%s", nested[proj]
         }
