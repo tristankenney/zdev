@@ -30,6 +30,7 @@ describe() {
         *zdev-prompt-picker*)    echo "insert a saved prompt into this pane" ;;
         *zdev-timeline-popup*)   echo "fleet activity timeline" ;;
         *zdev-help-popup*)       echo "this help" ;;
+        *zdev-announce*)         echo "announcements menu — mute/unmute the 'X needs you' notifications" ;;
         *notify*)                echo "toggle tier-notification mute" ;;
         *) echo "$1" ;;
     esac

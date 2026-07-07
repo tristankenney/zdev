@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Mute/unmute the "X needs you" attention announcements and surface the
+# resulting state via tmux display-message. A thin wrapper over `zdev notify`
+# whose only job is to keep the M-o announcements menu items free of the
+# three-level tmux/shell quoting that inlining `$(...)` + display-message
+# would require. Usage mirrors `zdev notify`:
+#
+#   zdev-announce mute [1h|forever|...]
+#   zdev-announce unmute
+#   zdev-announce toggle
+#   zdev-announce status
+#
+# Hook/menu-spawned shells inherit the tmux server's stripped PATH, so the
+# zdev binary is resolved by absolute path first (ZDEV_BIN override, then the
+# conventional ~/.local/bin), falling back to PATH for dev shells.
+set -euo pipefail
+
+zdev_bin="${ZDEV_BIN:-$HOME/.local/bin/zdev}"
+[ -x "$zdev_bin" ] || zdev_bin="$(command -v zdev 2>/dev/null || echo zdev)"
+
+result="$("$zdev_bin" notify "$@" 2>&1)" || true
+
+# In tmux: flash the result on the status line (no popup). Outside tmux
+# (plain CLI use): just print it.
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    tmux display-message "$result" 2>/dev/null || printf '%s\n' "$result"
+else
+    printf '%s\n' "$result"
+fi
