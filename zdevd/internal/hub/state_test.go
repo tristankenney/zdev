@@ -186,6 +186,51 @@ func TestApplyPortsRefresh(t *testing.T) {
 	}
 }
 
+// TestApplyNotifSeen_WorkingDone verifies the hook-driven working lifecycle:
+// a `working` NotifSeen stamps HookWorkTS and clears any pending wait; a real
+// wait or a `done` turn-end zeroes HookWorkTS again.
+func TestApplyNotifSeen_WorkingDone(t *testing.T) {
+	t.Run("working stamps HookWorkTS and clears a pending wait", func(t *testing.T) {
+		s := newState()
+		// A wait is pending from a prior turn.
+		applyEvent(s, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 100, Kind: proto.WaitKindPermission}, nil)
+		if s.projectData["alpha"].WaitStartedTS == 0 {
+			t.Fatal("precondition: wait not recorded")
+		}
+		// New turn begins.
+		applyEvent(s, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 200, Kind: proto.WaitKindWorking}, nil)
+		pd := s.projectData["alpha"]
+		if pd.HookWorkTS != 200 {
+			t.Errorf("HookWorkTS = %d; want 200", pd.HookWorkTS)
+		}
+		if pd.WaitStartedTS != 0 || pd.HookWaitTS != 0 || pd.WaitKind != "" {
+			t.Errorf("working did not clear the pending wait: %+v", pd)
+		}
+	})
+
+	t.Run("done zeroes HookWorkTS", func(t *testing.T) {
+		s := newState()
+		applyEvent(s, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 200, Kind: proto.WaitKindWorking}, nil)
+		applyEvent(s, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 300, Kind: proto.WaitKindDone}, nil)
+		if got := s.projectData["alpha"].HookWorkTS; got != 0 {
+			t.Errorf("HookWorkTS after done = %d; want 0", got)
+		}
+	})
+
+	t.Run("a real wait supersedes working", func(t *testing.T) {
+		s := newState()
+		applyEvent(s, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 200, Kind: proto.WaitKindWorking}, nil)
+		applyEvent(s, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 300, Kind: proto.WaitKindPermission}, nil)
+		pd := s.projectData["alpha"]
+		if pd.HookWorkTS != 0 {
+			t.Errorf("HookWorkTS after a wait = %d; want 0", pd.HookWorkTS)
+		}
+		if pd.WaitStartedTS != 300 {
+			t.Errorf("WaitStartedTS = %d; want 300", pd.WaitStartedTS)
+		}
+	})
+}
+
 // TestApplyNotifSeen verifies WaitStartedTS is set from NotifSeen.
 func TestApplyNotifSeen(t *testing.T) {
 	h, cleanup := startHub(t)

@@ -7,8 +7,12 @@
 #          triage ranks these first)
 #          "needs-decision" / "question" / "asking" → ●  (real question)
 #          "waiting" / "needs-input" → ●  (untagged wait; triage treats as decision)
-#          "done" / "idle" / "finished" → ◆  (just-finished, no action urgent)
-#          "clear" / "working" → no marker
+#          "done" / "idle" / "finished" → ◆  (turn ended; clears the working
+#          heartbeat + any wait — fired by the Stop hook)
+#          "working" → ◐  (turn in progress; fired by UserPromptSubmit and the
+#          PreToolUse heartbeat so the daemon shows working even when the pane
+#          title parks at a bare "claude" during a blocking hook)
+#          "clear" → no marker (explicit release; compat/manual)
 #          "session-end" (with --json) → reads .reason from the SessionEnd
 #          hook payload: clean exits (clear/logout/exit/prompt_input_exit)
 #          behave like "done"; anything else records an unclean death for
@@ -97,13 +101,36 @@ case "$STATE" in
 esac
 
 case "$STATE" in
-    clear|working)
+    working)
+        # Turn in progress (UserPromptSubmit / PreToolUse heartbeat). WRITE a
+        # working marker so the daemon shows AttWorking even while the pane
+        # title is parked at a bare "claude" during a blocking PostToolUse
+        # hook — the gap the title classifier reads as idle. Must WRITE, not
+        # delete: fsnotify deletions don't wake the daemon's watcher (see the
+        # alive branch). Re-fired per tool call; each write refreshes the
+        # daemon's freshness stamp.
+        TITLE="$TOOL"
+        if [ -n "$SESSION" ]; then
+            printf '%s\nworking\n' "$(date +%s)" > "$TS_FILE" 2>/dev/null || true
+        fi
+        ;;
+    clear)
+        # Explicit marker release (kept for compatibility / manual use). A
+        # deletion is fine here — clear is not a state the daemon must be
+        # woken for; the title path resumes authority.
         TITLE="$TOOL"
         [ -n "$SESSION" ] && rm -f "$TS_FILE" 2>/dev/null
         ;;
     done|idle|finished)
+        # Turn ended (Stop). WRITE a done marker (was a delete) so the daemon
+        # gets an explicit turn-end event: it clears the working heartbeat and
+        # any pending wait the instant the turn finishes, instead of waiting
+        # for the freshness window to decay. Sets no persistent state — the
+        # post-turn idle/finished look is title-derived, as before.
         TITLE="◆ $TOOL"
-        [ -n "$SESSION" ] && rm -f "$TS_FILE" 2>/dev/null
+        if [ -n "$SESSION" ]; then
+            printf '%s\ndone\n' "$(date +%s)" > "$TS_FILE" 2>/dev/null || true
+        fi
         ;;
     alive|started|resumed)
         # Liveness declaration (NOW#3): fired by the SessionStart hook so

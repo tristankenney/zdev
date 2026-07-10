@@ -47,6 +47,16 @@ type AttentionInputs struct {
 	// chip doesn't silently drop.
 	PrevAttention proto.Attention
 
+	// HookWorkTS is the unix-second stamp of the most recent hook-fired
+	// "turn in progress" signal (UserPromptSubmit / PreToolUse). A stamp
+	// fresher than hookWorkFreshSec derives AttWorking even when no pane
+	// title shows the braille spinner — the case that matters is a blocking
+	// PostToolUse hook (e.g. `composer run fix`) during which Claude Code
+	// parks the title at a bare "claude" that the classifier reads as idle.
+	// The turn-end Stop hook zeroes it (see state.go NotifSeen), so a fresh
+	// non-zero stamp means the turn genuinely has not ended. 0 = no signal.
+	HookWorkTS int64
+
 	// WaitConfirmed reports whether the in-flight wait is REAL by either
 	// measure the system trusts: it was committed to the display (it
 	// out-lived the waiting dwell) or a hook receipt confirms it
@@ -77,7 +87,8 @@ type AttentionResult struct {
 //	prev=Waiting AND confirmed AND NOT visited-since-wait-start  → Waiting   (latch — agent self-exited before user noticed;
 //	                                                                          confirmed = displayed or hook-receipted, so a
 //	                                                                          dwell-suppressed blip can never arm it)
-//	title-working                                                → Working
+//	title-working OR fresh HookWorkTS                            → Working   (hook heartbeat bridges the title parking at a
+//	                                                                          bare "claude" during a blocking PostToolUse hook)
 //	title-finished                                               → Finished
 //	otherwise                                                    → Idle
 //
@@ -100,6 +111,12 @@ func DeriveAttention(in AttentionInputs, now int64) AttentionResult {
 
 	visitedSinceWait := in.LastVisitTS > 0 && in.LastVisitTS >= in.WaitStartedTS
 
+	// Hook-fired working heartbeat, still fresh. Cleared at the source by any
+	// wait/done/death NotifSeen (state.go), so a fresh stamp is trustworthy
+	// evidence the turn is live — it need not agree with the (possibly parked)
+	// title.
+	hookWork := in.HookWorkTS > 0 && now-in.HookWorkTS <= hookWorkFreshSec
+
 	switch {
 	case hasWait:
 		ts := in.WaitStartedTS
@@ -115,7 +132,7 @@ func DeriveAttention(in AttentionInputs, now int64) AttentionResult {
 		// the lower cases and clear.
 		return AttentionResult{Attention: proto.AttWaiting, WaitStartedTS: in.WaitStartedTS}
 
-	case hasWork:
+	case hasWork || hookWork:
 		return AttentionResult{Attention: proto.AttWorking, WaitStartedTS: 0}
 
 	case hasDone:
@@ -133,6 +150,16 @@ func DeriveAttention(in AttentionInputs, now int64) AttentionResult {
 // slow title-only path instead of letting an old receipt fast-track an
 // unrelated ✳ blip.
 const hookWaitFreshSec = 30
+
+// hookWorkFreshSec bounds how long a HookWorkTS stamp keeps deriving
+// AttWorking without a refresh. The PreToolUse hook re-stamps on every tool
+// call, so an actively-working turn stays fresh continuously; the window only
+// has to bridge the longest gap between hook fires — a blocking PostToolUse
+// fixer with no intervening tool. 180s covers the measured worst case (a
+// multi-file `composer run fix`/rector pass) with margin. Past it, a turn
+// that somehow fired no Stop (hard crash) decays to the title path rather
+// than latching "working" forever; death detection also reclaims it.
+const hookWorkFreshSec = 180
 
 // applyDwell is the minimum-dwell debounce layered on top of DeriveAttention.
 // It decides the DISPLAYED attention from the raw derived value, suppressing

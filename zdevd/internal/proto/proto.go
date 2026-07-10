@@ -440,6 +440,26 @@ const WaitKindAlive = "alive"
 // appears on the wire.
 const WaitKindAck = "ack"
 
+// WaitKindWorking is the notif-channel "turn in progress" declaration
+// written by the UserPromptSubmit and PreToolUse hooks. It stamps
+// projectData.HookWorkTS so DeriveAttention can show AttWorking even when
+// the pane title is not a braille spinner — most importantly while a
+// blocking PostToolUse hook (e.g. `composer run fix`) runs and Claude Code
+// parks the title at a bare "claude", which the title classifier reads as
+// idle. Title-based working (the braille spinner) remains the fallback for
+// agents without hooks. Cleared by any real wait, a Done turn-end, a
+// death, or freshness decay. Never appears on the wire.
+const WaitKindWorking = "working"
+
+// WaitKindDone is the notif-channel turn-end declaration written by the
+// Stop hook. It is the explicit counterpart to Working: it clears
+// HookWorkTS (and any pending wait) the instant a turn ends, so a finished
+// session releases "working" immediately instead of lingering until the
+// HookWorkTS freshness window decays. It sets no persistent marker — the
+// post-turn idle/finished state is title-derived as before. Never appears
+// on the wire.
+const WaitKindDone = "done"
+
 type Project struct {
 	Name             string    `json:"name"`
 	Status           string    `json:"status"`

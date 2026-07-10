@@ -299,6 +299,19 @@ type projectData struct {
 	// by the dead/alive/ack notif branches; otherwise allowed to go
 	// stale naturally (the bypass only honors fresh stamps).
 	HookWaitTS int64
+
+	// HookWorkTS is the unix-second stamp of the most recent HOOK-fired
+	// "turn in progress" signal (NotifSeen working branch — the
+	// UserPromptSubmit / PreToolUse hooks). DeriveAttention treats a fresh
+	// stamp as AttWorking, which lets a session show "working" even when
+	// the pane title has parked at a bare "claude" during a blocking
+	// PostToolUse hook — the exact gap the title-only classifier misses.
+	// The hook heartbeat (one stamp per tool use) keeps it fresh through a
+	// turn; a Done turn-end, any real wait, or a death zero it immediately,
+	// and it otherwise decays past hookWorkFreshSec (the title path resumes
+	// authority). Never persisted — a working turn does not survive a daemon
+	// restart; it re-derives from the title or the next hook.
+	HookWorkTS int64
 }
 
 // prCount holds the last-known PR aggregate counts for a project.
@@ -815,6 +828,37 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.DeadReason = e.Summary
 			pd.DeadNotified = false
 			pd.HookWaitTS = 0
+			pd.HookWorkTS = 0
+			pd.WaitStartedTS = 0
+			pd.WaitKind = ""
+			pd.WaitSummary = ""
+			pd.WaitContext = ""
+			pd.WaitNotifiedTiers = 0
+		case e.Kind == proto.WaitKindWorking:
+			// Turn in progress (UserPromptSubmit / PreToolUse). Stamp the
+			// working heartbeat and clear any prior wait/death — a fresh turn
+			// supersedes a stale "done"/"waiting" from the previous one. Does
+			// NOT touch lastVisitTS: working is agent activity, not an
+			// operator acknowledgement.
+			pd.HookWorkTS = e.Timestamp
+			pd.HookWaitTS = 0
+			pd.WaitStartedTS = 0
+			pd.WaitKind = ""
+			pd.WaitSummary = ""
+			pd.WaitContext = ""
+			pd.WaitNotifiedTiers = 0
+			pd.DeadSinceTS = 0
+			pd.DeadReason = ""
+			pd.DeadNotified = false
+		case e.Kind == proto.WaitKindDone:
+			// Turn ended (Stop). The explicit counterpart to Working: drop the
+			// working heartbeat AND any pending wait the instant the turn
+			// ends, so "working" releases immediately rather than lingering
+			// until HookWorkTS decays. Sets no marker — the post-turn
+			// idle/finished state is title-derived, exactly as when Stop
+			// removed the notif file in the pre-working-signal design.
+			pd.HookWorkTS = 0
+			pd.HookWaitTS = 0
 			pd.WaitStartedTS = 0
 			pd.WaitKind = ""
 			pd.WaitSummary = ""
@@ -831,6 +875,7 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.DeadReason = ""
 			pd.DeadNotified = false
 			pd.HookWaitTS = 0
+			pd.HookWorkTS = 0
 			pd.WaitStartedTS = 0
 			pd.WaitKind = ""
 			pd.WaitSummary = ""
@@ -852,6 +897,9 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.WaitKind = e.Kind
 			pd.WaitSummary = e.Summary
 			pd.HookWaitTS = e.Timestamp
+			// A real wait supersedes an in-progress turn: the agent stopped
+			// generating to ask for input, so drop the working heartbeat.
+			pd.HookWorkTS = 0
 			pd.DeadSinceTS = 0
 			pd.DeadReason = ""
 			pd.DeadNotified = false

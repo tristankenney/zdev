@@ -155,6 +155,9 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 				// with its title.
 				WaitConfirmed: pd.Attention == proto.AttWaiting ||
 					(pd.HookWaitTS > 0 && now-pd.HookWaitTS <= hookWaitFreshSec),
+				// Hook-fired working heartbeat: shows AttWorking even when the
+				// title has parked at a bare "claude" during a blocking hook.
+				HookWorkTS: pd.HookWorkTS,
 			}, now)
 			pd.AttentionDerived = ar.Attention
 			pd.WaitStartedTS = ar.WaitStartedTS

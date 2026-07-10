@@ -54,6 +54,35 @@ func TestDeriveAttention(t *testing.T) {
 			want: AttentionResult{Attention: proto.AttWorking, WaitStartedTS: 0},
 		},
 		{
+			// The load-bearing case: title parked at a bare "claude" (idle by
+			// the classifier) during a blocking hook, but a fresh hook working
+			// stamp keeps the session showing Working.
+			name: "working: fresh HookWorkTS with a parked (idle) title",
+			in: AttentionInputs{
+				Titles:     []string{"claude", "shell"},
+				HookWorkTS: now - 10, // well within hookWorkFreshSec
+			},
+			want: AttentionResult{Attention: proto.AttWorking, WaitStartedTS: 0},
+		},
+		{
+			name: "working: stale HookWorkTS falls back to title (idle)",
+			in: AttentionInputs{
+				Titles:     []string{"claude"},
+				HookWorkTS: now - hookWorkFreshSec - 1, // just decayed
+			},
+			want: AttentionResult{Attention: proto.AttIdle, WaitStartedTS: 0},
+		},
+		{
+			// A wait always wins over a working heartbeat (in production the
+			// wait NotifSeen also zeroes HookWorkTS at the source).
+			name: "waiting title beats a fresh HookWorkTS",
+			in: AttentionInputs{
+				Titles:     []string{"✳ Resolve the conflict"},
+				HookWorkTS: now - 1,
+			},
+			want: AttentionResult{Attention: proto.AttWaiting, WaitStartedTS: now},
+		},
+		{
 			name: "finished: ◆ finished",
 			in:   AttentionInputs{Titles: []string{"◆ claude"}},
 			want: AttentionResult{Attention: proto.AttFinished, WaitStartedTS: 0},
