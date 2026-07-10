@@ -71,6 +71,25 @@ done
 # above must not suppress "binaries present" when they all are.
 [[ $FAILS -eq $bin_fails ]] && ok "zdevd, zdev-show, zdev-sidebar-render, zdev-notify, zdev present"
 
+# The supervised daemon runs the bare binary with no subcommand; `zdevd
+# mcp` sidecars (registered as MCP servers in agent configs) and transient
+# verbs like `zdevd layout`/`zdevd cursor` share the executable name, so
+# `pgrep -x zdevd` matches them too. Pick the process whose command line is
+# a single token — the daemon — so the stale-build and running checks don't
+# key off an unrelated long-lived sidecar (which mtime-compares as stale
+# forever and cries wolf).
+daemon_pid() {
+  local p args
+  for p in $(pgrep -x zdevd 2>/dev/null); do
+    args=$(ps -o args= -p "$p" 2>/dev/null)
+    if [[ $(printf '%s' "$args" | wc -w) -eq 1 ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ---------- 2. daemon ----------
 sect "Daemon"
 if [[ "$OS" == "Linux" ]]; then
@@ -78,7 +97,7 @@ if [[ "$OS" == "Linux" ]]; then
     ok "systemd unit zdevd.service active"
   else
     state=$(systemctl --user is-active zdevd.service 2>/dev/null || echo "no user bus")
-    if pgrep -x zdevd >/dev/null 2>&1; then
+    if daemon_pid >/dev/null 2>&1; then
       warn "zdevd running but NOT via systemd (unit: $state) — won't survive logout/reboot"
       fix "systemctl --user enable --now zdevd.service   (and: loginctl enable-linger \$USER)"
     else
@@ -87,7 +106,7 @@ if [[ "$OS" == "Linux" ]]; then
     fi
   fi
 else
-  if pgrep -x zdevd >/dev/null 2>&1; then
+  if daemon_pid >/dev/null 2>&1; then
     ok "zdevd process running"
   else
     bad "zdevd not running"
@@ -97,7 +116,7 @@ fi
 # Stale-binary check: a rebuilt zdevd does nothing until the RUNNING
 # process is restarted (this exact gap shipped a fixed binary to disk
 # while the buggy daemon kept running through several install cycles).
-zpid=$(pgrep -x zdevd 2>/dev/null | head -1)
+zpid=$(daemon_pid)
 if [[ -n "$zpid" ]]; then
   zbin=$(readlink -f "$HOME/.local/bin/zdevd" 2>/dev/null || readlink "$HOME/.local/bin/zdevd" 2>/dev/null || echo "$HOME/.local/bin/zdevd")
   if [[ -f "$zbin" ]]; then
