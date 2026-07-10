@@ -58,10 +58,22 @@ Optional:
 
 ## Install
 
+One-liner (clones to `~/workspace/zdev` and installs from the checkout):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/tristankenney/zdev/main/install.sh | bash
+```
+
+Or clone first and run it yourself:
+
 ```sh
 git clone git@github.com:tristankenney/zdev.git ~/workspace/zdev
 ~/workspace/zdev/install.sh
 ```
+
+Both end up in the same place — the piped form bootstraps the clone
+(override the location with `ZDEV_INSTALL_DIR=...`), then re-runs itself
+from it. Re-running against an existing checkout reuses it as-is.
 
 The installer:
 
