@@ -101,6 +101,55 @@ Pushover **emergency** priority (2) is deliberately *not* used: it requires
 fatigue waiting to happen for a fleet babysitter. If you want it for deaths,
 wrap the adapter and pass `priority=2` yourself.
 
+## Fan-out: desktop banner AND phone push
+
+`ZDEV_NOTIFY_CMD` deliberately *replaces* the desktop banner. When you want
+both — or several push channels at once — set `ZDEV_NOTIFY_CMDS` to a
+**newline-separated** list of backends. Each entry is a command line run
+exactly like `ZDEV_NOTIFY_CMD` (via `sh -c`, same `ZDEV_NOTIFY_*` payload,
+same ~1.5s deadline), and the literal entry `desktop` stands in for the
+platform notifier (terminal-notifier / notify-send). The bundled adapters
+`zdev-notify-ntfy` and `zdev-notify-pushover` are the intended fan-out
+targets:
+
+```sh
+# banner on the desk + push to the phone, from every crossing
+export ZDEV_NOTIFY_CMDS="desktop
+zdev-notify-ntfy"
+```
+
+Rules of the road:
+
+- Newline is the separator (a shell command line can contain colons,
+  commas, and spaces — but never a newline). Blank lines and surrounding
+  whitespace are ignored. In a POSIX rc file without `$'…'`, a quoted
+  multi-line string like the block above works everywhere.
+- **Unset (or blank) means off.** Without `ZDEV_NOTIFY_CMDS`, resolution
+  behaves exactly as before: `ZDEV_NOTIFY_CMD` alone, else the platform
+  banner.
+- `ZDEV_NOTIFY_CMD`, when also set, joins the fan-out as the first entry —
+  existing wiring keeps firing when you add a list next to it.
+- Every entry fires independently, each in its own child process under its
+  own deadline. One broken or hung backend can't block the others, and a
+  `desktop` entry that can't resolve (no terminal-notifier installed) is
+  logged and skipped.
+- The runtime mute (`M-o` announcements menu / `zdevd notify-mute`) gates
+  the whole fan-out — muted means *no* entry fires, desktop or push.
+- The budget rule above applies per entry: each backend should finish well
+  under 1.5s and always exit 0.
+
+The digest spooler composes naturally: put `zdev-notify-digest` in the
+list (with `ZDEV_DIGEST_BACKEND` pointing at your push adapter) and keep
+`desktop` immediate —
+
+```sh
+export ZDEV_DIGEST_BACKEND="zdev-notify-ntfy"
+export ZDEV_NOTIFY_CMDS="desktop
+zdev-notify-digest"
+```
+
+gives you an instant banner at the desk and a coalesced push off it.
+
 ## The fleet digest (the durable wedge)
 
 Per-session push parity is conceded to Remote Control on purpose. What zdev
