@@ -21,8 +21,15 @@ if [[ -f "$_zdev_env" ]]; then
   done < "$_zdev_env"
 fi
 
+# Strict flag parsing: a typo'd flag silently running the NON-probe
+# doctor and reporting "healthy" is exactly the false confidence this
+# tool exists to kill.
 PROBE=0
-[[ "${1:-}" == "--probe" ]] && PROBE=1
+case "${1:-}" in
+  "") ;;
+  --probe) PROBE=1 ;;
+  *) printf 'zdev doctor: unknown argument %q\nusage: zdev doctor [--probe]\n' "${1}" >&2; exit 2 ;;
+esac
 
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   C_OK=$'\033[32m'; C_WARN=$'\033[1;33m'; C_ERR=$'\033[1;31m'
@@ -48,6 +55,7 @@ case ":$PATH:" in
   *) bad "~/.local/bin NOT on PATH — zdev commands won't resolve"
      fix "echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.$(basename "${SHELL:-bash}")rc && exec \$SHELL" ;;
 esac
+bin_fails=$FAILS
 for b in zdevd zdev-show zdev-sidebar-render zdev-notify zdev; do
   if [[ -x "$HOME/.local/bin/$b" || -L "$HOME/.local/bin/$b" ]]; then
     if [[ -L "$HOME/.local/bin/$b" && ! -e "$HOME/.local/bin/$b" ]]; then
@@ -59,7 +67,9 @@ for b in zdevd zdev-show zdev-sidebar-render zdev-notify zdev; do
     fix "re-run install.sh from the zdev checkout"
   fi
 done
-[[ $FAILS -eq 0 ]] && ok "zdevd, zdev-show, zdev-sidebar-render, zdev-notify, zdev present"
+# Gate the summary line on THIS section's failures — a PATH failure
+# above must not suppress "binaries present" when they all are.
+[[ $FAILS -eq $bin_fails ]] && ok "zdevd, zdev-show, zdev-sidebar-render, zdev-notify, zdev present"
 
 # ---------- 2. daemon ----------
 sect "Daemon"
@@ -123,6 +133,28 @@ fi
 
 # ---------- 3. tmux ----------
 sect "tmux"
+# Static conf check FIRST — it works with no server running, and it
+# catches the dead-end the live checks can't name: a source-file line
+# pointing at a moved/deleted checkout, which tmux fails on at startup
+# and then never loads the zdev hooks. Note install.sh will NOT repair
+# a dangling line (it sees "zdev.tmux.conf" mentioned and leaves the
+# conf alone) — the fix is editing the path by hand.
+tc="$HOME/.tmux.conf"
+if grep -q "zdev.tmux.conf" "$tc" 2>/dev/null; then
+  tc_src=$(awk '$1 ~ /^source(-file)?$/ && /zdev\.tmux\.conf/ {print $NF; exit}' "$tc")
+  tc_src="${tc_src/#\~/$HOME}"
+  if [[ -n "$tc_src" && ! -f "$tc_src" ]]; then
+    bad "~/.tmux.conf sources $tc_src — file does NOT exist (moved the checkout?)"
+    fix "edit ~/.tmux.conf: point the source-file line at <zdev-repo>/config/zdev.tmux.conf"
+  else
+    ok "~/.tmux.conf sources zdev.tmux.conf"
+  fi
+elif grep -q "zdev-sidebar-toggle" "$tc" 2>/dev/null; then
+  ok "~/.tmux.conf wires zdev manually — assuming you own that integration"
+else
+  bad "~/.tmux.conf has no zdev integration — hooks and keys never load"
+  fix "re-run install.sh (appends the source-file line), or add: source-file <zdev-repo>/config/zdev.tmux.conf"
+fi
 if ! tmux info >/dev/null 2>&1; then
   warn "no tmux server running — start tmux, then: zdev <project>"
 else
@@ -191,6 +223,20 @@ else
     ok "projects file: $total project(s), all dirs exist"
   fi
 fi
+# gh powers the sidebar's PR/CI chips (zdev-sidebar-pr-refresh). Warn,
+# not fail: zdev works without it, the chips just stay blank — but that
+# blankness looks like a bug unless something names the cause.
+if command -v gh >/dev/null 2>&1; then
+  if gh auth status >/dev/null 2>&1; then
+    ok "gh authenticated (PR/CI chips live)"
+  else
+    warn "gh installed but NOT authenticated — PR/CI chips stay blank"
+    fix "gh auth login"
+  fi
+else
+  warn "gh (GitHub CLI) not installed — PR/CI chips are no-ops"
+  fix "install gh (brew install gh / apt install gh), then: gh auth login"
+fi
 
 # ---------- 5. agent hooks ----------
 sect "Agent integration"
@@ -214,7 +260,6 @@ if [[ -n "$oc_root" ]]; then
   done
   if [[ "$linked" -ge 1 ]]; then
     ok "opencode plugin linked ($linked location(s) under $oc_root)"
-    dim_note=1
   else
     bad "opencode detected but zdev plugin NOT linked"
     fix "zdev-install-hooks  (then restart running opencode sessions)"
@@ -231,6 +276,16 @@ if [[ -n "$oc_root" ]]; then
   elif [[ -n "$oclog" && "$linked" -ge 1 ]]; then
     warn "opencode log never mentions the plugin — running session may predate the install"
     fix "restart opencode (plugins load at session start)"
+  fi
+fi
+# Codex wires in via notify = ["…/zdev-codex-notify"] in config.toml
+# (mirrors zdev-install-hooks' install_codex detection).
+if [[ -d "$HOME/.codex" ]]; then
+  if grep -q "zdev-codex-notify" "$HOME/.codex/config.toml" 2>/dev/null; then
+    ok "codex notify adapter configured"
+  else
+    warn "codex detected but zdev notify adapter NOT configured — codex sessions invisible to zdev"
+    fix "zdev-install-hooks  (then restart running codex sessions)"
   fi
 fi
 # Notif channel plumbing.
