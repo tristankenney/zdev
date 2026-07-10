@@ -67,6 +67,21 @@ identical titles.
 The flat ~0.5s pulse read as alarm from second one. Now paced by wait age on
 the notifier's tiers: ~2.1s cycle < 60s, ~1.1s < 300s, ~0.5s after.
 
+### ✅ 3d. Hook-driven working state *(dogfood feedback, 2026-07-10)*
+Working was the only attention state with no hook signal — derived purely from
+the braille-spinner pane title. During a blocking PostToolUse hook (a multi-file
+`composer run fix`), Claude Code parks the title at a bare "claude", which the
+classifier reads as idle, so an actively-working session showed alive/idle for
+minutes and looked dead. Added an event-driven working signal mirroring the
+`HookWaitTS` receipt path: `working` (UserPromptSubmit + a PreToolUse heartbeat)
+stamps `projectData.HookWorkTS`; `done` (Stop) and any real wait/death zero it;
+`DeriveAttention` shows Working while the stamp is fresh (180s, bridging the
+longest blocking-hook gap). Title-working stays the fallback for hookless
+agents. Both turn edges are now hook-driven.
+- **Kill (live):** if the heartbeat's per-tool `zdev-notify` fire adds
+  perceptible latency, or working latches wrongly on a crashed turn (Stop
+  never fires) past the 180s decay — narrow to UserPromptSubmit-only.
+
 ### ⚰️ 3c. Sidebar triage strip — demoted to opt-in *(dogfood verdict, 2026-06-06)*
 The strip's kill criterion fired in two days: at ~10 concurrent sessions it
 only duplicates rows that remain in the main list — a second list, not a
