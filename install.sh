@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # ---------- output helpers ----------
 # Color only on a tty and when NO_COLOR is unset (https://no-color.org).
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
@@ -33,6 +31,69 @@ symlink() {
   fi
   ln -s "$src" "$dst"
 }
+
+# ---------- self-bootstrap (curl -fsSL .../install.sh | bash) ----------
+# When run from inside a checkout, REPO resolves to it and the install
+# proceeds exactly as before. When run WITHOUT a checkout — piped from
+# curl, or copied somewhere on its own — clone the repo and re-exec the
+# cloned install.sh, so every install runs from a real checkout (the
+# symlinks into ~/.local/bin and the tmux source-file line all point
+# back into it; a checkout is not optional).
+#
+# Knobs (bootstrap only — no effect when already inside a checkout):
+#   ZDEV_INSTALL_DIR   where to clone   (default: $ZDEV_WORKSPACE/zdev,
+#                                        i.e. ~/workspace/zdev)
+#   ZDEV_INSTALL_REPO  what to clone    (default: the GitHub repo)
+looks_like_zdev_checkout() {
+  # Structural check, not a path check: a dir is a zdev checkout iff it
+  # has this script plus the two things the install wires up (bin/
+  # scripts, the zdevd Go module). BASH_SOURCE alone can't be trusted —
+  # a lone install.sh copied into ~/Downloads resolves fine but points
+  # at nothing installable.
+  [[ -f "$1/install.sh" && -f "$1/bin/zdev" && -d "$1/zdevd" ]]
+}
+
+REPO=""
+_src="${BASH_SOURCE[0]:-}"
+# Piped scripts leave BASH_SOURCE unset or pointing at a non-file
+# ("bash", "/dev/stdin", ...); only trust it when it's a real file AND
+# its directory passes the structural check.
+if [[ -n "$_src" && -f "$_src" ]]; then
+  _dir="$(cd "$(dirname "$_src")" && pwd)"
+  looks_like_zdev_checkout "$_dir" && REPO="$_dir"
+fi
+
+if [[ -z "$REPO" ]]; then
+  head_ "No zdev checkout here — bootstrapping one"
+  INSTALL_DIR="${ZDEV_INSTALL_DIR:-${ZDEV_WORKSPACE:-$HOME/workspace}/zdev}"
+  INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
+  INSTALL_REPO="${ZDEV_INSTALL_REPO:-https://github.com/tristankenney/zdev}"
+  if looks_like_zdev_checkout "$INSTALL_DIR"; then
+    # Idempotent re-run: an existing checkout is reused AS-IS — never
+    # pulled or otherwise mutated behind the user's back.
+    ok_ "existing checkout at $INSTALL_DIR — reusing it (not pulling)"
+  elif [[ -e "$INSTALL_DIR" ]] && [[ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]]; then
+    err_ "$INSTALL_DIR exists and is NOT a zdev checkout — refusing to touch it"
+    dim_ "move it aside, or point the install elsewhere:"
+    dim_ "  ZDEV_INSTALL_DIR=~/somewhere/zdev  curl -fsSL .../install.sh | bash"
+    exit 1
+  else
+    command -v git >/dev/null 2>&1 || {
+      err_ "git is required to bootstrap (clone $INSTALL_REPO)"
+      exit 1
+    }
+    dim_ "cloning $INSTALL_REPO → $INSTALL_DIR"
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone -- "$INSTALL_REPO" "$INSTALL_DIR"
+  fi
+  # Re-exec the checkout's install.sh (arguments pass through). Piped
+  # runs have the script itself on stdin — reattach the terminal when
+  # there is one so the interactive prompts (workspace dir) still work.
+  if [[ ! -t 0 ]] && { exec 3</dev/tty; } 2>/dev/null; then
+    exec bash "$INSTALL_DIR/install.sh" "$@" <&3
+  fi
+  exec bash "$INSTALL_DIR/install.sh" "$@"
+fi
 
 head_ "Checking prerequisites"
 OS="$(uname -s)"
