@@ -5,6 +5,17 @@
 //
 // Backend resolution (ResolveNotifier, called once at daemon startup):
 //
+//	ZDEV_NOTIFY_CMDS set → fan-out: a newline-separated list of exec
+//	    command lines (each run exactly like ZDEV_NOTIFY_CMD below), with
+//	    the literal entry `desktop` standing in for the platform banner.
+//	    ZDEV_NOTIFY_CMD, when also set, joins the fan-out as the first
+//	    entry. Every entry fires on every notification — desktop banner
+//	    AND phone push (bin/zdev-notify-ntfy, bin/zdev-notify-pushover)
+//	    simultaneously. Each entry is fire-and-forget with its own child
+//	    process and deadline, so one slow or broken backend never blocks
+//	    the others. Blank/whitespace-only ZDEV_NOTIFY_CMDS is treated as
+//	    unset: the legacy single-backend resolution below applies
+//	    unchanged.
 //	ZDEV_NOTIFY_CMD set → ExecNotifier: the user-owned transport. zdev
 //	    runs the command via `sh -c` with the payload in ZDEV_NOTIFY_*
 //	    env vars and never learns what it does — ntfy, Pushover, a
@@ -12,8 +23,7 @@
 //	    keeps network code out of the daemon (5-dep / zero-network
 //	    ethos): remote push is the USER's one-liner, not zdev's client.
 //	    Replaces (not composes with) the platform banner — a script
-//	    that wants both adds its own `notify-send`/`terminal-notifier`
-//	    line. Fan-out composition is a separate roadmap item.
+//	    that wants both adds a `desktop` entry to ZDEV_NOTIFY_CMDS.
 //	darwin → terminal-notifier (resolved on PATH), title/message/sound.
 //	linux  → notify-send (resolved on PATH), flat banners — no
 //	    sound→urgency mapping; desktop environments honor urgency
@@ -111,14 +121,27 @@ func ResolveNotifier() (fire func(Notification), desc string, ok bool) {
 	}, desc, true
 }
 
-// resolveBackend picks the platform-specific notifier without the
-// mute-guard wrapper. Split out so the wrapper composition stays
-// readable and tests of the underlying backends don't have to thread
-// the sentinel file through every fixture.
+// resolveBackend picks the notifier composition without the mute-guard
+// wrapper. Split out so the wrapper composition stays readable and tests
+// of the underlying backends don't have to thread the sentinel file
+// through every fixture. The fan-out lives HERE, below ResolveNotifier's
+// single mute wrapper, so no backend can ever fire without passing the
+// mute check.
 func resolveBackend() (fire func(Notification), desc string, ok bool) {
+	specs := parseNotifyBackends(os.Getenv("ZDEV_NOTIFY_CMD"), os.Getenv("ZDEV_NOTIFY_CMDS"))
+	if specs != nil {
+		return resolveFanOut(specs)
+	}
+	// Legacy single-backend path — ZDEV_NOTIFY_CMDS unset/blank keeps
+	// this branch byte-identical to the pre-fan-out behavior.
 	if cmd := os.Getenv("ZDEV_NOTIFY_CMD"); cmd != "" {
 		return ExecNotifier(cmd), "ZDEV_NOTIFY_CMD exec hook", true
 	}
+	return platformNotifier()
+}
+
+// platformNotifier resolves the OS desktop banner backend.
+func platformNotifier() (fire func(Notification), desc string, ok bool) {
 	switch runtime.GOOS {
 	case "darwin":
 		if path, err := exec.LookPath("terminal-notifier"); err == nil {
@@ -132,6 +155,82 @@ func resolveBackend() (fire func(Notification), desc string, ok bool) {
 		return nil, "notify-send not found", false
 	default:
 		return nil, "no backend for " + runtime.GOOS, false
+	}
+}
+
+// backendSpec is one parsed fan-out entry: either the platform desktop
+// banner (`desktop`) or an exec command line.
+type backendSpec struct {
+	desktop bool   // literal "desktop" entry → platformNotifier
+	cmdline string // otherwise: `sh -c` command line
+}
+
+// parseNotifyBackends turns the ZDEV_NOTIFY_CMD / ZDEV_NOTIFY_CMDS pair
+// into the ordered fan-out list, or nil when ZDEV_NOTIFY_CMDS is unset or
+// blank (the legacy single-backend resolution applies). ZDEV_NOTIFY_CMDS
+// is newline-separated because a newline is the one separator that can't
+// appear inside a single shell command line — adapters legitimately
+// contain colons (URLs), commas, and spaces. Entries are trimmed; blank
+// lines are skipped; the literal entry `desktop` selects the platform
+// banner. cmd, when non-empty, joins as the first entry so the existing
+// single-hook wiring keeps firing (and firing first) when the fan-out
+// list is added alongside it. Pure — table-tested without env or spawns.
+func parseNotifyBackends(cmd, cmds string) []backendSpec {
+	var specs []backendSpec
+	for _, line := range strings.Split(cmds, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		specs = append(specs, backendSpec{desktop: line == "desktop", cmdline: line})
+	}
+	if specs == nil {
+		return nil // ZDEV_NOTIFY_CMDS unset/blank → legacy resolution
+	}
+	if cmd != "" {
+		specs = append([]backendSpec{{cmdline: cmd}}, specs...)
+	}
+	return specs
+}
+
+// resolveFanOut materializes the parsed fan-out list into fire closures.
+// An unavailable desktop entry (no terminal-notifier / unsupported GOOS)
+// is logged and skipped rather than disabling the remaining backends; if
+// nothing at all resolves, notifications are disabled as usual.
+func resolveFanOut(specs []backendSpec) (fire func(Notification), desc string, ok bool) {
+	var fires []func(Notification)
+	var descs []string
+	for _, s := range specs {
+		if s.desktop {
+			f, d, ok := platformNotifier()
+			if !ok {
+				slog.Warn("notifier: desktop fan-out entry unavailable, skipping", "reason", d)
+				continue
+			}
+			fires = append(fires, f)
+			descs = append(descs, d)
+			continue
+		}
+		fires = append(fires, ExecNotifier(s.cmdline))
+		descs = append(descs, "exec("+s.cmdline+")")
+	}
+	if len(fires) == 0 {
+		return nil, "no fan-out backend resolved", false
+	}
+	return fanOut(fires), "fan-out: " + strings.Join(descs, " + "), true
+}
+
+// fanOut composes fire closures into one that fires them all, in order.
+// Isolation between entries is inherited from spawn's fire-and-forget
+// contract: each closure Starts its own child under its own deadline and
+// logs (never propagates) failures, so a broken or slow backend can't
+// prevent the others from firing. Pure composition — table-tested with
+// recording closures, no processes.
+func fanOut(fires []func(Notification)) func(Notification) {
+	return func(n Notification) {
+		for _, f := range fires {
+			f(n)
+		}
 	}
 }
 
