@@ -106,13 +106,18 @@ defends the gauge from fragmenting the moment worktrees exist.
 - **Kill:** if dogfood shows the bottleneck is not review-bandwidth (queue stays
   empty, gauge never moves), the gauge solves a non-problem — revert to the strip.
 
-### 5. Inactive-session demotion *(dogfood feedback #2, 2026-06-05; partially shipped)*
+### ✅ 5. Inactive-session demotion *(dogfood feedback #2, 2026-06-05; shipped 2026-06-07)*
 *Update 2026-06-06:* the dim-in-place fallback shipped early (`37a2cc6c` —
 stale >1h and absent rows now dim marker AND name), motivated by the
-alive-vs-stale indistinguishability report. Open question for the dogfood
-week: is whole-row dimming enough visual hierarchy, or is positional
-demotion (fold below a divider) still needed? If dimming suffices, this
-item shrinks to the config knob.
+alive-vs-stale indistinguishability report.
+
+*Update 2026-06-07:* the positional-fold option shipped too (`ddfb0e8`):
+`ZDEV_SIDEBAR_DEMOTE=dim|fold|off` (default `dim`, current behavior) plus
+`ZDEV_SIDEBAR_DEMOTE_THRESHOLD` (seconds). Fold sinks stale sessions below
+a dim ─── divider without reordering the active block; frame line-count and
+click-row math documented at `DemoteMode` in `internal/render/frame.go`.
+Kill criterion is LIVE, not resolved: fold stays explicit opt-in until a
+dogfood week shows nobody forgets a folded session.
 
 Original framing: sessions with no agent and no recent activity sit in the
 list at full visual weight, demanding the same attention as active ones. Add an idle tier: after a
