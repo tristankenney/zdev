@@ -90,6 +90,30 @@ keeps its other three surfaces (`zdev next`, fzf popup, notifications), and
 the freed slot is reserved for S3's review gauge — which must clear the bar
 the strip failed: show information NOT already visible in the list.
 
+### ✅ 7. Remote push fan-out (ntfy/Pushover via the exec seam) — `40751c2`
+`ZDEV_NOTIFY_CMDS` fans one notification to multiple backends: a
+newline-separated list where each entry runs like `ZDEV_NOTIFY_CMD` (sh -c,
+`ZDEV_NOTIFY_*` payload env, 1.5s deadline + reaper) and the literal token
+`desktop` selects the platform notifier; `ZDEV_NOTIFY_CMD` joins as the
+first entry. Composition lives inside `resolveBackend`, beneath
+`ResolveNotifier`'s single `isNotifyMuted` wrapper — no backend fires
+unmuted; one broken/slow backend can't block the others (spawn
+fire-and-forget). Default-off: unset → byte-identical legacy path. Adapter
+targets `bin/zdev-notify-{ntfy,pushover}`. Hub-invariants review: PASS.
+- **Kill (live):** push fatigue causes muting.
+
+### ✅ 8. `zdev doctor` hardening + curl-pipe self-bootstrap installer — `9ee0598`
+`install.sh` self-bootstraps under `curl … | bash`: structural no-checkout
+detection (requires `install.sh` + `bin/zdev` + `zdevd/`, not a trusted
+path), clones to `ZDEV_INSTALL_DIR` (default `~/workspace/zdev`), re-execs
+with stdin reattached to `/dev/tty`; reuses an existing checkout without
+pulling, refuses a non-zdev dir. `zdev-doctor` gained gh-auth (warn),
+tmux.conf `source-file` staleness, and codex-adapter checks, plus strict
+unknown-flag handling (exit 2). Pure bash 3.2. `--probe` predated this.
+- **Kill (live):** if checks go stale faster than maintained, trim to
+  socket+tmux only. Note: `agent-smoke` installs from a checkout, so CI
+  covers detection but NOT the bootstrap clone path.
+
 ---
 
 ## NOW (~2 weeks)
@@ -167,12 +191,6 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   still pierces); the popup becomes a stateful jump→re-poll→advance loop with
   in-memory defer and a handled/deferred receipt. Effort: week each. Depends:
   S1, S3. Kill: operator ignores the Round in favor of per-session jumping.
-- **Remote push fan-out (ntfy/Pushover via the exec seam)** — fleet
-  tier-notifications and death alerts reach the phone over the operator's own
-  channel; docs default to authenticated/self-hosted (public ntfy topics leak
-  project+branch). Fleet-digest framing is the durable wedge — per-session push
-  parity is conceded to Remote Control deliberately. Effort: days. Depends: #1.
-  Kill: push fatigue causes muting.
 - **`zdevd demo` (fake-fleet daemon → reproducible README GIF)** — fixes the
   verified `docs/screenshot.png` 404. Thin DemoSource feeding the subscriber-push
   contract (extract a small Register/Unregister/DiagSnapshot interface from the
@@ -180,11 +198,6 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   tier escalation + a death on a ticker. Doubles as a free e2e render gate.
   Effort: week. Depends: S1+S3+death (so the GIF shows the differentiators).
   Kill: if it drifts from real hub output and starts lying, internal-only.
-- **`zdev doctor` + curl-pipe self-bootstrap installer** — mechanize the verified
-  silent-dark-sidebar dead-ends (socket diag, gh auth, tmux.conf sourcing, client
-  width vs threshold, symlinks/hooks) into one command; teach install.sh to
-  clone-and-re-exec when run outside a checkout. Effort: days. Depends: none.
-  Kill: if checks go stale faster than maintained, trim to socket+tmux only.
 - **Daemon self-health row** — surface already-computed diag fields
   (`last_event_ago_sec`, `errors_1h`) as a single dim "degraded" row; a dead
   daemon and a dead agent are the same operator question. Effort: days. Depends:
