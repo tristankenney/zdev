@@ -3,16 +3,18 @@
 # live agent-team members the orchestrator spawned.
 #
 # Team members are sourced from `zdev-show teams` (the daemon snapshot the
-# SIDEBAR renders), NOT from tmux `@zdev-team` window tags. That parity is
-# deliberate: in-process teammates own no tmux window, so a tag scrape can't
-# see them — but the sidebar does, and now so does this switcher.
+# SIDEBAR renders), NOT from tmux `@zdev-team` window tags — the daemon knows
+# each member's window id, which the tag scrape can't give us. Only members
+# that own a tmux window are listed here (see build_list): a switcher offers
+# switch targets, and in-process members have nowhere to switch to.
 #
 # Behaviour:
 #   - project with NO team → switches to / starts its session (classic).
 #   - project WITH a team → still switches to that session (where the lead
-#     runs); each member nests below it. Picking a member switches to the
-#     lead's session and, when the member owns a tmux window, select-windows
-#     into it (in-process members have no window → you land on the lead).
+#     runs); each member with a tmux window nests below it and select-windows
+#     in when picked. Members with no window (in-process teammates, or ones
+#     not yet swept into a window) are OMITTED: this is a switcher, and a row
+#     you cannot switch to is noise. The sidebar still shows every member.
 #
 # Reads the fleet in a SINGLE awk pass so it populates instantly. Bound as a
 # popup (M-p). Outside tmux, or with no daemon/team, it lists projects only.
@@ -71,8 +73,14 @@ build_list() {
             return cc gg cR
         }
         # Team member line (tab-separated): bucket it under its lead project.
+        # An empty window id (field 4) means the member owns no tmux window —
+        # an in-process teammate, or one not yet swept into a window. This is a
+        # SWITCHER: a row you cannot switch to is noise, and picking it silently
+        # lands on the lead. So skip windowless members entirely; the sidebar
+        # remains the place to SEE every member (including in-process ones).
         NF>=2 {
             lead=$1; mem=$2; st=$3; wid=$4
+            if (wid=="") next
             lsess=lead; gsub(/\//,"-",lsess)
             nested[lead]=nested[lead] sprintf("  \xe2\x86\xb3 %s  %s%sW%s%s%s%s\n", \
                 mem, glyph(st), T, T, lsess, T, wid)
@@ -104,8 +112,9 @@ case "$KIND" in
     WID=$(printf '%s' "$SEL" | cut -d"$TAB" -f4)
     [ -z "$WSESS" ] && exit 0
     tmux switch-client -t "=$WSESS" 2>/dev/null || true
-    # In-process members have no window — landing on the lead session is
-    # the correct destination, so a missing id is not an error.
+    # build_list only emits member rows that have a window id, so WID is
+    # normally set; the guard stays as defense against a malformed row —
+    # switching to the lead session is a safe fallback either way.
     [ -n "$WID" ] && exec tmux select-window -t "$WID"
     exit 0
     ;;
