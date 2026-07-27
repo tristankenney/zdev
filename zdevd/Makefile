@@ -168,10 +168,9 @@ kill-renderers:
 
 ifeq ($(UNAME_S),Darwin)
 restart: build kill-renderers
-	@launchctl bootout "$(DOMAIN)/$(LABEL)" 2>/dev/null || true
-	@sleep 0.5
-	@launchctl bootstrap "$(DOMAIN)" "$(PLIST_DST)"
-	@sleep 1
+	@# Reuses install-launchd.sh so the bootout-settle-bootstrap sequencing
+	@# lives in exactly one place (a fixed sleep here used to race launchd).
+	@bash "$(ZDEVD_DIR)/scripts/install-launchd.sh" "$(LABEL)" >/dev/null
 	@launchctl list | grep "$(LABEL)" | awk '{printf "restart: pid=%s exit=%s\n", $$1, $$2}'
 
 status:
@@ -373,10 +372,9 @@ install: build $(PLIST_BUILT) $(REAPER_PLIST_BUILT)
 	ln -sf "$(REAPER_PLIST_BUILT)" "$(REAPER_PLIST_DST)"
 	@# launchctl bootout-then-bootstrap for zdevd (Pitfall B).
 	bash "$(ZDEVD_DIR)/scripts/install-launchd.sh"
-	@# Reaper job — same bootout-then-bootstrap pattern, inline since it's a one-liner.
-	@launchctl bootout "$(DOMAIN)/$(REAPER_LABEL)" 2>/dev/null || true
-	@launchctl bootstrap "$(DOMAIN)" "$(REAPER_PLIST_DST)"
-	@echo "install: reaper job bootstrapped (hourly, $$ZDEV_REAP_AFTER_HOURS h threshold; default 24)"
+	@# Reaper job — same script, which owns the bootout-settle-bootstrap race.
+	bash "$(ZDEVD_DIR)/scripts/install-launchd.sh" "$(REAPER_LABEL)"
+	@echo "install: reaper job bootstrapped (hourly, $${ZDEV_REAP_AFTER_HOURS:-24}h threshold)"
 	@# Sapling pre-push hook (Pitfall D).
 	bash "$(ZDEVD_DIR)/scripts/install-prepush.sh"
 	@echo "install: complete. Open a tmux pane via zdev-sidebar-toggle to verify."
