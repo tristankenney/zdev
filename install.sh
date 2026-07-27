@@ -1,6 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ---------- shell guard ----------
+# This script is bash, not POSIX sh: arrays, [[ ]], process substitution.
+# `sh install.sh` is the trap worth handling — macOS /bin/sh IS bash in POSIX
+# mode, so it sets BASH_VERSION and happily runs two-thirds of an install
+# (symlinks, workspace config, launchd jobs) before dying at the first
+# `< <(...)` with a bare "syntax error near unexpected token `<'" and no hint
+# that the shell was the problem. Detect POSIX mode via SHELLOPTS and re-exec
+# under real bash rather than leaving a half-finished install behind.
+zdev_needs_bash=no
+[ -z "${BASH_VERSION:-}" ] && zdev_needs_bash=yes
+case ":${SHELLOPTS:-}:" in *:posix:*) zdev_needs_bash=yes ;; esac
+if [ "$zdev_needs_bash" = yes ]; then
+  # Only re-exec when $0 is a real file. Piped invocations (`curl ... | sh`)
+  # have nothing to re-exec, so say what to do instead of failing obscurely.
+  if [ -r "$0" ]; then
+    exec bash "$0" "$@"
+  fi
+  echo "install.sh: needs bash — re-run as 'bash install.sh' or 'curl -fsSL <url> | bash'" >&2
+  exit 1
+fi
+unset zdev_needs_bash
+
 # ---------- output helpers ----------
 # Color only on a tty and when NO_COLOR is unset (https://no-color.org).
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
