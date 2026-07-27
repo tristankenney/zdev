@@ -8,14 +8,22 @@
 # mechanism is `hooks.pre-push` in `.sl/config`.
 set -euo pipefail
 
-if ! command -v sl >/dev/null 2>&1; then
-    echo "install-prepush: 'sl' not on PATH — skipping (hook only applies to Sapling checkouts)"
+# Resolve the repo root structurally (this script lives at
+# <repo>/zdevd/scripts/) and decide "is this Sapling?" from the presence of
+# .sl — never by probing `sl root`. `sl` is an ambiguous command name: it is
+# both Sapling's CLI and sl(1), the steam-locomotive joke program
+# (`brew install sl`). The locomotive exits 0 and writes a curses animation
+# to stdout, so a `sl root` probe yields a non-empty REPO_ROOT full of ANSI
+# escapes and the following `cd` fails the whole install under `set -e`.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+if [[ ! -d "$REPO_ROOT/.sl" ]]; then
+    echo "install-prepush: not a Sapling checkout — skipping (hook only applies to Sapling checkouts)"
     exit 0
 fi
 
-REPO_ROOT="$(sl root 2>/dev/null || true)"
-if [[ -z "$REPO_ROOT" ]]; then
-    echo "install-prepush: not a Sapling checkout — skipping"
+if ! command -v sl >/dev/null 2>&1; then
+    echo "install-prepush: 'sl' not on PATH — skipping"
     exit 0
 fi
 

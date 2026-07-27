@@ -7,10 +7,16 @@
 #   D-14: make test = sub-10s; race detector + plutil lint + anti-fork gate.
 #   D-15: make bench-idle = sudo powermetrics, asserts < 1000 wakeups/sec.
 
-# REPO_ROOT resolves at parse time. `sl root` first (this repo uses Sapling
-# per CLAUDE.md), `git rev-parse` fallback for non-sl checkouts. Override
-# via `make REPO_ROOT=/path/to/repo install` if needed.
-REPO_ROOT     := $(shell sl root 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null)
+# REPO_ROOT resolves at parse time from this Makefile's own location
+# (<repo>/zdevd/Makefile), not from a VCS shell-out. `sl root` is not safe to
+# probe with: `sl` is an ambiguous command name shared by Sapling's CLI and
+# sl(1), the steam-locomotive joke program (`brew install sl`), which exits 0
+# and writes a curses animation to stdout — that lands verbatim in REPO_ROOT
+# and every path built from it, and its embedded newlines break Makefile
+# parsing outright. The layout is fixed anyway, so derive it.
+# Override via `make REPO_ROOT=/path/to/repo install` if needed.
+_MK_DIR       := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+REPO_ROOT     := $(patsubst %/,%,$(dir $(_MK_DIR)))
 ZDEVD_DIR     := $(REPO_ROOT)/zdevd
 BIN_DIR       := $(ZDEVD_DIR)/bin
 LOCAL_BIN     := $(HOME)/.local/bin
@@ -55,9 +61,16 @@ endif
 
 # VERSION derives from the nearest annotated git/sl tag plus dirty-state if any.
 # Falls back to "dev" outside a VCS checkout (e.g. tarball install).
-VERSION       := $(shell git describe --tags --dirty --always 2>/dev/null \
-                  || sl log -r . --template "{latesttag}" 2>/dev/null \
-                  || echo dev)
+# The Sapling leg is gated on a real .sl directory rather than tried blind:
+# a bare `sl` on PATH may be sl(1), the steam-locomotive joke program, whose
+# animation would otherwise be baked into the binary as its version string.
+VERSION       := $(shell git -C "$(REPO_ROOT)" describe --tags --dirty --always 2>/dev/null)
+ifeq ($(strip $(VERSION)),)
+  ifneq ($(wildcard $(REPO_ROOT)/.sl),)
+    VERSION   := $(shell sl log -r . --template "{latesttag}" 2>/dev/null)
+  endif
+endif
+VERSION       := $(if $(strip $(VERSION)),$(strip $(VERSION)),dev)
 GOFLAGS       := -trimpath -ldflags="-s -w -X main.version=$(VERSION)"
 
 # CONTEXT D4-16: bench-idle threshold finalized from Phase 4 bench-idle measurement.
