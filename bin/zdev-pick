@@ -20,6 +20,17 @@
 # popup (M-p). Outside tmux, or with no daemon/team, it lists projects only.
 set -euo pipefail
 
+# Gap-fill from ~/.config/zdev/env (same idiom as bin/zdev): popup-spawned
+# shells inherit the tmux server's stripped environment, so knobs like
+# ZDEV_SIDEBAR_GROUP never arrive via the shell rc chain.
+_zdev_env="${XDG_CONFIG_HOME:-$HOME/.config}/zdev/env"
+if [[ -f "$_zdev_env" ]]; then
+    while IFS='=' read -r _k _v; do
+        [[ -z "$_k" || "$_k" == \#* ]] && continue
+        [[ -z "${!_k:-}" ]] && export "$_k=$_v"
+    done < "$_zdev_env"
+fi
+
 if ! command -v fzf >/dev/null 2>&1; then
     echo "fzf not installed. Run: brew install fzf"
     exit 1
@@ -35,6 +46,20 @@ export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
   --color=pointer:#c4a7e7,marker:#eb6f92,prompt:#908caa"
 
 TAB=$(printf '\t')
+
+# The project feed for build_list. Grouped mode sorts (LC_ALL=C — byte
+# order, matching the Go sidebar's sort.Strings) so same-prefix runs are
+# contiguous and the root-row lookahead in the awk END block holds; flat
+# mode keeps the projects-file order the switcher has always shown.
+# (A function, not inline in the <(...): bash 3.2 mis-parses multi-line
+# process substitutions.)
+projects_feed() {
+    if [ "${ZDEV_SIDEBAR_GROUP:-}" = prefix ]; then
+        zdev --list-projects 2>/dev/null | LC_ALL=C sort
+    else
+        zdev --list-projects 2>/dev/null
+    fi
+}
 
 # Live team members, one per line: <lead_project>\t<member>\t<status>\t<wid>.
 # Sourced from the daemon (same as the sidebar). Empty outside tmux — nesting
@@ -60,6 +85,7 @@ teams() {
 #                                        when present (empty id ⇒ session only)
 build_list() {
     awk -F"$TAB" -v T="$TAB" \
+        -v grp="$([ "${ZDEV_SIDEBAR_GROUP:-}" = prefix ] && echo 1 || echo 0)" \
         -v cWait=$'\033[1;91m' -v cWork=$'\033[36m' -v cDone=$'\033[32m' \
         -v cDead=$'\033[1;91m' -v cIdle=$'\033[90m' -v cR=$'\033[0m' '
         # glyph maps a member status to a colored marker (mirrors the sidebar
@@ -87,13 +113,51 @@ build_list() {
             hasteam[lead]=1
             next
         }
-        # Project line (bare name): emit a switch row, then any nested members.
+        # Project line (bare name). Flat mode (grp=0): emit immediately, in
+        # list order. Grouped mode (grp=1, ZDEV_SIDEBAR_GROUP=prefix —
+        # mirrors the sidebar): buffer, then emit in END with a dim
+        # "─ name ──" header per first-path-segment run and members
+        # indented with the prefix stripped. Buffering is required for the
+        # ROOT-ROW lookahead: a bare name whose slash-form members follow
+        # it ("ai-at-pay" then "ai-at-pay/…") adopts its own name as key so
+        # the initiative home row lands under its header, exactly as the
+        # sidebar renders it. The header row itself is selectable and
+        # targets the group'\''s first project — the root when one exists
+        # (it sorts first), the first member otherwise.
         NF==1 && $0!="" {
-            proj=$0
-            printf "%s%sP%s%s\n", proj, T, T, proj
-            if (proj in hasteam) printf "%s", nested[proj]
+            if (!grp) {
+                proj=$0
+                printf "%s%sP%s%s\n", proj, T, T, proj
+                if (proj in hasteam) printf "%s", nested[proj]
+            } else {
+                plist[pn++]=$0
+            }
         }
-    ' <(teams) <(zdev --list-projects 2>/dev/null)
+        function key(s,    i) { i=index(s,"/"); return i>1 ? substr(s,1,i-1) : "" }
+        function emitproj(p, k,    disp) {
+            disp=p
+            if (k!="") {
+                if (p==k)                   disp="  " p
+                else if (index(p, k "/")==1) disp="  " substr(p, length(k)+2)
+                printf "%s%sP%s%s\n", disp, T, T, p
+            } else {
+                printf "%s%sP%s%s\n", p, T, T, p
+            }
+            if (p in hasteam) printf "%s", nested[p]
+        }
+        END {
+            if (!grp) exit
+            prev=""
+            for (i=0; i<pn; i++) {
+                p=plist[i]; k=key(p)
+                if (k=="" && i+1<pn && key(plist[i+1])==p) k=p
+                if (k!=prev && k!="") \
+                    printf "%s\xe2\x94\x80 %s \xe2\x94\x80\xe2\x94\x80%s%sP%s%s\n", cIdle, k, cR, T, T, p
+                prev=k
+                emitproj(p, k)
+            }
+        }
+    ' <(teams) <(projects_feed)
 }
 
 SEL=$(build_list | fzf --prompt='go › ' --height=100% --reverse --ansi \
