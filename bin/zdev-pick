@@ -133,12 +133,27 @@ build_list() {
                 plist[pn++]=$0
             }
         }
-        function key(s,    i) { i=index(s,"/"); return i>1 ? substr(s,1,i-1) : "" }
-        function emitproj(p, k,    disp) {
+        # key() mirrors render/frame.go groupKey exactly: first path
+        # segment, except under the "initiatives" container where the key
+        # is the SECOND segment (the initiative), and the initiative home
+        # row (initiatives/<name>) keys as its own name.
+        function key(s,    i, rest, j) {
+            i=index(s,"/")
+            if (i<=1) return ""
+            if (substr(s,1,i-1)!="initiatives") return substr(s,1,i-1)
+            rest=substr(s,i+1)
+            j=index(rest,"/")
+            return j>1 ? substr(rest,1,j-1) : rest
+        }
+        # Display: under a header, show the part AFTER the key segment
+        # ("initiatives/marketplace/pay-app" -> "pay-app"); the home row
+        # (name ends at the key) shows the key itself.
+        function emitproj(p, k,    disp, pos) {
             disp=p
             if (k!="") {
-                if (p==k)                   disp="  " p
-                else if (index(p, k "/")==1) disp="  " substr(p, length(k)+2)
+                pos=index(p, k)
+                if (pos>0 && length(p)>pos+length(k))      disp="  " substr(p, pos+length(k)+1)
+                else if (pos>0)                            disp="  " k
                 printf "%s%sP%s%s\n", disp, T, T, p
             } else {
                 printf "%s%sP%s%s\n", p, T, T, p

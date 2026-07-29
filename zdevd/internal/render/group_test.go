@@ -20,6 +20,12 @@ func TestGroupKey(t *testing.T) {
 		{"a/b/c", "a"}, // nested paths key on the FIRST segment only
 		{"/odd", ""},   // leading slash: no non-empty first segment
 		{"", ""},
+		// The initiatives container: key is the INITIATIVE (second
+		// segment), and the home row keys as its own name.
+		{"initiatives/marketplace/pay-app", "marketplace"},
+		{"initiatives/marketplace", "marketplace"},
+		{"initiatives", ""},
+		{"projects/pay-app", "projects"},
 	}
 	for _, c := range cases {
 		if got := groupKey(c.name); got != c.want {

@@ -186,10 +186,14 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
 ## NEXT (~6 weeks)
 
 - **Initiative grouping v2 — collapse, rollup, scoped next** *(v1 headers
-  shipped behind `ZDEV_SIDEBAR_GROUP=prefix`)* — the worktree-initiative
-  layout (`~/workspace/<initiative>/<repo>` worktrees beside canonical
-  checkouts) makes the first path segment a derived grouping key; v1 renders
-  dim per-prefix headers, renderer-only, row order untouched. v2 is the part
+  shipped behind `ZDEV_SIDEBAR_GROUP=prefix`)* — the initiative layout
+  (`$ZDEV_WORKSPACE/projects/<repo>` canonical; `initiatives/<name>/<repo>`
+  full clones per initiative, metadata versioned by one initiatives repo)
+  makes the path a derived grouping key — under the initiatives container
+  the key is the initiative name; v1 renders dim per-prefix headers,
+  renderer-only, row order untouched. v1.1 friction, found live: the daemon
+  reads the projects file once at startup, so every initiative add-repo
+  needs a daemon kick — watch it with the in-tree fswatch package. v2 is the part
   that earns the vertical space back: groups the operator is NOT currently in
   collapse to their header with a rolled-up worst-of glyph and count —
   attention never collapses away (waiting/dead pierce or auto-expand); a

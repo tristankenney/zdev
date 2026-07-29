@@ -386,11 +386,12 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 //	         follow a named group, so a trailing "zdev" is never visually
 //	         orphaned under someone else's header.
 //
-// This is the initiative-grouping surface for the worktree layout
-// (~/workspace/<initiative>/<repo> worktrees beside canonical
-// ~/workspace/pay/<repo> checkouts): the first path segment IS the
-// initiative, so membership derives from the projects that exist and
-// scope drift needs no config edit.
+// This is the initiative-grouping surface for the workspace layout
+// ($ZDEV_WORKSPACE/projects/<repo> canonical checkouts;
+// $ZDEV_WORKSPACE/initiatives/<name>/<repo> full clones per initiative):
+// the path IS the membership — under the initiatives container the key is
+// the initiative name (see groupKey) — so membership derives from the
+// directories that exist and scope drift needs no config edit.
 //
 // Kill criterion: if a week of dogfood shows the headers never change
 // which row the eye lands on (the pay/ prefix cluster already groups
@@ -398,14 +399,32 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // the knob is removed rather than nursed.
 var GroupMode = "off"
 
+// initiativesContainer is the workspace directory that holds initiative
+// directories (ZDEV layout: $ZDEV_WORKSPACE/initiatives/<name>/<repo>).
+// Projects under it group by the INITIATIVE name, not the container — a
+// single "initiatives" group would erase exactly the distinction the
+// grouping exists to draw.
+const initiativesContainer = "initiatives"
+
 // groupKey returns the grouping key for a project name under
 // GroupMode=prefix: the first path segment for slash-form names, "" for
-// bare names. Pure.
+// bare names — except under the initiatives container, where the key is
+// the second segment (the initiative), and the initiative home row
+// ("initiatives/<name>") keys as its own name so it groups with its
+// members. Pure.
 func groupKey(name string) string {
-	if i := strings.IndexByte(name, '/'); i > 0 {
+	i := strings.IndexByte(name, '/')
+	if i <= 0 {
+		return ""
+	}
+	if name[:i] != initiativesContainer {
 		return name[:i]
 	}
-	return ""
+	rest := name[i+1:]
+	if j := strings.IndexByte(rest, '/'); j > 0 {
+		return rest[:j]
+	}
+	return rest
 }
 
 // writeGroupHeader emits the one-line group header: "  ─ name ──" with the
