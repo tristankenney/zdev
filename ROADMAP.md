@@ -185,6 +185,25 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
 
 ## NEXT (~6 weeks)
 
+- **Initiative grouping v2 — collapse, rollup, scoped next** *(v1 headers
+  shipped behind `ZDEV_SIDEBAR_GROUP=prefix`)* — the worktree-initiative
+  layout (`~/workspace/<initiative>/<repo>` worktrees beside canonical
+  checkouts) makes the first path segment a derived grouping key; v1 renders
+  dim per-prefix headers, renderer-only, row order untouched. v2 is the part
+  that earns the vertical space back: groups the operator is NOT currently in
+  collapse to their header with a rolled-up worst-of glyph and count —
+  attention never collapses away (waiting/dead pierce or auto-expand); a
+  select on the header jumps to the group's oldest project requiring
+  attention (`zdev next <prefix>` — a prefix filter over rankTriage, which
+  already orders by cost-then-age); an `INITIATIVE.md` at the group root is
+  the marker distinguishing initiative dirs from org dirs (`pay/`) so only
+  initiatives collapse. Hiding rows changes navigation row order, so the
+  group flag must move daemon-side onto the wire — FlatRows stays the single
+  row-order authority (renderer env must never disagree with the daemon;
+  hub-invariants review required). Effort: ~week. Depends: a week of v1
+  dogfood. Kill: if v1 headers never change where the eye lands, v2 dies
+  with the knob; if collapse ever hides a wait the operator then missed,
+  the rollup is lying — revert to always-expanded headers.
 - **Agent Teams supervision (hybrid MVP)** *(replaces the killed Gas Town integration as the primary multi-agent target)* — Claude Code's Agent Teams ships in v2.1.169 behind `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` and hidden `--agent-teams`/`--teammate-mode` flags. zdev supervises via fsnotify on `~/.claude/teams/{name}/config.json`, then branches on each member's `tmuxPaneId`: real pane id → group panes under one sidebar entry (reusing the rig-grouping rendering from `zd-l2t`); literal `"in-process"` → render a `team:{name}` badge with member chips on the lead's pane (no panes to group; in-process is the headless default). Disk surface captured verbatim in `zd-dxj` notes from the `zd-amj` probe (2026-06-10). Effort: 3–5 days. Depends: none. Kill: Anthropic ships a first-party dashboard, or `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` leaves experimental with an incompatible layout.
 - **S2 cadence-capped fleet nudge + S4 Round burn-down popup** *(converged)* —
   one nudge per cadence window (count + ETA + "M-a to start a round"; 15m STUCK

@@ -262,6 +262,13 @@ func run() error {
 	case "off":
 		render.DemoteMode = "off"
 	}
+	// Sidebar grouping: off (default, flat list) | prefix (dim header per
+	// first-path-segment run — the initiative-grouping surface for the
+	// worktree layout). Unknown values fall back to off.
+	if os.Getenv("ZDEV_SIDEBAR_GROUP") == "prefix" {
+		render.GroupMode = "prefix"
+	}
+
 	// Optional threshold override (seconds). Falls back to DemoteThresholdSecDefault.
 	if v := os.Getenv("ZDEV_SIDEBAR_DEMOTE_THRESHOLD"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

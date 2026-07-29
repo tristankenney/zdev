@@ -237,6 +237,27 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 	}
 
+	// Group headers (ZDEV_SIDEBAR_GROUP=prefix): a dim "─ name ──" line
+	// before each run of projects sharing a first path segment. The key is
+	// DERIVED from the name — initiative membership under the worktree
+	// layout (initiatives/<name>/<repo>) is whatever directories exist, so
+	// there is no registry to consult or rot. Projects are already sorted
+	// lexicographically, so same-prefix runs are contiguous and header
+	// emission is a single scan; row ORDER is untouched (spatial memory
+	// contract). Headers are renderer-only visual lines — never navigation
+	// rows — so proto.FlatRows, the hub cursor, and the wire are unaffected,
+	// same as the fold divider and the daemon-health row.
+	prevGroup := ""
+	renderGrouped := func(i int) {
+		if GroupMode == "prefix" {
+			if g := groupKey(snap.Projects[i].Name); g != prevGroup {
+				writeGroupHeader(&buf, g)
+				prevGroup = g
+			}
+		}
+		renderProject(i)
+	}
+
 	if DemoteMode == "fold" {
 		// Fold mode: separate active and demoted projects. Active projects
 		// render in their original positions (spatial memory preserved for
@@ -254,7 +275,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			}
 		}
 		for _, i := range activeIdx {
-			renderProject(i)
+			renderGrouped(i)
 		}
 		if len(demotedIdx) > 0 {
 			// Dim demote divider: same glyph family as the mood divider but
@@ -265,13 +286,17 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			buf.WriteString(Reset)
 			buf.WriteString(ClearLineEnd)
 			buf.WriteByte('\n')
+			// Group tracking restarts below the fold: a group straddling
+			// the divider re-states its header, so a demoted row is never
+			// orphaned under a header that scrolled away with the actives.
+			prevGroup = ""
 			for _, i := range demotedIdx {
-				renderProject(i)
+				renderGrouped(i)
 			}
 		}
 	} else {
 		for i := range snap.Projects {
-			renderProject(i)
+			renderGrouped(i)
 		}
 	}
 
@@ -332,6 +357,62 @@ var DemoteMode = "dim"
 // project is eligible for fold/dim demotion. Defaults to StaleThresholdSec.
 // cmd/zdev-sidebar overrides via ZDEV_SIDEBAR_DEMOTE_THRESHOLD.
 var DemoteThresholdSec = DemoteThresholdSecDefault
+
+// GroupMode selects sidebar grouping. cmd/zdev-sidebar sets this from
+// ZDEV_SIDEBAR_GROUP:
+//
+//	off    — flat list (default; byte-identical to pre-knob output).
+//	prefix — a dim "─ name ──" header line precedes each contiguous run
+//	         of projects sharing a first path segment ("pay/pay-app" →
+//	         "pay"; "ai-at-pay/pay-app" → "ai-at-pay"); unprefixed names
+//	         group under "" and get a bare "──────" separator when they
+//	         follow a named group, so a trailing "zdev" is never visually
+//	         orphaned under someone else's header.
+//
+// This is the initiative-grouping surface for the worktree layout
+// (~/workspace/<initiative>/<repo> worktrees beside canonical
+// ~/workspace/pay/<repo> checkouts): the first path segment IS the
+// initiative, so membership derives from the projects that exist and
+// scope drift needs no config edit.
+//
+// Kill criterion: if a week of dogfood shows the headers never change
+// which row the eye lands on (the pay/ prefix cluster already groups
+// rows spatially), the headers are decoration — default stays off, and
+// the knob is removed rather than nursed.
+var GroupMode = "off"
+
+// groupKey returns the grouping key for a project name under
+// GroupMode=prefix: the first path segment for slash-form names, "" for
+// bare names. Pure.
+func groupKey(name string) string {
+	if i := strings.IndexByte(name, '/'); i > 0 {
+		return name[:i]
+	}
+	return ""
+}
+
+// writeGroupHeader emits the one-line group header: "  ─ name ──" with the
+// name Bold against Dim rules, or a bare dim "  ──────" separator for the
+// unprefixed group (name == ""). One row always, same glyph family as the
+// mood/demote dividers.
+func writeGroupHeader(buf *bytes.Buffer, name string) {
+	buf.WriteString("  ")
+	buf.WriteString(Dim)
+	if name == "" {
+		buf.WriteString(strings.Repeat("─", 6))
+	} else {
+		buf.WriteString("─ ")
+		buf.WriteString(Reset)
+		buf.WriteString(Bold)
+		buf.WriteString(name)
+		buf.WriteString(Reset)
+		buf.WriteString(Dim)
+		buf.WriteString(" ──")
+	}
+	buf.WriteString(Reset)
+	buf.WriteString(ClearLineEnd)
+	buf.WriteByte('\n')
+}
 
 // TeamRows selects how Agent Teams members render (Agent Teams slice B).
 // cmd/zdev-sidebar sets it from ZDEV_TEAM_WINDOWS=1 — the same knob that
