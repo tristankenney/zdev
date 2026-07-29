@@ -100,6 +100,28 @@ func TestGroupHeaders(t *testing.T) {
 	}
 }
 
+// TestGroupHeadersRootRow: an initiative root (bare "ai-at-pay" immediately
+// followed by "ai-at-pay/*" members) renders UNDER its group header, not
+// orphaned above it in the ungrouped block.
+func TestGroupHeadersRootRow(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "ai-at-pay", Status: "alive"}, // root/home row
+		{Name: "ai-at-pay/pay-app", Status: "alive"},
+		{Name: "dotfiles", Status: "alive"},
+	}}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	iHeader := strings.Index(out, "─ ai-at-pay ──")
+	iRoot := strings.Index(out, "· ai-at-pay\n")
+	if iHeader < 0 || iRoot < 0 {
+		t.Fatalf("expected header and root row:\n%s", out)
+	}
+	if iRoot < iHeader {
+		t.Errorf("root row must render UNDER its header, not above it:\n%s", out)
+	}
+}
+
 // TestGroupHeadersFoldRestatesBelowTheFold: a group straddling the demote
 // divider re-states its header in the demoted block, so no demoted row
 // renders under a header that stayed above the fold.

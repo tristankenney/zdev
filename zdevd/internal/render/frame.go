@@ -247,10 +247,27 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// contract). Headers are renderer-only visual lines — never navigation
 	// rows — so proto.FlatRows, the hub cursor, and the wire are unaffected,
 	// same as the fold divider and the daemon-health row.
+	// groupKeys[i] is project i's effective group. One refinement over the
+	// raw first-segment key: an initiative ROOT row — a bare name whose
+	// slash-form members immediately follow it in sort order ("ai-at-pay"
+	// before "ai-at-pay/pay-app") — adopts its own name as key, so the home
+	// row renders UNDER its header instead of orphaned above it.
+	var groupKeys []string
+	if GroupMode == "prefix" {
+		groupKeys = make([]string, len(snap.Projects))
+		for i := range snap.Projects {
+			k := groupKey(snap.Projects[i].Name)
+			if k == "" && i+1 < len(snap.Projects) &&
+				groupKey(snap.Projects[i+1].Name) == snap.Projects[i].Name {
+				k = snap.Projects[i].Name
+			}
+			groupKeys[i] = k
+		}
+	}
 	prevGroup := ""
 	renderGrouped := func(i int) {
 		if GroupMode == "prefix" {
-			if g := groupKey(snap.Projects[i].Name); g != prevGroup {
+			if g := groupKeys[i]; g != prevGroup {
 				writeGroupHeader(&buf, g)
 				prevGroup = g
 			}
