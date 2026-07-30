@@ -31,6 +31,8 @@ describe() {
         *zdev-timeline-popup*)   echo "fleet activity timeline" ;;
         *zdev-help-popup*)       echo "this help" ;;
         *zdev-announce*)         echo "announcements menu — mute/unmute the 'X needs you' notifications" ;;
+        *zdev-sidebar-move*+1*|*zdev-sidebar-move*-1*) echo "move the sidebar row cursor" ;;
+        *zdev-sidebar-move*select*) echo "switch to the sidebar cursor's row" ;;
         *notify*)                echo "toggle tier-notification mute" ;;
         *) echo "$1" ;;
     esac
@@ -76,6 +78,16 @@ printf '  In any Claude Code session, just ask — Claude calls zdev'\''s tools:
 printf '  %s"check the zdev fleet" . "what is in triage" . "what is ready to review"%s\n' "$DIM" "$RESET"
 printf '  %s"run /rigorous-review on backend"%s\n' "$DIM" "$RESET"
 
+# --- initiatives ---
+printf '\n%sINITIATIVES%s %s(cross-repo units of value — the disk is the registry)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s~/workspace/initiatives/<name>/%s holds INITIATIVE.md + notes + full\n' "$CYAN" "$RESET"
+printf '  clones of the repos it touches, on %s<name>/<thing>%s branches.\n' "$CYAN" "$RESET"
+printf '  add repo:    %sgit clone%s into the initiative — the row appears itself\n' "$CYAN" "$RESET"
+printf '  remove:      %srm -rf%s the clone — the row disappears\n' "$CYAN" "$RESET"
+printf '  why a row?   %szdev --list-projects -v%s (name -> origin rule)\n' "$CYAN" "$RESET"
+printf '  playbook:    %s/initiative%s in Claude . a session at the home dir\n' "$CYAN" "$RESET"
+printf '  %sinherits the initiative context (CLAUDE.md tiers) automatically%s\n' "$DIM" "$RESET"
+
 # --- agent teams ---
 printf '\n%sAGENT TEAMS%s\n' "$BOLD" "$RESET"
 printf '  Teammates auto-move into their own windows; the sidebar nests them\n'
@@ -88,7 +100,9 @@ printf '  %s●%s waiting  %s◐%s working  %s◆%s done  %s✗%s dead  %s·%s i
     $'\033[1;91m' "$RESET" "$CYAN" "$RESET" $'\033[33m' "$RESET" $'\033[1;91m' "$RESET" "$DIM" "$RESET"
 printf '  %s◆%s ready to land  %s⌁%s will rot  %s⊛%s agent team\n' \
     $'\033[32m' "$RESET" $'\033[33m' "$RESET" "$DIM" "$RESET"
-printf '  %s╭─%s initiative (colored = its identity)  %s│%s member  %s──────%s ungrouped below\n' \
+printf '  %s╭ name%s initiative header = its home (colored = its identity; marker replaces ╭ on attention)\n' \
+    "$DIM" "$RESET"
+printf '  %s│%s member row  %s─ name%s container (projects/)  %s──────%s ungrouped below\n' \
     "$DIM" "$RESET" "$DIM" "$RESET" "$DIM" "$RESET"
 }
 
