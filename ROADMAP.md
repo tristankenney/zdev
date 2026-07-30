@@ -191,17 +191,23 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   full clones per initiative, metadata versioned by one initiatives repo)
   makes the path a derived grouping key — under the initiatives container
   the key is the initiative name; v1 renders dim per-prefix headers,
-  renderer-only, row order untouched. v1.1 friction, found live: the daemon
-  reads the projects file once at startup, so every initiative add-repo
-  needs a daemon kick — watch it with the in-tree fswatch package. v2 is the part
+  renderer-only, row order untouched. *(v1.1 SHIPPED: the projects file
+  demoted to overrides — ZDEV_PROJECTS_DISCOVER derives the registry from
+  the workspace layout in bin/zdev's single loading site, the workspace
+  watcher covers initiative depth plus the overrides file, and
+  `--list-projects -v` is the provenance audit trail; `git clone` into an
+  initiative IS add-repo, no config edit, no daemon kick. v1.2 SHIPPED:
+  home-as-header with PaletteFor color identity + gutter frames, leaf-name
+  display, groups-first daemon ordering via proto.GroupSort.)* v2 is the part
   that earns the vertical space back: groups the operator is NOT currently in
   collapse to their header with a rolled-up worst-of glyph and count —
   attention never collapses away (waiting/dead pierce or auto-expand); a
   select on the header jumps to the group's oldest project requiring
   attention (`zdev next <prefix>` — a prefix filter over rankTriage, which
-  already orders by cost-then-age); an `INITIATIVE.md` at the group root is
-  the marker distinguishing initiative dirs from org dirs (`pay/`) so only
-  initiatives collapse. Hiding rows changes navigation row order, so the
+  already orders by cost-then-age); the initiatives container is the
+  discriminator (proto.IsInitiativeHome) so only initiatives collapse —
+  synthetic groups like projects/ stay expanded. Hiding rows changes
+  navigation row order, so the
   group flag must move daemon-side onto the wire — FlatRows stays the single
   row-order authority (renderer env must never disagree with the daemon;
   hub-invariants review required). Effort: ~week. Depends: a week of v1
