@@ -1,6 +1,8 @@
 {
   "name": "zdev",
   "description": "Drive a zdev-supervised agent fleet: initiatives, triage, review, fleet status",
-  "version": "0.1.0",
-  "author": { "name": "tristankenney" }
+  "version": "0.2.0",
+  "author": {
+    "name": "tristankenney"
+  }
 }
