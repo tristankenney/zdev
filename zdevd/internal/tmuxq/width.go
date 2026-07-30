@@ -61,7 +61,18 @@ func PaneWidth(ctx context.Context) (int, error) {
 	if err != nil {
 		return DefaultWidth, fmt.Errorf("tmuxq: tmux not on PATH: %w", err)
 	}
-	out, err := exec.CommandContext(ctx, tmux, "display-message", "-p", "#{pane_width}").Output()
+	// Target OUR pane explicitly. Without -t, display-message reports the
+	// attached client's ACTIVE pane — which for a sidebar renderer is
+	// whatever full-width pane the user is working in, not the sidebar
+	// itself (observed live: width 219 for a 50-col sidebar). Everything
+	// downstream only truncated by width, so the inflation was latent
+	// until the grouped headers started FILLING toward it.
+	args := []string{"display-message", "-p"}
+	if pane := os.Getenv("TMUX_PANE"); pane != "" {
+		args = append(args, "-t", pane)
+	}
+	args = append(args, "#{pane_width}")
+	out, err := exec.CommandContext(ctx, tmux, args...).Output()
 	if err != nil {
 		return DefaultWidth, fmt.Errorf("tmuxq: display-message: %w", err)
 	}
