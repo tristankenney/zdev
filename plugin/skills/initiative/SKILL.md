@@ -28,6 +28,11 @@ long as delivery requires, and its scope drifts as work reveals itself. Layout:
       <repo>/                  # FULL CLONE of projects/<repo>, branch <name>/<thing>
 ```
 
+The initiatives repo needs a **private remote** (it holds your notes;
+`zdev doctor` warns while commits are laptop-only — install.sh scaffolds the
+repo and queues the remote as a next step). Push journal commits like any
+other repo.
+
 **The disk is the registry** (ZDEV_PROJECTS_DISCOVER=1): a repo is in scope iff
 its clone exists in the initiative directory, and the daemon watches the
 workspace — rows, sidebar groups (`╭─ <name> ──` in the initiative's color), and

@@ -266,6 +266,34 @@ else
   ok_ "~/.config/zdev/projects exists — left alone"
 fi
 
+# ---------- initiative layout (only when discovery is on) ----------
+# ZDEV_PROJECTS_DISCOVER=1 makes the workspace layout the registry:
+# projects/ (canonical pool) + initiatives/ (one dir of clones + metadata
+# per initiative, versioned by ONE journal repo). Scaffold the containers
+# and the journal; the journal's REMOTE is the user's call (it will hold
+# their notes), so it is queued as a next step rather than created.
+# Knob off → this section is silent: no dirs conjured into workspaces
+# that don't use the convention.
+if grep -q '^ZDEV_PROJECTS_DISCOVER=1' "$HOME/.config/zdev/env" 2>/dev/null; then
+  head_ "Initiative layout (discovery is on)"
+  mkdir -p "$ws/projects" "$ws/initiatives"
+  if [[ ! -d "$ws/initiatives/.git" ]]; then
+    git -C "$ws/initiatives" init -q
+    # Track only initiative metadata; the clones inside are other repos'
+    # working trees. Same unignore trick bd's data rides on.
+    printf '/*/*\n!/*/INITIATIVE.md\n!/*/notes/\n!/*/notes/**\n!/*/AGENTS.md\n!/*/CLAUDE.md\n!/*/.beads/\n!/*/.beads/**\n' \
+      > "$ws/initiatives/.gitignore"
+    git -C "$ws/initiatives" add .gitignore
+    git -C "$ws/initiatives" commit -qm "initiatives journal: scaffold" || true
+    ok_ "initialized the initiatives journal repo at $ws/initiatives"
+  else
+    ok_ "initiatives journal repo exists — left alone"
+  fi
+  if ! git -C "$ws/initiatives" remote get-url origin >/dev/null 2>&1; then
+    next_step "Give the initiatives journal a private remote (it holds your notes; commits are laptop-only until then):  gh repo create <you>/initiatives --private && git -C $ws/initiatives remote add origin git@github.com:<you>/initiatives.git && git -C $ws/initiatives push -u origin main"
+  fi
+fi
+
 if [[ "$OS" == "Darwin" ]]; then
   head_ "Building zdevd + installing launchd jobs"
 else

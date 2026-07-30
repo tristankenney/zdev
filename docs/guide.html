@@ -152,6 +152,8 @@ corrupt canonical or a sibling. Local clones hardlink objects, so disk is cheap.
 <pre><code># start
 mkdir -p ~/workspace/initiatives/&lt;name&gt;/notes
 # write INITIATIVE.md; commit in the initiatives repo; optional: bd init
+# (the journal repo itself is scaffolded by install.sh and should have a
+#  private remote — `zdev doctor` warns while commits are laptop-only)
 
 # add a repo — this is the ENTIRE operation; the row appears by itself
 git clone ~/workspace/projects/&lt;repo&gt; ~/workspace/initiatives/&lt;name&gt;/&lt;repo&gt;

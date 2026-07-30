@@ -215,12 +215,37 @@ else
     [[ -d "$ws/$line" ]] || { missing=$((missing+1)); }
   done < "$pf"
   if [[ "$total" -eq 0 ]]; then
-    bad "projects file is empty ($pf)"
+    if [[ "${ZDEV_PROJECTS_DISCOVER:-0}" == "1" ]]; then
+      ok "projects file holds no entries — fine: discovery derives the registry (file is overrides-only)"
+    else
+      bad "projects file is empty ($pf)"
+      fix "add projects, or set ZDEV_PROJECTS_DISCOVER=1 to derive them from the workspace layout"
+    fi
   elif [[ "$missing" -gt 0 ]]; then
     warn "$missing of $total project dir(s) missing under $ws — placeholder entries?"
     fix "edit $pf to match real checkouts in $ws"
   else
     ok "projects file: $total project(s), all dirs exist"
+  fi
+fi
+# Initiatives journal — only meaningful under discovery. The journal holds
+# INITIATIVE.md/notes for every initiative; without a remote, that history
+# is laptop-only, which is the silent-loss failure mode worth naming.
+if [[ "${ZDEV_PROJECTS_DISCOVER:-0}" == "1" && -d "$ws/initiatives" ]]; then
+  if [[ ! -d "$ws/initiatives/.git" ]]; then
+    warn "initiatives/ exists but is not a git repo — initiative metadata is unversioned"
+    fix "git -C $ws/initiatives init  (install.sh scaffolds this; re-run it)"
+  elif ! git -C "$ws/initiatives" remote get-url origin >/dev/null 2>&1; then
+    warn "initiatives journal has NO remote — every INITIATIVE.md/notes commit is laptop-only"
+    fix "gh repo create <you>/initiatives --private && git -C $ws/initiatives remote add origin git@github.com:<you>/initiatives.git && git -C $ws/initiatives push -u origin main"
+  else
+    ahead=$(git -C "$ws/initiatives" rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo "?")
+    if [[ "$ahead" == "0" ]]; then
+      ok "initiatives journal: remote configured, pushed"
+    else
+      warn "initiatives journal: $ahead unpushed commit(s)"
+      fix "git -C $ws/initiatives push"
+    fi
   fi
 fi
 # gh powers the sidebar's PR/CI chips (zdev-sidebar-pr-refresh). Warn,
