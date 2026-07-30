@@ -255,6 +255,7 @@ Usage:
   zdev reap                      Reap idle sessions; skips favorites (launchd entry point)
   zdev --list-projects [-v]      List projects (-v: name<TAB>origin — why
                                  each row exists: declared/favorite/rule)
+  zdev docs                      Open the local user guide (docs/guide.html)
   zdev --help
 
 Projects — two sources:
@@ -627,6 +628,25 @@ case "$1" in
             zdevd --version
         else
             echo "dev"
+        fi
+        exit 0
+        ;;
+    docs)
+        # Open the local user guide — a single self-contained HTML file in
+        # the repo (no build step, no server; matches the zero-network
+        # ethos). Resolved relative to this script's real location so it
+        # works from the ~/.local/bin symlink.
+        _guide="$(cd "$(dirname "$(readlink "$0" 2>/dev/null || echo "$0")")/.." && pwd)/docs/guide.html"
+        if [[ ! -f "$_guide" ]]; then
+            echo "zdev docs: guide not found at $_guide" >&2
+            exit 1
+        fi
+        if command -v open >/dev/null 2>&1; then
+            open "$_guide"
+        elif command -v xdg-open >/dev/null 2>&1; then
+            xdg-open "$_guide"
+        else
+            echo "$_guide"
         fi
         exit 0
         ;;

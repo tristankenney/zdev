@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zdev — user guide</title>
+<style>
+  :root {
+    /* Rose Pine Dawn (light) */
+    --base:#faf4ed; --surface:#fffaf3; --overlay:#f2e9e1;
+    --text:#575279; --subtle:#797593; --muted:#9893a5;
+    --love:#b4637a; --gold:#ea9d34; --rose:#d7827e;
+    --pine:#286983; --foam:#56949f; --iris:#907aa9;
+    --hl:#dfdad9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      /* Rose Pine Moon */
+      --base:#232136; --surface:#2a273f; --overlay:#393552;
+      --text:#e0def4; --subtle:#908caa; --muted:#6e6a86;
+      --love:#eb6f92; --gold:#f6c177; --rose:#ea9a97;
+      --pine:#3e8fb0; --foam:#9ccfd8; --iris:#c4a7e7;
+      --hl:#56526e;
+    }
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--base); color:var(--text);
+    font:16px/1.65 -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+    display:flex; min-height:100vh;
+  }
+  nav {
+    width:230px; flex:none; padding:2rem 0 2rem 1.5rem;
+    position:sticky; top:0; height:100vh; overflow-y:auto;
+    border-right:1px solid var(--overlay);
+  }
+  nav h1 { font-size:1.05rem; color:var(--iris); margin:0 0 1rem; }
+  nav a { display:block; color:var(--subtle); text-decoration:none;
+          padding:.18rem 0; font-size:.9rem; }
+  nav a:hover { color:var(--text); }
+  main { flex:1; max-width:46rem; padding:2rem 2.5rem 6rem; }
+  h2 { color:var(--iris); margin-top:3rem; border-bottom:1px solid var(--overlay);
+       padding-bottom:.3rem; }
+  h3 { color:var(--foam); margin-top:1.8rem; }
+  a { color:var(--pine); }
+  code, pre {
+    font-family:"SF Mono", ui-monospace, Menlo, monospace; font-size:.86em;
+  }
+  code { background:var(--overlay); padding:.1em .35em; border-radius:4px; }
+  pre {
+    background:var(--surface); border:1px solid var(--overlay);
+    border-radius:8px; padding: .9rem 1.1rem; overflow-x:auto; line-height:1.5;
+  }
+  pre code { background:none; padding:0; }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; }
+  th, td { text-align:left; padding:.4rem .7rem; border-bottom:1px solid var(--overlay);
+           vertical-align:top; }
+  th { color:var(--subtle); font-weight:600; }
+  .k { color:var(--gold); font-family:ui-monospace, Menlo, monospace; white-space:nowrap; }
+  .callout {
+    border-left:3px solid var(--iris); background:var(--surface);
+    padding:.7rem 1rem; border-radius:0 8px 8px 0; margin:1rem 0;
+  }
+  .glyph { font-family:ui-monospace, Menlo, monospace; }
+  .g-wait{color:var(--love)} .g-work{color:var(--foam)} .g-done{color:var(--gold)}
+  .g-init{color:var(--iris)} .g-dim{color:var(--muted)}
+  .lead { font-size:1.05rem; color:var(--subtle); }
+</style>
+</head>
+<body>
+<nav>
+  <h1>zdev guide</h1>
+  <a href="#model">The mental model</a>
+  <a href="#workspace">The workspace</a>
+  <a href="#initiatives">Initiatives</a>
+  <a href="#sidebar">Reading the sidebar</a>
+  <a href="#keys">Keys &amp; switcher</a>
+  <a href="#attention">Attention &amp; notifications</a>
+  <a href="#review">Landing readiness</a>
+  <a href="#agents">Agent supervision</a>
+  <a href="#claude">Context in Claude</a>
+  <a href="#config">Config reference</a>
+  <a href="#trouble">Troubleshooting</a>
+</nav>
+<main>
+
+<h2 id="model">The mental model</h2>
+<p class="lead">zdev is the <strong>attention layer</strong> over a fleet of AI
+coding agents running in tmux. It answers one question continuously: <em>who
+needs me next?</em></p>
+<p>A daemon (<code>zdevd</code>) watches tmux in control mode, classifies every
+session's agent state — <span class="glyph g-wait">waiting</span>,
+<span class="glyph g-work">working</span>,
+<span class="glyph g-done">finished</span>, dead — and renders a per-project
+sidebar plus a ranked triage queue. It never wraps an agent, opens a network
+listener, or builds a web UI. Three layers, three jobs:</p>
+<table>
+<tr><th>Layer</th><th>Question</th><th>Tool</th></tr>
+<tr><td>zdev</td><td>who needs me <em>now</em>?</td><td>sidebar, triage, notifications</td></tr>
+<tr><td>beads (<code>bd</code>)</td><td>what's ready <em>next</em>?</td><td>per-initiative work graph</td></tr>
+<tr><td>Jira</td><td>what does the team see?</td><td>the tracker above both</td></tr>
+</table>
+
+<h2 id="workspace">The workspace</h2>
+<p><strong>The disk is the registry.</strong> With
+<code>ZDEV_PROJECTS_DISCOVER=1</code>, the layout of <code>~/workspace</code>
+defines what zdev supervises — no list to maintain:</p>
+<pre><code>~/workspace/
+  projects/&lt;repo&gt;              canonical checkouts — mainline truth, reviews
+  initiatives/&lt;name&gt;/          one initiative (see below)
+  &lt;dir with .git&gt;              root repos (zdev, dotfiles, …)
+</code></pre>
+<table>
+<tr><th>Rule</th><th>Becomes a row?</th></tr>
+<tr><td>root dir with <code>.git</code></td><td>yes — standalone project</td></tr>
+<tr><td><code>projects/&lt;dir&gt;</code> (any dir)</td><td>yes — canonical pool</td></tr>
+<tr><td><code>initiatives/&lt;name&gt;</code></td><td>yes — the initiative's home row</td></tr>
+<tr><td><code>initiatives/&lt;name&gt;/&lt;dir&gt;</code> with <code>.git</code></td><td>yes — member clone</td></tr>
+<tr><td><code>initiatives/&lt;name&gt;/notes</code> (no .git)</td><td><strong>no</strong> — knowledge, not work</td></tr>
+</table>
+<p>The daemon <em>watches</em> the workspace: create or delete a directory and
+the corresponding row follows within seconds. No config edit, no restart.</p>
+<div class="callout">
+<strong>Why is this row here?</strong> <code>zdev --list-projects -v</code>
+prints <code>name&nbsp;→&nbsp;origin</code> for every row — <code>declared</code>,
+<code>favorite</code>, or the discovery rule that matched. The audit trail that
+keeps the implicit convention honest.
+</div>
+<p><code>~/.config/zdev/projects</code> holds <strong>overrides only</strong>:
+favorites (append <code>&nbsp;*</code> — started by <code>zdev up</code>, never
+reaped) and off-convention paths.</p>
+
+<h2 id="initiatives">Initiatives</h2>
+<p>An <strong>initiative</strong> is the unit of value delivered. It spans
+repos, lives exactly as long as delivery requires, and its scope drifts as work
+reveals itself. Mechanically:</p>
+<pre><code>initiatives/&lt;name&gt;/
+  INITIATIVE.md     identity: intent, tracker links, dated decisions, outcome
+  notes/            the knowledge base (never a sidebar row)
+  .beads/           bd work graph (optional but recommended)
+  &lt;repo&gt;/           FULL CLONE of projects/&lt;repo&gt;, branch &lt;name&gt;/&lt;thing&gt;
+</code></pre>
+<h3>Why full clones (not worktrees)?</h3>
+<ul>
+<li>Two initiatives can hold the same repo <em>simultaneously</em>, isolated.</li>
+<li>A clone can check out mainline — a worktree never could while canonical held it.</li>
+<li>Repo state is fully isolated: agent git surgery in one initiative cannot
+corrupt canonical or a sibling. Local clones hardlink objects, so disk is cheap.</li>
+<li>The trade: a clone's mainline is only as fresh as its last <code>git fetch</code>.</li>
+</ul>
+<h3>The lifecycle</h3>
+<pre><code># start
+mkdir -p ~/workspace/initiatives/&lt;name&gt;/notes
+# write INITIATIVE.md; commit in the initiatives repo; optional: bd init
+
+# add a repo — this is the ENTIRE operation; the row appears by itself
+git clone ~/workspace/projects/&lt;repo&gt; ~/workspace/initiatives/&lt;name&gt;/&lt;repo&gt;
+git -C …/&lt;repo&gt; remote set-url origin git@github.com:org/&lt;repo&gt;.git
+git -C …/&lt;repo&gt; checkout -b &lt;name&gt;/&lt;thing&gt;
+
+# reintegrate: ordinary PRs from the clone. when the branch lands:
+rm -rf ~/workspace/initiatives/&lt;name&gt;/&lt;repo&gt;      # row disappears
+
+# wind down: fill INITIATIVE.md's Outcome, commit, delete the directory —
+# the initiatives repo's history is the journal that outlives it.
+</code></pre>
+<div class="callout">
+<strong>Rules of thumb.</strong> Canonical checkouts stay boring (never do
+initiative work there — reviewing a colleague's PR is fine and needs no
+initiative). Only clone a repo when work actually starts. A clone whose branch
+merged &gt;2 weeks ago is rot — delete it, don't nurse it. The
+<code>/initiative</code> skill in Claude walks all of this.
+</div>
+
+<h2 id="sidebar">Reading the sidebar</h2>
+<pre><code><span class="g-dim">  ─────────────────</span>          mood divider (color = fleet mood)
+<span class="g-init">╭ ai-at-pay</span>                  initiative header — IS its home row
+<span class="g-init">│</span>  · pay-app                 member clone (leaf name; gutter = belonging)
+<span class="g-wait">●</span> <span class="g-init">marketplace</span>                attention on the home replaces the ╭
+<span class="g-dim">─ projects</span>                   container header (a pool, not an initiative)
+<span class="g-dim">│</span>  <span class="g-wait">●</span> pay-app 2m             waiting 2 minutes (pulses faster with age)
+<span class="g-dim">──────</span>                       below this: ungrouped singles
+▌ · dotfiles                 ▌ = your current session
+  <span class="g-work">◐</span> zdev                     working (spinner)
+  2 waiting · 1 working      footer tally
+</code></pre>
+<ul>
+<li>Each initiative's name renders in its <strong>own stable color</strong> —
+recognizable before it's read. The gutter matches.</li>
+<li>Grouped rows show the <strong>leaf</strong> (<code>pay-app</code>); the
+switcher keeps full paths for targeting.</li>
+<li>Markers: <span class="glyph g-wait">●</span> waiting ·
+<span class="glyph g-work">◐◓◑◒</span> working ·
+<span class="glyph g-done">◆</span> finished ·
+<span class="glyph g-wait">✗</span> dead · <span class="glyph">·</span> idle.
+Full legend: <code>zdev-show --legend</code>.</li>
+<li>Rows order: grouped sections first (alphabetical), ungrouped singles last.
+Row <em>positions</em> are stable — spatial memory is a contract.</li>
+</ul>
+
+<h2 id="keys">Keys &amp; switcher</h2>
+<table>
+<tr><th>Key</th><th>Does</th></tr>
+<tr><td class="k">M-p</td><td>project switcher (fzf) — grouped like the sidebar, full paths, header rows target the initiative home; team members nest under their lead</td></tr>
+<tr><td class="k">M-n</td><td><code>zdev next</code> — jump to what needs you most (skips the session you're in)</td></tr>
+<tr><td class="k">M-a</td><td>triage popup — the ranked queue with wait context; answer without switching</td></tr>
+<tr><td class="k">M-r</td><td><code>zdev ack --all</code> — mark every status read</td></tr>
+<tr><td class="k">M-o</td><td>announcements menu — mute/unmute "X needs you"</td></tr>
+<tr><td class="k">M-Up / M-Down / M-Enter</td><td>sidebar row cursor / switch to it</td></tr>
+<tr><td class="k">M-t / M-b / M-/</td><td>timeline · broadcast to all claude panes · saved-prompt picker</td></tr>
+<tr><td class="k">M-?</td><td>help popup (live from what's actually bound)</td></tr>
+</table>
+
+<h2 id="attention">Attention &amp; notifications</h2>
+<p>Waits escalate through tiers; each fires at most once per wait:</p>
+<table>
+<tr><th>Age</th><th>Message</th><th>Suppressed when…</th></tr>
+<tr><td>60s</td><td>waiting 1m</td><td>…you're attached to <em>any</em> session (defers; folds into 5m)</td></tr>
+<tr><td>5m</td><td>still waiting (5m)</td><td rowspan="2">…you're attached to <em>that</em> session, or acked it</td></tr>
+<tr><td>15m</td><td>STUCK (15m)</td></tr>
+</table>
+<p>So in practice the first thing you hear is the 5-minute tier — zdev only
+speaks about work you've genuinely left. Delivery is the spoken
+"&lt;project&gt; needs you" (via <code>ZDEV_NOTIFY_CMD</code> →
+<code>~/.config/zdev/notify-backend.sh</code>); every fire logs one line to
+<code>~/Library/Logs/zdev/notify-backend.log</code>. Mute with
+<span class="k">M-o</span> or <code>zdev notify mute 1h</code> — the mute
+gates <em>everything</em> the daemon fires. Agent death notifies once,
+immediately, regardless of presence.</p>
+
+<h2 id="review">Landing readiness</h2>
+<p><code>zdev review</code> (and <code>ZDEV_SIDEBAR_REVIEW=1</code> for the
+sidebar gauge) shows reintegration debt per repo, longest-rotting first:
+<span class="glyph" style="color:var(--pine)">◆</span> ready to land (PR open,
+CI green, clean tree) · <span class="glyph g-done">✗</span> needs a fix ·
+<span class="glyph g-done">⌁</span> uncommitted work that will rot. Initiative
+clones resolve to their canonical repo, so debt aggregates correctly across
+checkouts.</p>
+
+<h2 id="agents">Agent supervision</h2>
+<ul>
+<li><strong>State detection</strong>: Claude Code hooks (<code>zdev-notify</code>)
+drive waiting/working/finished; death detection catches unclean exits —
+<span class="glyph g-wait">✗</span> tops the triage queue.</li>
+<li><strong><code>zdev run &lt;project&gt; "&lt;prompt&gt;"</code></strong> spawns a
+supervised agent loop in its own window — the actuator for triggers and MCP.</li>
+<li><strong>Agent Teams</strong> (<code>ZDEV_TEAM_WINDOWS=1</code>): teammates
+auto-move to their own windows, nest under the lead's row, and are individually
+jumpable from <span class="k">M-p</span>.</li>
+<li><strong>Reaping</strong>: idle sessions die after
+<code>ZDEV_REAP_AFTER_HOURS</code> (8h default); favorites are exempt. Rows
+persist as <em>absent</em> — reaping is about tmux hygiene, not scope.</li>
+</ul>
+
+<h2 id="claude">Context in Claude</h2>
+<p>Claude Code loads <code>CLAUDE.md</code> from every directory above the cwd,
+so the workspace teaches itself — a session at an initiative home (or in any
+clone under it) automatically inherits:</p>
+<pre><code>~/workspace/CLAUDE.md                the map (containers, conventions)
+~/workspace/projects/CLAUDE.md       canonical-pool rules
+~/workspace/initiatives/CLAUDE.md    the initiative playbook
+…/initiatives/&lt;name&gt;/CLAUDE.md       → AGENTS.md: bd conventions, specifics
+</code></pre>
+<p>Plus the <code>/initiative</code> skill for the full lifecycle, and bd's
+<code>bd prime</code> for work-graph context at session start.</p>
+
+<h2 id="config">Config reference</h2>
+<p>All knobs live in <code>~/.config/zdev/env</code> (gap-filled: a real
+environment variable always wins; note an <em>empty</em> value counts as unset —
+use <code>off</code> to disable). Daemon reads at startup; popup scripts read
+per keypress.</p>
+<table>
+<tr><th>Knob</th><th>Default</th><th>Meaning</th></tr>
+<tr><td class="k">ZDEV_WORKSPACE</td><td>~/workspace</td><td>workspace root</td></tr>
+<tr><td class="k">ZDEV_PROJECTS_DISCOVER</td><td>0</td><td>1 = the layout is the registry; file becomes overrides</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_GROUP</td><td>off</td><td><code>prefix</code> = grouped sidebar/switcher + group-aware row order</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_THRESHOLD</td><td>160</td><td>min client cols before the sidebar auto-opens</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_WIDTH</td><td>50</td><td>sidebar pane width</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_DEMOTE</td><td>dim</td><td><code>fold</code> sinks stale rows below a divider; <code>off</code> disables</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_FOOTER</td><td>full</td><td><code>compact</code> glyph tally · <code>off</code></td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_REVIEW</td><td>0</td><td>1 = landing-readiness gauge in the sidebar</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_UNMANAGED</td><td>hide-ish</td><td><code>show</code> = dim unmanaged sessions below the managed block</td></tr>
+<tr><td class="k">ZDEV_TEAM_WINDOWS</td><td>0</td><td>1 = Agent Teams member windows + nested rows</td></tr>
+<tr><td class="k">ZDEV_NOTIFY_CMD</td><td>—</td><td>your notification transport (env: ZDEV_NOTIFY_PROJECT/MSG/KIND/AGE)</td></tr>
+<tr><td class="k">ZDEV_REAP_AFTER_HOURS</td><td>8</td><td>idle-session reap threshold</td></tr>
+</table>
+
+<h2 id="trouble">Troubleshooting</h2>
+<table>
+<tr><th>Symptom</th><th>First move</th></tr>
+<tr><td>anything looks wrong</td><td><code>zdev doctor</code> (add <code>--probe</code> for a live end-to-end test)</td></tr>
+<tr><td>row missing / unexpected</td><td><code>zdev --list-projects -v</code> — is it discovered? which rule?</td></tr>
+<tr><td>sidebar stale or dead</td><td><code>zdev restart</code> (daemon + all sidebars; <code>--build</code> to reinstall from source)</td></tr>
+<tr><td>statuses flap or freeze</td><td><code>tail ~/Library/Logs/zdev/zdevd.log</code>; check you're not working inside <code>zdevd-watcher</code> (daemon-internal session)</td></tr>
+<tr><td>no notifications</td><td><code>zdev notify status</code> (muted?); check the fire log; the daemon resolves its backend at startup</td></tr>
+<tr><td>M-keys do nothing</td><td>terminal must send Option as Alt (Ghostty: <code>macos-option-as-alt=true</code>, restart the app)</td></tr>
+</table>
+<p class="g-dim" style="margin-top:3rem">This page is <code>docs/guide.html</code>
+in the zdev repo — self-contained, no build step. Open it any time with
+<code>zdev docs</code>.</p>
+
+</main>
+</body>
+</html>
