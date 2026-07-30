@@ -88,6 +88,8 @@ printf '  %s●%s waiting  %s◐%s working  %s◆%s done  %s✗%s dead  %s·%s i
     $'\033[1;91m' "$RESET" "$CYAN" "$RESET" $'\033[33m' "$RESET" $'\033[1;91m' "$RESET" "$DIM" "$RESET"
 printf '  %s◆%s ready to land  %s⌁%s will rot  %s⊛%s agent team\n' \
     $'\033[32m' "$RESET" $'\033[33m' "$RESET" "$DIM" "$RESET"
+printf '  %s╭─%s initiative (colored = its identity)  %s│%s member  %s──────%s ungrouped below\n' \
+    "$DIM" "$RESET" "$DIM" "$RESET" "$DIM" "$RESET"
 }
 
 # Interactive (popup or terminal): page so the content scrolls and the

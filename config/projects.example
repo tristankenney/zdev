@@ -1,11 +1,30 @@
-# zdev projects — one path per line, relative to $ZDEV_WORKSPACE (default ~/workspace).
-# Lines starting with # and blank lines are ignored.
+# zdev projects — one path per line, relative to $ZDEV_WORKSPACE (default
+# ~/workspace). Lines starting with # and blank lines are ignored.
 #
-# Append ' *' to mark a project as a favorite. Favorites are started by
-# `zdev up` and skipped by `zdev reap`:
-#   example/web *
+# TWO MODES:
 #
-# Replace the examples below with your own projects.
+# Classic (default): this file is the whole registry — every project is a
+# line here.
+#
+# Discovery (ZDEV_PROJECTS_DISCOVER=1 in ~/.config/zdev/env): the workspace
+# layout is the registry and this file holds OVERRIDES only —
+#
+#   <workspace>/<dir> with .git          → project (root repos)
+#   <workspace>/projects/<dir>           → project (canonical pool)
+#   <workspace>/initiatives/<name>       → initiative home row
+#   <workspace>/initiatives/<name>/<dir> → member, iff it has .git
+#                                          (notes/ never becomes a row)
+#
+# The daemon watches the workspace: `git clone` into an initiative IS
+# add-repo, `rm -rf` is remove — rows follow the disk in seconds.
+# `zdev --list-projects -v` shows why every row exists.
+#
+# Either mode: append ' *' to mark a favorite — started by `zdev up`,
+# never reaped:
+#   projects/backend *
+#
+# Replace the examples below with your own (delete them entirely under
+# discovery unless you want favorites or off-convention paths).
 dotfiles
-example/api
-example/web *
+projects/api
+projects/web *

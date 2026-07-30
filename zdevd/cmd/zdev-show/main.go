@@ -237,6 +237,15 @@ func formatLegend() string {
 	row("·", "alive (palette ·, full-brightness name)")
 	row(dim+"· name"+reset, "stale (>1h) or no session — whole row dims")
 
+	section("Groups & initiatives (ZDEV_SIDEBAR_GROUP=prefix)")
+	row("╭─ name ──", "initiative header — IS its home row (notes/INITIATIVE.md);")
+	row("", "name + frame take the initiative's stable color")
+	row(redPulse+"●"+reset+"─ name ──", "attention on the home replaces the corner — marker wins")
+	row("│ · name", "member row (a clone) — gutter hangs from its header")
+	row(dim+"─ name ──"+reset, "container header (projects/ — a pool, not an initiative)")
+	row(dim+"──────"+reset, "separator: rows below are ungrouped singles")
+	row(dim+"rows"+reset, "grouped rows show the LEAF (pay-app); switcher keeps full paths")
+
 	section("Triage queue (zdev triage / next / popup)")
 	row(orange+"⚡"+reset, "cheap wait — y/n or numbered prompt, seconds to answer")
 	row(redPulse+"✗"+reset, "dead — tops the queue")
