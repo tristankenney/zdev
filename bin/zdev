@@ -17,33 +17,111 @@ PROJECTS_FILE="${ZDEV_PROJECTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zdev/proj
 REAP_AFTER_HOURS="${ZDEV_REAP_AFTER_HOURS:-8}"
 REAP_LOG="${ZDEV_REAP_LOG:-$HOME/Library/Logs/zdev/reaper.log}"
 
-if [[ ! -f "$PROJECTS_FILE" ]]; then
+# The project list has two sources:
+#
+#   1. DISCOVERY (ZDEV_PROJECTS_DISCOVER=1): the workspace layout IS the
+#      registry —
+#        <root>/<dir> with .git          → project      (zdev, dotfiles, …)
+#        projects/<dir>                  → project      (canonical pool;
+#                                          non-git dirs like onboarding count)
+#        initiatives/<name>              → project      (initiative home)
+#        initiatives/<name>/<dir>+.git   → project      (initiative member;
+#                                          notes/ has no .git and never rows)
+#      Membership is derived: git clone into an initiative IS add-repo.
+#   2. The projects FILE: overrides only under discovery — favorites (' *')
+#      and off-convention extras. Without the knob it remains the sole
+#      registry, exactly as before.
+#
+# ORIGINS[i] records why PROJECTS[i] exists ("declared", "favorite", or the
+# discovery rule) — surfaced by `zdev --list-projects -v`, the answer to
+# "why is this row in my sidebar" that keeps the implicit inspectable.
+PROJECTS=()
+FAVORITES=()
+ORIGINS=()
+_have=" "
+_add_project() {
+    # $1 = name, $2 = origin. Names never contain spaces (they're workspace-
+    # relative paths), so a space-delimited membership string is safe under
+    # bash 3.2 (no associative arrays).
+    case "$_have" in *" $1 "*) return 0 ;; esac
+    PROJECTS+=("$1")
+    ORIGINS+=("$2")
+    _have="$_have$1 "
+}
+
+DISCOVER="${ZDEV_PROJECTS_DISCOVER:-0}"
+
+if [[ ! -f "$PROJECTS_FILE" && "$DISCOVER" != "1" ]]; then
     echo "zdev: projects file not found at $PROJECTS_FILE" >&2
-    echo "Create it with one project path per line (relative to $WORKSPACE)." >&2
+    echo "Create it with one project path per line (relative to $WORKSPACE)," >&2
+    echo "or set ZDEV_PROJECTS_DISCOVER=1 to derive the list from the" >&2
+    echo "workspace layout (see the header of config/projects.example)." >&2
     exit 1
 fi
 
-PROJECTS=()
-FAVORITES=()
-while IFS= read -r line; do
-    line="${line%%#*}"
-    line="${line## }"
-    line="${line%% }"
-    [[ -z "$line" ]] && continue
-
-    is_fav=0
-    if [[ "$line" == *' *' ]]; then
-        is_fav=1
-        line="${line% \*}"
+if [[ -f "$PROJECTS_FILE" ]]; then
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="${line## }"
         line="${line%% }"
-    fi
+        [[ -z "$line" ]] && continue
 
-    PROJECTS+=("$line")
-    [[ $is_fav -eq 1 ]] && FAVORITES+=("$line")
-done < "$PROJECTS_FILE"
+        is_fav=0
+        if [[ "$line" == *' *' ]]; then
+            is_fav=1
+            line="${line% \*}"
+            line="${line%% }"
+        fi
+
+        if [[ $is_fav -eq 1 ]]; then
+            _add_project "$line" "favorite"
+            FAVORITES+=("$line")
+        else
+            _add_project "$line" "declared"
+        fi
+    done < "$PROJECTS_FILE"
+fi
+
+if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
+    # Root: only dirs that are git repos — junk without .git never rows.
+    # The containers themselves are never projects.
+    for _d in "$WORKSPACE"/*/; do
+        [[ -d "$_d" ]] || continue
+        _b="${_d%/}"; _b="${_b##*/}"
+        case "$_b" in projects|initiatives|.*) continue ;; esac
+        [[ -e "$_d/.git" ]] && _add_project "$_b" "root-repo"
+    done
+    # Canonical pool: every child dir is deliberate (non-git onboarding/
+    # scratch dirs included).
+    for _d in "$WORKSPACE"/projects/*/; do
+        [[ -d "$_d" ]] || continue
+        _b="${_d%/}"; _b="${_b##*/}"
+        [[ "$_b" == .* ]] && continue
+        _add_project "projects/$_b" "projects-dir"
+    done
+    # Initiatives: home row per <name>; members are children WITH .git
+    # (file or dir — clones today, worktrees would count too). notes/ and
+    # other plain dirs stay invisible.
+    for _h in "$WORKSPACE"/initiatives/*/; do
+        [[ -d "$_h" ]] || continue
+        _hb="${_h%/}"; _hb="${_hb##*/}"
+        [[ "$_hb" == .* ]] && continue
+        _add_project "initiatives/$_hb" "initiative-home"
+        for _r in "$WORKSPACE/initiatives/$_hb"/*/; do
+            [[ -d "$_r" ]] || continue
+            _rb="${_r%/}"; _rb="${_rb##*/}"
+            [[ "$_rb" == .* ]] && continue
+            [[ -e "$_r/.git" ]] && _add_project "initiatives/$_hb/$_rb" "initiative-member"
+        done
+    done
+fi
 
 if (( ${#PROJECTS[@]} == 0 )); then
-    echo "zdev: $PROJECTS_FILE is empty" >&2
+    if [[ "$DISCOVER" == "1" ]]; then
+        echo "zdev: no projects found — $PROJECTS_FILE is empty and discovery found nothing under $WORKSPACE" >&2
+    else
+        echo "zdev: $PROJECTS_FILE is empty" >&2
+    fi
     exit 1
 fi
 
@@ -542,7 +620,18 @@ case "$1" in
         exit 0
         ;;
     --list-projects)
-        for p in "${PROJECTS[@]}"; do echo "$p"; done
+        # -v: one "name<TAB>origin" line per project — why each row exists
+        # (declared / favorite / which discovery rule). The audit trail that
+        # keeps derived membership honest.
+        if [[ "${2:-}" == "-v" ]]; then
+            i=0
+            for p in "${PROJECTS[@]}"; do
+                printf '%s\t%s\n' "$p" "${ORIGINS[$i]}"
+                i=$((i+1))
+            done
+        else
+            for p in "${PROJECTS[@]}"; do echo "$p"; done
+        fi
         exit 0
         ;;
     up)
