@@ -157,6 +157,24 @@ func TestGroupedHomeAttention(t *testing.T) {
 	t.Fatalf("no header line found:\n%s", out)
 }
 
+// The current session's home row carries the ▌ marker — switching into an
+// initiative home must be visible (live bug, 2026-07-30).
+func TestGroupedHomeCurrentMarker(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := &proto.Snapshot{
+		CurrentSession: "initiatives/ai-at-pay",
+		Projects: []proto.Project{
+			{Name: "initiatives/ai-at-pay", Status: "alive"},
+			{Name: "initiatives/ai-at-pay/pay-app", Status: "alive"},
+		},
+	}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	if !strings.Contains(out, "▌ ─ ai-at-pay") {
+		t.Errorf("current home row must carry the ▌ marker:\n%s", out)
+	}
+}
+
 // A group straddling the demote divider re-states its header below the fold
 // (synthetic form — the home row, if any, stays wherever demotion put it).
 func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {

@@ -249,7 +249,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			// The home row IS the group header. When it's also the current
 			// session, the metadata row still follows — the current-project
 			// two-row contract (and projBase math) is glyph-agnostic.
-			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor)
+			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent)
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 			}
@@ -504,10 +504,19 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int) {
 // replaces both the synthetic header and the home's compact row, so the
 // group costs no extra line and the home stays a real, navigable FlatRow
 // whose agent attention lights the header.
-func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor bool) {
-	if isCursor {
+func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool) {
+	switch {
+	case isCurrent:
+		// Same breath-pulsing ▌ the current project row carries — without
+		// it, switching INTO an initiative home left the sidebar's
+		// selection invisible (found live, 2026-07-30).
+		buf.WriteString(BreathColorForProject(p.Name, animator.BreathFrame()))
+		buf.WriteString("▌")
+		buf.WriteString(Reset)
+		buf.WriteString(" ")
+	case isCursor:
 		buf.WriteString("▶ ")
-	} else {
+	default:
 		buf.WriteString("  ")
 	}
 	// Idle/absent homes read as a pure section rule (dim ─); any real
