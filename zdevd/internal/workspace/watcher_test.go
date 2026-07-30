@@ -30,6 +30,9 @@ func newCountingLister(refreshes *int64) *projects.Lister {
 func runWatcher(t *testing.T, dir string, lister *projects.Lister) {
 	t.Helper()
 	w := NewWatcher(dir, lister)
+	// Below fswatchtest's stimGap (150ms): a continuous stimulus must be able
+	// to settle between stims, or OnSettle never fires and every wait times out.
+	w.debounce = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	runErr := make(chan error, 1)
 	go func() { runErr <- w.Run(ctx) }()
@@ -112,5 +115,68 @@ func TestWorkspaceWatcher_MissingDirSurvives(t *testing.T) {
 	}
 	if n := atomic.LoadInt64(&refreshes); n != 0 {
 		t.Errorf("degraded watcher drove %d Refresh calls; want 0", n)
+	}
+}
+
+// TestWorkspaceWatcher_InitiativeCloneCreate pins the depth-2 coverage the
+// discovery convention depends on: a directory appearing INSIDE
+// initiatives/<name>/ (a git clone — the entire add-repo gesture) must
+// trigger a refresh. The pre-fix watcher only watched the root, so clones
+// were invisible until a daemon restart.
+func TestWorkspaceWatcher_InitiativeCloneCreate(t *testing.T) {
+	dir := t.TempDir()
+	initiative := filepath.Join(dir, "initiatives", "marketplace")
+	if err := os.MkdirAll(initiative, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var refreshes int64
+	lister := newCountingLister(&refreshes)
+	runWatcher(t, dir, lister)
+
+	i := 0
+	fswatchtest.EventuallyStim(t, "refresh after clone dir create inside initiative",
+		func() { _ = os.Mkdir(filepath.Join(initiative, fmt.Sprintf("repo%d", i)), 0o755); i++ },
+		func() bool { return atomic.LoadInt64(&refreshes) >= 1 })
+}
+
+// TestConfigWatcher_ProjectsFileEdit: editing the overrides file refreshes;
+// churn on OTHER files in the config dir does not.
+func TestConfigWatcher_ProjectsFileEdit(t *testing.T) {
+	dir := t.TempDir()
+	projectsFile := filepath.Join(dir, "projects")
+	if err := os.WriteFile(projectsFile, []byte("alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var refreshes int64
+	lister := newCountingLister(&refreshes)
+	c := NewConfigWatcher(dir, "projects", lister)
+	c.debounce = 50 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- c.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runErr:
+		case <-time.After(fswatchtest.DefaultDeadline):
+			t.Error("config watcher did not exit after cancel")
+		}
+	})
+
+	i := 0
+	fswatchtest.EventuallyStim(t, "refresh after projects file write",
+		func() {
+			_ = os.WriteFile(projectsFile, []byte(fmt.Sprintf("alpha\n# %d\n", i)), 0o644)
+			i++
+		},
+		func() bool { return atomic.LoadInt64(&refreshes) >= 1 })
+
+	// Unrelated file churn must not refresh: write another file, allow a
+	// settle window, count must hold.
+	before := atomic.LoadInt64(&refreshes)
+	_ = os.WriteFile(filepath.Join(dir, "env"), []byte("X=1\n"), 0o644)
+	time.Sleep(200 * time.Millisecond)
+	if got := atomic.LoadInt64(&refreshes); got != before {
+		t.Errorf("unrelated file churn refreshed: %d -> %d", before, got)
 	}
 }

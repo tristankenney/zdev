@@ -376,6 +376,15 @@ func run() error {
 		submitEvent(tmuxctl.TeamsChanged{Teams: m})
 	})
 	workspaceW := workspace.NewWatcher(workspaceDir, lister)
+	// Overrides-file watcher: edits to ~/.config/zdev/projects (favorites,
+	// extras) land without a daemon restart — same contract the workspace
+	// watcher gives disk changes. Watches the parent dir so editor
+	// write-rename saves are seen.
+	cfgDir := os.Getenv("XDG_CONFIG_HOME")
+	if cfgDir == "" {
+		cfgDir = filepath.Join(os.Getenv("HOME"), ".config")
+	}
+	projectsFileW := workspace.NewConfigWatcher(filepath.Join(cfgDir, "zdev"), "projects", lister)
 
 	// handleCwdForUnmanaged pins a per-session dir override on the branch
 	// probe for sessions absent from the projects-file lister and schedules
@@ -493,6 +502,7 @@ func run() error {
 	g.Go(func() error { return notifW.Run(gctx) })
 	g.Go(func() error { return teamsW.Run(gctx) })
 	g.Go(func() error { return workspaceW.Run(gctx) })
+	g.Go(func() error { return projectsFileW.Run(gctx) })
 
 	wErr := g.Wait()
 
