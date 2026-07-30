@@ -198,6 +198,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// invariants review caught exactly that divergence.
 	var groupKeys []string
 	var isHome []bool
+	hasHome := map[string]bool{} // group key → has an initiative home row
 	if GroupMode == "prefix" {
 		groupKeys = make([]string, len(snap.Projects))
 		isHome = make([]bool, len(snap.Projects))
@@ -205,6 +206,9 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			name := snap.Projects[i].Name
 			groupKeys[i] = groupKey(name)
 			isHome[i] = proto.IsInitiativeHome(name)
+			if isHome[i] {
+				hasHome[groupKeys[i]] = true
+			}
 		}
 	}
 
@@ -257,11 +261,20 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows)
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 		case grouped:
-			// Member row: nested two columns under its header, same indent
-			// family as team member rows. Width shrinks with the indent so
-			// truncation still respects the pane edge.
+			// Member row: a │ gutter hangs under the group's header —
+			// hued (PaletteFor, matching the header name) for initiative
+			// groups, Dim for synthetic ones (projects/) — so belonging
+			// reads as a frame, not just an indent. Width shrinks with
+			// the gutter so truncation still respects the pane edge.
 			buf.WriteString("  ")
-			renderCompactRow(&buf, &p, width-2, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
+			if hasHome[groupKeys[i]] {
+				buf.WriteString(PaletteFor(groupKeys[i]))
+			} else {
+				buf.WriteString(Dim)
+			}
+			buf.WriteString("│")
+			buf.WriteString(Reset)
+			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
 		default:
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
 		}
@@ -519,26 +532,35 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	default:
 		buf.WriteString("  ")
 	}
-	// Idle/absent homes read as a pure section rule (dim ─); any real
-	// attention state shows its marker. The split keys on ATTENTION, not
-	// the glyph — the waiting pulse's off-phase frame is itself "·".
+	// Idle/absent homes open the group frame with a ╭─ corner (the │
+	// gutter on member rows hangs off it); any real attention state
+	// replaces the corner with its marker — attention outranks
+	// decoration. The split keys on ATTENTION, not the glyph — the
+	// waiting pulse's off-phase frame is itself "·".
+	name := proto.GroupKey(p.Name)
 	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
-		buf.WriteString(Dim)
-		buf.WriteString("─")
+		buf.WriteString(PaletteFor(name))
+		buf.WriteString("╭─")
 	} else {
 		glyph, color := MarkerFor(*p, animator, nowFn())
 		buf.WriteString(color)
 		buf.WriteString(glyph)
+		buf.WriteString(Reset)
+		buf.WriteString(PaletteFor(name))
+		buf.WriteString("─")
 	}
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
-	name := proto.GroupKey(p.Name)
+	// The initiative's name carries its stable PaletteFor hue — the same
+	// per-name color identity project names already use — so each
+	// initiative is recognizable by color before it is read.
 	buf.WriteString(Bold)
+	buf.WriteString(PaletteFor(name))
 	buf.WriteString(name)
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
 	buf.WriteString(Dim)
-	buf.WriteString(strings.Repeat("─", groupHeaderFill(width, 2+2+utf8.RuneCountInString(name)+1)))
+	buf.WriteString(strings.Repeat("─", groupHeaderFill(width, 2+3+utf8.RuneCountInString(name)+1)))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
