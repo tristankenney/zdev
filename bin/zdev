@@ -200,7 +200,10 @@ build_layout() {
         else
             # zdev-show unavailable (build skew during install) — fall back
             # to the historical claude-or-shell path so the popup still works.
-            inner="if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions --continue; fi; exec $user_shell -i"
+            # sh -c wrapper: --continue exits nonzero on a fresh project
+            # (nothing to resume) — fall back to a clean start. exec of the
+            # wrapper preserves pane-closes-on-exit.
+            inner="if command -v claude >/dev/null 2>&1; then exec sh -c 'claude --dangerously-skip-permissions --continue || exec claude --dangerously-skip-permissions'; fi; exec $user_shell -i"
         fi
     elif [[ -n "$agent_cmd" ]]; then
         inner="$agent_cmd; exec ${SHELL:-/bin/sh} -i"

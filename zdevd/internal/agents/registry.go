@@ -27,12 +27,12 @@ import (
 // (which would be a cycle once config grows to know about the registry).
 // Callers convert via FromConfigSpecs in package main.
 type Spec struct {
-	Name             string
-	Glyph            string
-	WaitingMarkers   []string
-	FinishedMarkers  []string
-	SpinnerMarkers   []string
-	Launch           string
+	Name            string
+	Glyph           string
+	WaitingMarkers  []string
+	FinishedMarkers []string
+	SpinnerMarkers  []string
+	Launch          string
 }
 
 // Builtin returns the canonical default specs used when sidebar.toml has
@@ -48,7 +48,14 @@ func Builtin() []Spec {
 			WaitingMarkers:  []string{"● claude", "✳ "},
 			FinishedMarkers: []string{"◆ claude"},
 			SpinnerMarkers:  []string{"⠂ ", "⠐ ", "⠠ ", "⠈ ", "⠁ ", "⠉ ", "⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "},
-			Launch:          "claude --dangerously-skip-permissions --continue",
+			// --continue resumes the directory's last conversation, but it
+			// exits nonzero when there is nothing to resume — which is every
+			// FRESH project (a new initiative home was how this surfaced
+			// live). The sh -c wrapper falls back to a clean start, and
+			// because the caller execs the wrapper, pane-closes-on-exit
+			// semantics are preserved: normal quit → sh exits 0 → pane
+			// closes; failed resume → exec replaces sh with the fresh run.
+			Launch: "sh -c 'claude --dangerously-skip-permissions --continue || exec claude --dangerously-skip-permissions'",
 		},
 		{
 			Name:            "opencode",
