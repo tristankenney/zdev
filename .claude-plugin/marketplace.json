@@ -1,0 +1,11 @@
+{
+  "name": "zdev",
+  "owner": { "name": "tristankenney" },
+  "plugins": [
+    {
+      "name": "zdev",
+      "source": "./plugin",
+      "description": "Drive a zdev-supervised agent fleet: initiatives, triage, review, fleet status"
+    }
+  ]
+}
