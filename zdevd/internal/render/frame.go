@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
@@ -469,22 +468,6 @@ func displayName(name string) string {
 	return rest
 }
 
-// groupHeaderFill is the dash budget for header rows: fill toward the pane
-// width so headers read as section rules, bounded below so narrow panes
-// keep a stub and bounded ABOVE so a wide pane (or a mis-reported width —
-// the PaneWidth active-pane bug rendered 200-column dash walls) never
-// turns the rule into a wall.
-func groupHeaderFill(width, used int) int {
-	n := width - used - 1
-	if n < 2 {
-		n = 2
-	}
-	if n > 32 {
-		n = 32
-	}
-	return n
-}
-
 // writeGroupHeader emits the one-line SYNTHETIC group header for groups
 // without a home row (e.g. projects/): "  ─ name ────…" filled toward
 // width, or a bare dim "  ──────" separator for the unprefixed block
@@ -496,14 +479,14 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int) {
 	if name == "" {
 		buf.WriteString(strings.Repeat("─", 6))
 	} else {
+		// No trailing dash fill — live dogfood showed a pane that was
+		// half horizontal rules (mood divider + ragged header fills +
+		// the separator). "─ " plus a Bold name reads as a header on
+		// its own.
 		buf.WriteString("─ ")
 		buf.WriteString(Reset)
 		buf.WriteString(Bold)
 		buf.WriteString(name)
-		buf.WriteString(Reset)
-		buf.WriteString(Dim)
-		buf.WriteString(" ")
-		buf.WriteString(strings.Repeat("─", groupHeaderFill(width, 2+2+utf8.RuneCountInString(name)+1)))
 	}
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
@@ -540,27 +523,23 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	name := proto.GroupKey(p.Name)
 	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
 		buf.WriteString(PaletteFor(name))
-		buf.WriteString("╭─")
+		buf.WriteString("╭")
 	} else {
 		glyph, color := MarkerFor(*p, animator, nowFn())
 		buf.WriteString(color)
 		buf.WriteString(glyph)
-		buf.WriteString(Reset)
-		buf.WriteString(PaletteFor(name))
-		buf.WriteString("─")
 	}
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
 	// The initiative's name carries its stable PaletteFor hue — the same
 	// per-name color identity project names already use — so each
-	// initiative is recognizable by color before it is read.
+	// initiative is recognizable by color before it is read. No trailing
+	// dash fill and no glyph+dash combo: live dogfood showed both read
+	// as clutter (a pane half-full of ragged rules; "◐─ name" noise) —
+	// the corner/marker, hue, and Bold carry "this is a header" alone.
 	buf.WriteString(Bold)
 	buf.WriteString(PaletteFor(name))
 	buf.WriteString(name)
-	buf.WriteString(Reset)
-	buf.WriteString(" ")
-	buf.WriteString(Dim)
-	buf.WriteString(strings.Repeat("─", groupHeaderFill(width, 2+3+utf8.RuneCountInString(name)+1)))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')

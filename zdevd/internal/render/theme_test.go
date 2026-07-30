@@ -63,14 +63,14 @@ func TestBreathColorForProject_Format(t *testing.T) {
 	code := paletteXtermCodes[PaletteIndex(name)]
 
 	cases := []struct {
-		frame    int
-		wantFmt  string // format template with bright and code
+		frame     int
+		wantFmt   string // format template with bright and code
 		hasBright bool
 	}{
-		{0, "\x1b[1;38;5;%dm", true},  // bold peak
-		{1, "\x1b[38;5;%dm", false},   // default brightness
-		{2, "\x1b[2;38;5;%dm", true},  // dim trough
-		{3, "\x1b[38;5;%dm", false},   // default brightness return
+		{0, "\x1b[1;38;5;%dm", true}, // bold peak
+		{1, "\x1b[38;5;%dm", false},  // default brightness
+		{2, "\x1b[2;38;5;%dm", true}, // dim trough
+		{3, "\x1b[38;5;%dm", false},  // default brightness return
 	}
 	for _, tc := range cases {
 		var want string
@@ -117,8 +117,8 @@ func itoa(n int) string {
 
 func TestThresholds(t *testing.T) {
 	cases := []struct {
-		name       string
-		got, want  int
+		name      string
+		got, want int
 	}{
 		{"StaleThresholdSec", StaleThresholdSec, 3600},
 		{"WaitWarnSec", WaitWarnSec, 60},

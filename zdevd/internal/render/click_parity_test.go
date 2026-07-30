@@ -124,7 +124,7 @@ func TestClickColumnMath(t *testing.T) {
 				// For non-current (always 1 row) we use offset += 1.
 				// For current we use the actual rendered line count for that project.
 				_ = expectedProjectRows // already verified above
-				offset := 0            // 0-based line index into the project-rows section
+				offset := 0             // 0-based line index into the project-rows section
 				for i, p := range s.snap.Projects {
 					isCurrent := p.Name == s.snap.CurrentSession && s.snap.CurrentSession != ""
 					// 1-indexed click row: mood divider=1, project section starts at 2.

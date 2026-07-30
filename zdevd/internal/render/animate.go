@@ -102,7 +102,6 @@ func (a *Animator) CadenceFor(snap *proto.Snapshot) time.Duration {
 	return time.Duration(IdleSleepMS) * time.Millisecond
 }
 
-
 // PulseGlyphAt returns the pulse glyph paced by wait age (dogfood
 // feedback: a flat ~0.5s pulse reads as alarm from second one). The
 // pulse starts as a calm ~2s blink and accelerates as the wait crosses
@@ -150,4 +149,3 @@ func anyWaiting(snap *proto.Snapshot) bool {
 	}
 	return false
 }
-

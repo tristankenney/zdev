@@ -93,7 +93,7 @@ func TestGroupedFrame(t *testing.T) {
 	// Knob off: no headers, full names.
 	GroupMode = "off"
 	off := stripAnsi(Render(groupTestSnapshot(), 50, NewAnimator(), fixedNowFn))
-	if strings.Contains(off, "─ ai-at-pay ─") || strings.Contains(off, "╭─ ai-at-pay") {
+	if strings.Contains(off, "─ ai-at-pay ─") || strings.Contains(off, "╭ ai-at-pay") {
 		t.Fatalf("GroupMode=off must not render group headers:\n%s", off)
 	}
 	if !strings.Contains(off, "initiatives/ai-at-pay/pay-app") {
@@ -104,15 +104,15 @@ func TestGroupedFrame(t *testing.T) {
 	out := stripAnsi(Render(groupTestSnapshot(), 50, NewAnimator(), fixedNowFn))
 
 	// Home rows render AS headers — exactly one ai-at-pay header line
-	// (framed with the ╭─ corner), and no plain home row anywhere.
-	if n := strings.Count(out, "╭─ ai-at-pay ─"); n != 1 {
+	// (opened with the ╭ corner), and no plain home row anywhere.
+	if n := strings.Count(out, "╭ ai-at-pay"); n != 1 {
 		t.Errorf("ai-at-pay header count = %d, want 1:\n%s", n, out)
 	}
 	if strings.Contains(out, "· ai-at-pay\n") || strings.Contains(out, "initiatives/ai-at-pay\n") {
 		t.Errorf("home row must render as the header, not as a plain row:\n%s", out)
 	}
 	// projects has no home: synthetic header.
-	if n := strings.Count(out, "─ projects ─"); n != 1 {
+	if n := strings.Count(out, "─ projects"); n != 1 {
 		t.Errorf("projects header count = %d, want 1:\n%s", n, out)
 	}
 	// Members: leaf-only display, indented under their header.
@@ -123,9 +123,9 @@ func TestGroupedFrame(t *testing.T) {
 		t.Errorf("member rows must carry the │ gutter under their header:\n%s", out)
 	}
 	// Order: groups first (alpha), then the bare separator, then singles.
-	iAI := strings.Index(out, "╭─ ai-at-pay ─")
-	iMkt := strings.Index(out, "╭─ marketplace ─")
-	iProj := strings.Index(out, "─ projects ─")
+	iAI := strings.Index(out, "╭ ai-at-pay")
+	iMkt := strings.Index(out, "╭ marketplace")
+	iProj := strings.Index(out, "─ projects")
 	iSep := strings.Index(out, "\n  ──────\n")
 	iDot := strings.Index(out, "· dotfiles")
 	iZdev := strings.Index(out, "· zdev")
@@ -147,7 +147,7 @@ func TestGroupedHomeAttention(t *testing.T) {
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
 	// The header line carries a non-dash glyph before the name.
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "ai-at-pay ─") {
+		if strings.Contains(line, "ai-at-pay") && !strings.Contains(line, "pay-app") {
 			if strings.HasPrefix(strings.TrimSpace(line), "╭") {
 				t.Errorf("waiting home must light the header glyph, not the idle corner: %q", line)
 			}
@@ -170,7 +170,7 @@ func TestGroupedHomeCurrentMarker(t *testing.T) {
 		},
 	}
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	if !strings.Contains(out, "▌ ╭─ ai-at-pay") {
+	if !strings.Contains(out, "▌ ╭ ai-at-pay") {
 		t.Errorf("current home row must carry the ▌ marker:\n%s", out)
 	}
 }
@@ -190,7 +190,7 @@ func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 		{Name: "projects/pay-id", Status: "alive", LastActivityTS: stale},
 	}}
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	if n := strings.Count(out, "─ projects ─"); n != 2 {
+	if n := strings.Count(out, "─ projects"); n != 2 {
 		t.Errorf("straddling group must render its header in BOTH blocks, got %d:\n%s", n, out)
 	}
 }
