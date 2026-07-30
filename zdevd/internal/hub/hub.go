@@ -193,6 +193,17 @@ type Config struct {
 	// Default false preserves existing sidebar behaviour.
 	ShowUnmanaged bool
 
+	// GroupSidebar mirrors ZDEV_SIDEBAR_GROUP=prefix. When true, project
+	// row ORDER is group-aware (proto.GroupSort: grouped names first by
+	// group key, ungrouped names as one block at the bottom) so the
+	// renderer's group headers sit over contiguous runs and singles stop
+	// interleaving between groups. Order is the daemon's authority —
+	// cursorFlatRows and buildSnapshot both derive from the same ordering
+	// function, so cursor row math cannot drift from the published rows.
+	// Default false preserves the plain lexicographic order byte-for-byte.
+	// The hub never reads the env var — cmd/zdevd resolves it.
+	GroupSidebar bool
+
 	// TeamWindows mirrors ZDEV_TEAM_WINDOWS=1 (Agent Teams slice B). When
 	// true, buildSnapshot excludes Agent Teams member panes from their
 	// session's attention derivation so the lead's project row reflects the
@@ -226,6 +237,7 @@ func NewHub(cfg Config) *Hub {
 	st.statusDwell = cfg.StatusDwell
 	st.waitingDwell = cfg.WaitingDwell
 	st.showUnmanaged = cfg.ShowUnmanaged
+	st.groupSidebar = cfg.GroupSidebar
 	st.teamWindows = cfg.TeamWindows
 	return &Hub{
 		debounce:       cfg.Debounce,

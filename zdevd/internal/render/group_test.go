@@ -34,103 +34,131 @@ func TestGroupKey(t *testing.T) {
 	}
 }
 
-// ansiRE strips SGR/cursor escapes so header assertions can match the
-// VISIBLE text — the header interleaves Dim/Bold/Reset between its glyphs,
-// so raw-byte substring matches would be coupled to the exact styling.
+func TestDisplayName(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+
+	GroupMode = "prefix"
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"initiatives/marketplace/pay-app", "pay-app"},
+		{"initiatives/marketplace", "marketplace"}, // home (renders as header anyway)
+		{"projects/pay-app", "pay-app"},
+		{"pay/pay-app", "pay-app"}, // legacy prefix
+		{"zdev", "zdev"},           // bare: unchanged
+		// An initiative name that happens to occur inside "initiatives" —
+		// the structural parse must not misfire the way a substring search
+		// would.
+		{"initiatives/tia/repo", "repo"},
+	}
+	for _, c := range cases {
+		if got := displayName(c.name); got != c.want {
+			t.Errorf("displayName(%q) = %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	GroupMode = "off"
+	if got := displayName("initiatives/marketplace/pay-app"); got != "initiatives/marketplace/pay-app" {
+		t.Errorf("GroupMode=off must not strip names, got %q", got)
+	}
+}
+
+// ansiRE strips SGR/cursor escapes so assertions match the VISIBLE text.
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 func stripAnsi(b []byte) string { return ansiRE.ReplaceAllString(string(b), "") }
 
-// groupTestSnapshot mirrors the user-visible shape: two prefixed groups
-// with bare projects interleaved by sort order ("dotfiles" between the
-// groups, "zdev" trailing — the orphan case: neither may render under a
-// header it doesn't belong to).
+// groupTestSnapshot mirrors the live layout: two initiatives (home row +
+// one clone each), the projects container, and bare singles. Order matches
+// proto.GroupSort — the order the daemon publishes when grouping is on.
 func groupTestSnapshot() *proto.Snapshot {
-	return &proto.Snapshot{Projects: []proto.Project{
-		{Name: "ai-at-pay/pay-app", Status: "alive"},
-		{Name: "ai-at-pay/pay-id", Status: "alive"},
-		{Name: "dotfiles", Status: "alive"},
-		{Name: "pay/pay-app", Status: "alive"},
-		{Name: "pay/pay-id", Status: "absent"},
-		{Name: "zdev", Status: "alive"},
-	}}
+	names := []string{
+		"zdev", "projects/pay-app", "initiatives/ai-at-pay",
+		"initiatives/ai-at-pay/pay-app", "dotfiles",
+		"initiatives/marketplace", "initiatives/marketplace/pay-app",
+		"projects/onboarding",
+	}
+	proto.GroupSort(names)
+	snap := &proto.Snapshot{}
+	for _, n := range names {
+		snap.Projects = append(snap.Projects, proto.Project{Name: n, Status: "alive"})
+	}
+	return snap
 }
 
-func TestGroupHeaders(t *testing.T) {
+func TestGroupedFrame(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 
-	// Knob off: no header lines — byte-identical contract with pre-knob
-	// output for ungrouped fleets is covered by every other render test
-	// running with the "off" default; here just assert no headers appear.
+	// Knob off: no headers, full names.
 	GroupMode = "off"
 	off := stripAnsi(Render(groupTestSnapshot(), 50, NewAnimator(), fixedNowFn))
-	if strings.Contains(off, "─ ai-at-pay ──") || strings.Contains(off, "─ pay ──") {
+	if strings.Contains(off, "─ ai-at-pay ─") {
 		t.Fatalf("GroupMode=off must not render group headers:\n%s", off)
 	}
+	if !strings.Contains(off, "initiatives/ai-at-pay/pay-app") {
+		t.Fatalf("GroupMode=off must keep full names:\n%s", off)
+	}
 
-	// Knob on: one header per contiguous prefix run, in list order, and a
-	// bare separator before each unprefixed run that follows a named group.
 	GroupMode = "prefix"
 	out := stripAnsi(Render(groupTestSnapshot(), 50, NewAnimator(), fixedNowFn))
 
-	iAI := strings.Index(out, "─ ai-at-pay ──")
-	iPay := strings.Index(out, "─ pay ──")
-	if iAI < 0 || iPay < 0 {
-		t.Fatalf("expected both group headers, got:\n%s", out)
+	// Home rows render AS headers — exactly one ai-at-pay header line, and
+	// no plain home row anywhere.
+	if n := strings.Count(out, "─ ai-at-pay ─"); n != 1 {
+		t.Errorf("ai-at-pay header count = %d, want 1:\n%s", n, out)
 	}
-	if iAI > iPay {
-		t.Errorf("ai-at-pay header must precede pay header (list order)")
+	if strings.Contains(out, "· ai-at-pay\n") || strings.Contains(out, "initiatives/ai-at-pay\n") {
+		t.Errorf("home row must render as the header, not as a plain row:\n%s", out)
 	}
-	if n := strings.Count(out, "─ ai-at-pay ──"); n != 1 {
-		t.Errorf("ai-at-pay header count = %d, want 1", n)
+	// projects has no home: synthetic header.
+	if n := strings.Count(out, "─ projects ─"); n != 1 {
+		t.Errorf("projects header count = %d, want 1:\n%s", n, out)
 	}
-	if n := strings.Count(out, "─ pay ──"); n != 1 {
-		t.Errorf("pay header count = %d, want 1", n)
+	// Members: leaf-only display, indented under their header.
+	if strings.Contains(out, "initiatives/ai-at-pay/pay-app") || strings.Contains(out, "projects/pay-app") {
+		t.Errorf("member rows must display leaf names only:\n%s", out)
 	}
-	// Orphan separators: "dotfiles" follows the ai-at-pay group and "zdev"
-	// follows the pay group; each needs a bare "──────" line before it so
-	// it doesn't read as a member of the preceding group.
-	// Line-anchored: the 17-dash mood/demote dividers END in six dashes, so
-	// an unanchored "──────" would match them; the bare separator is the
-	// only line that is exactly two spaces + six dashes.
-	const bareSep = "\n  ──────\n"
-	iDotfiles := strings.Index(out, "dotfiles")
-	iSep1 := strings.Index(out, bareSep)
-	if iSep1 < 0 || iSep1 < iAI || iSep1 > iDotfiles {
-		t.Errorf("expected bare separator between ai-at-pay group and dotfiles:\n%s", out)
+	if !strings.Contains(out, "    · pay-app") {
+		t.Errorf("member rows must be indented two extra columns:\n%s", out)
 	}
-	iZdev := strings.LastIndex(out, "zdev")
-	iSep2 := strings.LastIndex(out[:iZdev], bareSep)
-	if iSep2 < 0 || iSep2 < iPay {
-		t.Errorf("expected bare separator between pay group and trailing zdev:\n%s", out)
+	// Order: groups first (alpha), then the bare separator, then singles.
+	iAI := strings.Index(out, "─ ai-at-pay ─")
+	iMkt := strings.Index(out, "─ marketplace ─")
+	iProj := strings.Index(out, "─ projects ─")
+	iSep := strings.Index(out, "\n  ──────\n")
+	iDot := strings.Index(out, "· dotfiles")
+	iZdev := strings.Index(out, "· zdev")
+	if !(iAI < iMkt && iMkt < iProj && iProj < iSep && iSep < iDot && iDot < iZdev) {
+		t.Errorf("expected groups (alpha) then separator then singles; got positions ai=%d mkt=%d proj=%d sep=%d dot=%d zdev=%d:\n%s",
+			iAI, iMkt, iProj, iSep, iDot, iZdev, out)
 	}
 }
 
-// TestGroupHeadersRootRow: an initiative root (bare "ai-at-pay" immediately
-// followed by "ai-at-pay/*" members) renders UNDER its group header, not
-// orphaned above it in the ungrouped block.
-func TestGroupHeadersRootRow(t *testing.T) {
+// A home row that is WAITING lights its header glyph instead of the dash.
+func TestGroupedHomeAttention(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 	GroupMode = "prefix"
+	now := fixedNowFn()
 	snap := &proto.Snapshot{Projects: []proto.Project{
-		{Name: "ai-at-pay", Status: "alive"}, // root/home row
-		{Name: "ai-at-pay/pay-app", Status: "alive"},
-		{Name: "dotfiles", Status: "alive"},
+		{Name: "initiatives/ai-at-pay", Status: "waiting", Attention: proto.AttWaiting, WaitStartedTS: now - 90},
+		{Name: "initiatives/ai-at-pay/pay-app", Status: "alive"},
 	}}
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	iHeader := strings.Index(out, "─ ai-at-pay ──")
-	iRoot := strings.Index(out, "· ai-at-pay\n")
-	if iHeader < 0 || iRoot < 0 {
-		t.Fatalf("expected header and root row:\n%s", out)
+	// The header line carries a non-dash glyph before the name.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "ai-at-pay ─") {
+			if strings.HasPrefix(strings.TrimSpace(line), "─") {
+				t.Errorf("waiting home must light the header glyph, got: %q", line)
+			}
+			return
+		}
 	}
-	if iRoot < iHeader {
-		t.Errorf("root row must render UNDER its header, not above it:\n%s", out)
-	}
+	t.Fatalf("no header line found:\n%s", out)
 }
 
-// TestGroupHeadersFoldRestatesBelowTheFold: a group straddling the demote
-// divider re-states its header in the demoted block, so no demoted row
-// renders under a header that stayed above the fold.
+// A group straddling the demote divider re-states its header below the fold
+// (synthetic form — the home row, if any, stays wherever demotion put it).
 func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 	defer func(m string) { DemoteMode = m }(DemoteMode)
@@ -140,12 +168,11 @@ func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 	now := fixedNowFn()
 	stale := now - int64(DemoteThresholdSec) - 10
 	snap := &proto.Snapshot{Projects: []proto.Project{
-		// Same group: one active, one demoted (stale, no attention).
-		{Name: "pay/pay-app", Status: "alive", LastActivityTS: now},
-		{Name: "pay/pay-id", Status: "alive", LastActivityTS: stale},
+		{Name: "projects/pay-app", Status: "alive", LastActivityTS: now},
+		{Name: "projects/pay-id", Status: "alive", LastActivityTS: stale},
 	}}
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	if n := strings.Count(out, "─ pay ──"); n != 2 {
+	if n := strings.Count(out, "─ projects ─"); n != 2 {
 		t.Errorf("straddling group must render its header in BOTH blocks, got %d:\n%s", n, out)
 	}
 }

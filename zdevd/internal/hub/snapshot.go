@@ -81,7 +81,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			names = append(names, sess.Name)
 		}
 	}
-	sort.Strings(names)
+	sortRowNames(st, names)
 	sort.Strings(unmanagedNames) // no-op when hide (default)
 
 	// Lead de-aggregation (Agent Teams slice B): when teamWindows is on,
@@ -731,10 +731,24 @@ func orderedRowNames(st *state) []string {
 			names = append(names, sess.Name)
 		}
 	}
-	sort.Strings(names)
+	sortRowNames(st, names)
 	sort.Strings(unmanagedNames)
 
 	return append(names, unmanagedNames...)
+}
+
+// sortRowNames applies the row ordering for the managed block: plain
+// lexicographic by default (byte-identical legacy order), group-aware via
+// proto.GroupSort when the grouped sidebar is on (grouped names first, by
+// group key then name; ungrouped names one block at the bottom). The ONE
+// ordering rule shared by buildSnapshot and orderedRowNames — cursor row
+// math and the published snapshot must never order rows differently.
+func sortRowNames(st *state, names []string) {
+	if st.groupSidebar {
+		proto.GroupSort(names)
+		return
+	}
+	sort.Strings(names)
 }
 
 // cursorFlatRows builds the FLATTENED navigation row list for the cursor —

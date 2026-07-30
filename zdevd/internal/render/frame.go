@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
@@ -187,6 +188,26 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		cursorFlatRow = snap.CursorRow
 	}
 
+	// Group metadata (ZDEV_SIDEBAR_GROUP=prefix), computed before the row
+	// closures so renderProject can route home rows to the header renderer.
+	// groupKeys[i] is project i's effective group; isHome[i] marks the row
+	// that IS its group's header — an initiative home (initiatives/<name>).
+	// Bare names are always singles: proto.GroupSort (the daemon's order
+	// under the same knob) has no adjacency notion, so a renderer-side
+	// bare-root lookahead would disagree with the published order — the
+	// invariants review caught exactly that divergence.
+	var groupKeys []string
+	var isHome []bool
+	if GroupMode == "prefix" {
+		groupKeys = make([]string, len(snap.Projects))
+		isHome = make([]bool, len(snap.Projects))
+		for i := range snap.Projects {
+			name := snap.Projects[i].Name
+			groupKeys[i] = groupKey(name)
+			isHome[i] = proto.IsInitiativeHome(name)
+		}
+	}
+
 	// Per-project rows.
 	//
 	// renderProject writes one project's row(s) and tallies it into the
@@ -218,13 +239,30 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
 		isCursor := cursorFlatRow == projBase[i] && !isCurrent
+		grouped := GroupMode == "prefix" && groupKeys[i] != ""
+		home := grouped && isHome[i]
 		// 260511-ohu change A: twoRows := isCurrent only (urgent dropped).
 		// Non-current urgent projects now render as 1 compact row with the red ▌
 		// prefix migrated into renderCompactRow.
-		if isCurrent {
+		switch {
+		case home:
+			// The home row IS the group header. When it's also the current
+			// session, the metadata row still follows — the current-project
+			// two-row contract (and projBase math) is glyph-agnostic.
+			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor)
+			if isCurrent {
+				renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
+			}
+		case isCurrent:
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows)
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
-		} else {
+		case grouped:
+			// Member row: nested two columns under its header, same indent
+			// family as team member rows. Width shrinks with the indent so
+			// truncation still respects the pane edge.
+			buf.WriteString("  ")
+			renderCompactRow(&buf, &p, width-2, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
+		default:
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
 		}
 		// Nested member rows (Agent Teams slice B, ZDEV_TEAM_WINDOWS): each
@@ -237,38 +275,23 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		}
 	}
 
-	// Group headers (ZDEV_SIDEBAR_GROUP=prefix): a dim "─ name ──" line
-	// before each run of projects sharing a first path segment. The key is
-	// DERIVED from the name — initiative membership under the worktree
-	// layout (initiatives/<name>/<repo>) is whatever directories exist, so
-	// there is no registry to consult or rot. Projects are already sorted
-	// lexicographically, so same-prefix runs are contiguous and header
-	// emission is a single scan; row ORDER is untouched (spatial memory
-	// contract). Headers are renderer-only visual lines — never navigation
-	// rows — so proto.FlatRows, the hub cursor, and the wire are unaffected,
-	// same as the fold divider and the daemon-health row.
-	// groupKeys[i] is project i's effective group. One refinement over the
-	// raw first-segment key: an initiative ROOT row — a bare name whose
-	// slash-form members immediately follow it in sort order ("ai-at-pay"
-	// before "ai-at-pay/pay-app") — adopts its own name as key, so the home
-	// row renders UNDER its header instead of orphaned above it.
-	var groupKeys []string
-	if GroupMode == "prefix" {
-		groupKeys = make([]string, len(snap.Projects))
-		for i := range snap.Projects {
-			k := groupKey(snap.Projects[i].Name)
-			if k == "" && i+1 < len(snap.Projects) &&
-				groupKey(snap.Projects[i+1].Name) == snap.Projects[i].Name {
-				k = snap.Projects[i].Name
-			}
-			groupKeys[i] = k
-		}
-	}
+	// Group headers (ZDEV_SIDEBAR_GROUP=prefix). A group whose first row is
+	// a HOME row needs no synthetic header — renderHomeRow draws that row
+	// AS the header. Groups without a home (projects/, legacy prefixes) get
+	// the synthetic "─ name ──…" line; the transition into the ungrouped
+	// block gets the bare separator so a trailing single never reads as a
+	// member of the previous group. Headers are renderer-only visual lines
+	// — never navigation rows — so proto.FlatRows, the hub cursor, and the
+	// wire are unaffected, same as the fold divider and the daemon-health
+	// row. (Row ORDER, by contrast, is the daemon's: proto.GroupSort under
+	// the same knob.)
 	prevGroup := ""
 	renderGrouped := func(i int) {
 		if GroupMode == "prefix" {
 			if g := groupKeys[i]; g != prevGroup {
-				writeGroupHeader(&buf, g)
+				if !isHome[i] {
+					writeGroupHeader(&buf, g, width)
+				}
 				prevGroup = g
 			}
 		}
@@ -399,39 +422,62 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // the knob is removed rather than nursed.
 var GroupMode = "off"
 
-// initiativesContainer is the workspace directory that holds initiative
-// directories (ZDEV layout: $ZDEV_WORKSPACE/initiatives/<name>/<repo>).
-// Projects under it group by the INITIATIVE name, not the container — a
-// single "initiatives" group would erase exactly the distinction the
-// grouping exists to draw.
-const initiativesContainer = "initiatives"
+// groupKey delegates to proto.GroupKey — the shared definition the hub's
+// group-aware ordering (proto.GroupSort) also uses, so header emission and
+// row order can never disagree about membership.
+func groupKey(name string) string { return proto.GroupKey(name) }
 
-// groupKey returns the grouping key for a project name under
-// GroupMode=prefix: the first path segment for slash-form names, "" for
-// bare names — except under the initiatives container, where the key is
-// the second segment (the initiative), and the initiative home row
-// ("initiatives/<name>") keys as its own name so it groups with its
-// members. Pure.
-func groupKey(name string) string {
+// displayName returns the row text for a project name under
+// GroupMode=prefix: the portion after the group-key segment — the header
+// carries the context the prefix used to, so repeating it on every row is
+// pure noise ("initiatives/ai-at-pay/pay-app" renders as "pay-app" under
+// the "ai-at-pay" header; "projects/pay-app" as "pay-app" under
+// "projects"). Structural parse, mirroring proto.GroupKey — never a
+// substring search, which would misfire on initiative names that happen
+// to occur inside "initiatives". Identity (CurrentSession comparison,
+// animator keys, switch targets) always uses the full name; this is
+// display only. The SWITCHER deliberately keeps full paths — fzf matches
+// on display text, and three identical "pay-app" rows can't be targeted.
+func displayName(name string) string {
+	if GroupMode != "prefix" {
+		return name
+	}
 	i := strings.IndexByte(name, '/')
 	if i <= 0 {
-		return ""
+		return name
 	}
-	if name[:i] != initiativesContainer {
-		return name[:i]
+	if name[:i] != proto.InitiativesContainer {
+		return name[i+1:]
 	}
 	rest := name[i+1:]
 	if j := strings.IndexByte(rest, '/'); j > 0 {
-		return rest[:j]
+		return rest[j+1:]
 	}
 	return rest
 }
 
-// writeGroupHeader emits the one-line group header: "  ─ name ──" with the
-// name Bold against Dim rules, or a bare dim "  ──────" separator for the
-// unprefixed group (name == ""). One row always, same glyph family as the
-// mood/demote dividers.
-func writeGroupHeader(buf *bytes.Buffer, name string) {
+// groupHeaderFill is the dash budget for header rows: fill toward the pane
+// width so headers read as section rules, bounded below so narrow panes
+// keep a stub and bounded ABOVE so a wide pane (or a mis-reported width —
+// the PaneWidth active-pane bug rendered 200-column dash walls) never
+// turns the rule into a wall.
+func groupHeaderFill(width, used int) int {
+	n := width - used - 1
+	if n < 2 {
+		n = 2
+	}
+	if n > 32 {
+		n = 32
+	}
+	return n
+}
+
+// writeGroupHeader emits the one-line SYNTHETIC group header for groups
+// without a home row (e.g. projects/): "  ─ name ────…" filled toward
+// width, or a bare dim "  ──────" separator for the unprefixed block
+// (name == ""). Groups WITH a home row get renderHomeRow instead — the
+// home project row IS the header there.
+func writeGroupHeader(buf *bytes.Buffer, name string, width int) {
 	buf.WriteString("  ")
 	buf.WriteString(Dim)
 	if name == "" {
@@ -443,8 +489,47 @@ func writeGroupHeader(buf *bytes.Buffer, name string) {
 		buf.WriteString(name)
 		buf.WriteString(Reset)
 		buf.WriteString(Dim)
-		buf.WriteString(" ──")
+		buf.WriteString(" ")
+		buf.WriteString(strings.Repeat("─", groupHeaderFill(width, 2+2+utf8.RuneCountInString(name)+1)))
 	}
+	buf.WriteString(Reset)
+	buf.WriteString(ClearLineEnd)
+	buf.WriteByte('\n')
+}
+
+// renderHomeRow draws an initiative's HOME project (initiatives/<name>,
+// the directory holding INITIATIVE.md and notes/) as its group's header:
+// attention glyph (a dim ─ when idle, so a quiet initiative reads as a
+// pure section rule), Bold initiative name, dim dash fill. One row — it
+// replaces both the synthetic header and the home's compact row, so the
+// group costs no extra line and the home stays a real, navigable FlatRow
+// whose agent attention lights the header.
+func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor bool) {
+	if isCursor {
+		buf.WriteString("▶ ")
+	} else {
+		buf.WriteString("  ")
+	}
+	// Idle/absent homes read as a pure section rule (dim ─); any real
+	// attention state shows its marker. The split keys on ATTENTION, not
+	// the glyph — the waiting pulse's off-phase frame is itself "·".
+	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
+		buf.WriteString(Dim)
+		buf.WriteString("─")
+	} else {
+		glyph, color := MarkerFor(*p, animator, nowFn())
+		buf.WriteString(color)
+		buf.WriteString(glyph)
+	}
+	buf.WriteString(Reset)
+	buf.WriteString(" ")
+	name := proto.GroupKey(p.Name)
+	buf.WriteString(Bold)
+	buf.WriteString(name)
+	buf.WriteString(Reset)
+	buf.WriteString(" ")
+	buf.WriteString(Dim)
+	buf.WriteString(strings.Repeat("─", groupHeaderFill(width, 2+2+utf8.RuneCountInString(name)+1)))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
@@ -671,7 +756,7 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 		buf.WriteString(Bold)
 		buf.WriteString(PaletteFor(p.Name))
 	}
-	buf.WriteString(p.Name)
+	buf.WriteString(displayName(p.Name))
 	if isCurrent {
 		buf.WriteString(Reset)
 	}
@@ -815,10 +900,10 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	}
 	if stale || p.Status == "absent" || p.Unmanaged {
 		buf.WriteString(Dim)
-		buf.WriteString(truncateRunes(p.Name, nameCap))
+		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 		buf.WriteString(Reset)
 	} else {
-		buf.WriteString(truncateRunes(p.Name, nameCap))
+		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 	}
 
 	// Inline alerts: PR/CI fail, PR pend, dirty count.

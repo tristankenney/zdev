@@ -101,6 +101,13 @@ type state struct {
 	// Run starts; read-only throughout Run.
 	showUnmanaged bool
 
+	// groupSidebar mirrors hub.Config.GroupSidebar (set from
+	// ZDEV_SIDEBAR_GROUP=prefix in cmd/zdevd — the hub NEVER reads env
+	// itself). When true, orderedRowNames and buildSnapshot order rows via
+	// proto.GroupSort instead of sort.Strings. Set once by NewHub before
+	// Run starts; read-only throughout Run.
+	groupSidebar bool
+
 	// teamWindows mirrors hub.Config.TeamWindows (set from ZDEV_TEAM_WINDOWS
 	// in cmd/zdevd — the hub NEVER reads env itself). When true, panes
 	// claimed by an Agent Teams member are EXCLUDED from their session's
