@@ -247,6 +247,32 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   (`last_event_ago_sec`, `errors_1h`) as a single dim "degraded" row; a dead
   daemon and a dead agent are the same operator question. Effort: days. Depends:
   death detection (shared liveness framing). Kill: never fires in practice.
+- **Charm adoption — Bubble Tea render loop + lipgloss styling**
+  *(2026-08-01; the sidebar is a growing TUI surface, so the per-feature
+  cost of hand-rolled ANSI now compounds)* — three sequenced phases, each
+  independently killable. (1) Bubble Tea as the render loop ONLY, behind
+  `ZDEV_SIDEBAR_ENGINE=tea` (classic default): `tea.WithInput(nil)` — the
+  daemon keeps cursor/state and global M-keys keep working; View() stays a
+  pure snapshot→string so goldens and the @zdev-rows click map survive.
+  Measured motivation: a breath tick changes 1 line of 11 but FrameWriter
+  ships the whole frame (~73 KB/s across 11 panes at 15fps); tea's
+  line-diffing renderer ships ~1/8th. After a dogfood week, flip the
+  default and DELETE FrameWriter/FrameSig/the classic loop (~280 lines).
+  (2) lipgloss through ONE pinned-ANSI256 renderer in internal/render,
+  gate-enforced (its no-tty default silently strips all color — spike
+  branch spike/lipgloss-gutters has the byte evidence); new visual
+  features use it from day one, existing surfaces migrate only when a
+  feature touches them (goldens churn feature-by-feature, where a human
+  is already eyeballing that feature's diff — never big-bang). (3) Full
+  input mode (focusable sidebar: search-as-you-type, in-place scroll once
+  the fleet outgrows pane height) stays UNBUILT until a feature actually
+  demands focus. Discipline that survives all phases: View() pure, goldens
+  kept. Kill: (1) if line-diffing doesn't measurably cut tmux write
+  volume, or the outage machine fights tea's lifecycle — revert to
+  FrameWriter; (2) if the pinned-renderer gate is ever the thing blocking
+  a feature rather than protecting it — reconsider raw constants; (3) if
+  no feature demands focus by the time (1)+(2) are done, input mode dies
+  unbuilt.
 
 ---
 
