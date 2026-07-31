@@ -202,8 +202,9 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// invariants review caught exactly that divergence.
 	var groupKeys []string
 	var isHome []bool
-	hasHome := map[string]bool{}   // group key → has an initiative home row
-	collapsedN := map[string]int{} // group key → hidden member count
+	hasHome := map[string]bool{}       // group key → has an initiative home row
+	collapsedN := map[string]int{}     // group key → hidden member count
+	visibleMembers := map[string]int{} // group key → shown (non-home) member count
 	if GroupMode == "prefix" {
 		groupKeys = make([]string, len(snap.Projects))
 		isHome = make([]bool, len(snap.Projects))
@@ -216,6 +217,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			}
 			if p.Collapsed {
 				collapsedN[groupKeys[i]]++
+			} else if !isHome[i] && groupKeys[i] != "" {
+				visibleMembers[groupKeys[i]]++
 			}
 		}
 	}
@@ -289,7 +292,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			// session, the metadata row still follows — the current-project
 			// two-row contract (and projBase math) is glyph-agnostic.
 			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent,
-				collapsedN[groupKeys[i]])
+				collapsedN[groupKeys[i]],
+				collapsedN[groupKeys[i]] > 0 && visibleMembers[groupKeys[i]] == 0)
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 			}
@@ -344,7 +348,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		if GroupMode == "prefix" {
 			if g := groupKeys[i]; g != prevGroup {
 				if !isHome[i] {
-					writeGroupHeader(&buf, g, width, collapsedN[g])
+					writeGroupHeader(&buf, g, width, collapsedN[g],
+						collapsedN[g] > 0 && visibleMembers[g] == 0)
 				}
 				prevGroup = g
 			}
@@ -515,7 +520,7 @@ func displayName(name string) string {
 // width, or a bare dim "  ──────" separator for the unprefixed block
 // (name == ""). Groups WITH a home row get renderHomeRow instead — the
 // home project row IS the header there.
-func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int) {
+func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int, folded bool) {
 	if name == "" {
 		// The transition into the ungrouped block is a BLANK line, not a
 		// rule — after the dash-soup cull, whitespace separates better
@@ -532,7 +537,11 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int)
 		// this line is its only remaining trace. No spinner: working rows
 		// pierce per-row, so a folded row is by definition quiet.
 		buf.WriteString(Dim)
-		buf.WriteString("╭ ")
+		if folded {
+			buf.WriteString("▸ ")
+		} else {
+			buf.WriteString("╭ ")
+		}
 		buf.WriteString(Reset)
 		buf.WriteString(Bold)
 		buf.WriteString(name)
@@ -555,7 +564,7 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int)
 // replaces both the synthetic header and the home's compact row, so the
 // group costs no extra line and the home stays a real, navigable FlatRow
 // whose agent attention lights the header.
-func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool, collapsedN int) {
+func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool, collapsedN int, folded bool) {
 	switch {
 	case isCurrent:
 		// Same breath-pulsing ▌ the current project row carries — without
@@ -578,7 +587,13 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	name := proto.GroupKey(p.Name)
 	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
 		buf.WriteString(PaletteFor(name))
-		buf.WriteString("╭")
+		// ╭ promises a frame below it; a fully folded group has none, so
+		// it opens with the disclosure triangle instead.
+		if folded {
+			buf.WriteString("▸")
+		} else {
+			buf.WriteString("╭")
+		}
 	} else {
 		glyph, color := MarkerFor(*p, animator, nowFn())
 		buf.WriteString(color)

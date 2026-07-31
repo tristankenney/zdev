@@ -219,8 +219,11 @@ func TestGroupedCollapse(t *testing.T) {
 	if strings.Contains(out, "repo-a") || strings.Contains(out, "repo-b") {
 		t.Errorf("collapsed members must not render:\n%s", out)
 	}
-	if !strings.Contains(out, "alpha ·2") {
-		t.Errorf("collapsed home must carry the ·2 rollup:\n%s", out)
+	if !strings.Contains(out, "▸ alpha ·2") {
+		t.Errorf("fully folded home opens with ▸ and the rollup:\n%s", out)
+	}
+	if !strings.Contains(out, "╭ beta") {
+		t.Errorf("expanded group keeps the ╭ corner:\n%s", out)
 	}
 	if !strings.Contains(out, "  ╰  · repo-c") {
 		t.Errorf("expanded group's sole member closes the frame:\n%s", out)
@@ -244,8 +247,8 @@ func TestGroupedCollapseContainer(t *testing.T) {
 	if strings.Contains(out, "pay-app") || strings.Contains(out, "pay-id") {
 		t.Errorf("collapsed container members must not render:\n%s", out)
 	}
-	if !strings.Contains(out, "╭ projects ·2") {
-		t.Errorf("container header must carry the rollup:\n%s", out)
+	if !strings.Contains(out, "▸ projects ·2") {
+		t.Errorf("fully folded container opens with ▸ and the rollup:\n%s", out)
 	}
 	if !strings.Contains(out, "· zdev") {
 		t.Errorf("singles still render:\n%s", out)

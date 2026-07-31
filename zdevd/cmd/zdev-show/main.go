@@ -243,7 +243,7 @@ func formatLegend() string {
 	row(redPulse+"●"+reset+"─ name ──", "attention on the home replaces the corner — marker wins")
 	row("│ · name", "member row (a clone) — gutter hangs from its header;")
 	row("╰ · name", "the last member closes the frame")
-	row("╭ name "+dim+"·N"+reset, "collapsed group (nobody in it, nothing demanding) —")
+	row("▸ name "+dim+"·N"+reset, "folded group (nobody in it, nothing demanding) —")
 	row("", "N rows folded; attention or entering auto-expands. Containers")
 	row("", "fold behind their dim header the same way")
 	row(dim+"─ name ──"+reset, "container header (projects/ — a pool, not an initiative)")
