@@ -105,18 +105,22 @@ listener, or builds a web UI. Three layers, three jobs:</p>
 <p><strong>The disk is the registry.</strong> With
 <code>ZDEV_PROJECTS_DISCOVER=1</code>, the layout of <code>~/workspace</code>
 defines what zdev supervises — no list to maintain:</p>
-<pre><code>~/workspace/
-  projects/&lt;repo&gt;              canonical checkouts — mainline truth, reviews
-  initiatives/&lt;name&gt;/          one initiative (see below)
-  &lt;dir with .git&gt;              root repos (zdev, dotfiles, …)
+<pre><code>~/workspace/                   the workspace root is ALSO the journal repo
+  &lt;dir with .git&gt;              root repos (zdev, dotfiles, …) — plain rows
+  projects/&lt;repo&gt;              unmarked group — canonical checkouts, reviews
+  &lt;name&gt;/INITIATIVE.md         marked group = an initiative (see below)
 </code></pre>
+<p>The tree mirrors the disk — no path is special. A root directory
+<em>without</em> <code>.git</code> is a <strong>group</strong>; the on-disk
+file <code>INITIATIVE.md</code> (never a config entry) marks it as an
+initiative:</p>
 <table>
 <tr><th>Rule</th><th>Becomes a row?</th></tr>
 <tr><td>root dir with <code>.git</code></td><td>yes — standalone project</td></tr>
-<tr><td><code>projects/&lt;dir&gt;</code> (any dir)</td><td>yes — canonical pool</td></tr>
-<tr><td><code>initiatives/&lt;name&gt;</code></td><td>yes — the initiative's home row</td></tr>
-<tr><td><code>initiatives/&lt;name&gt;/&lt;dir&gt;</code> with <code>.git</code></td><td>yes — member clone</td></tr>
-<tr><td><code>initiatives/&lt;name&gt;/notes</code> (no .git)</td><td><strong>no</strong> — knowledge, not work</td></tr>
+<tr><td>marked group <code>&lt;name&gt;/</code> (has INITIATIVE.md)</td><td>yes — the initiative's home row</td></tr>
+<tr><td><code>&lt;name&gt;/&lt;dir&gt;</code> with <code>.git</code> (marked group)</td><td>yes — member clone</td></tr>
+<tr><td><code>&lt;name&gt;/notes</code> (no .git, marked group)</td><td><strong>no</strong> — knowledge, not work</td></tr>
+<tr><td>unmarked group member (e.g. <code>projects/&lt;dir&gt;</code>, any dir)</td><td>yes — drawer row</td></tr>
 </table>
 <p>The daemon <em>watches</em> the workspace: create or delete a directory and
 the corresponding row follows within seconds. No config edit, no restart.</p>
@@ -137,10 +141,10 @@ group has initiative functionality available; utilisation is optional.
 <code>projects/</code> is a group that doesn't utilise it — no INITIATIVE.md,
 no identity, dim. An <strong>initiative</strong> is a group that does: the
 unit of value delivered, spanning repos, living exactly as long as delivery
-requires, its scope drifting as work reveals itself. The
-<code>initiatives/</code> path is plumbing, not ontology — it is the journal
-repo's working tree, which is why utilised groups live there. Mechanically:</p>
-<pre><code>initiatives/&lt;name&gt;/
+requires, its scope drifting as work reveals itself. The mark is the
+on-disk <code>INITIATIVE.md</code> — the workspace root is the journal repo,
+versioning every group's metadata via a whitelist gitignore. Mechanically:</p>
+<pre><code>~/workspace/&lt;name&gt;/
   INITIATIVE.md     identity: intent, tracker links, dated decisions, outcome
   notes/            the knowledge base (never a sidebar row)
   .beads/           bd work graph (optional but recommended)
@@ -155,24 +159,24 @@ corrupt canonical or a sibling. Local clones hardlink objects, so disk is cheap.
 <li>The trade: a clone's mainline is only as fresh as its last <code>git fetch</code>.</li>
 </ul>
 <h3>The lifecycle</h3>
-<pre><code># start
-mkdir -p ~/workspace/initiatives/&lt;name&gt;/notes
-# write INITIATIVE.md; commit in the initiatives repo; optional: bd init
-# (the journal repo itself is scaffolded by install.sh and should have a
+<pre><code># start — writing INITIATIVE.md IS what makes the group an initiative
+mkdir -p ~/workspace/&lt;name&gt;/notes
+# write INITIATIVE.md; commit in the workspace journal; optional: bd init
+# (the journal repo is scaffolded by install.sh and should have a
 #  private remote — `zdev doctor` warns while commits are laptop-only)
 
 # add a repo — this is the ENTIRE operation; the row appears by itself
 # (local source = speed + hardlinks only; gh repo clone works identically —
 #  all durable linkage runs through the GitHub remote, not projects/)
-git clone ~/workspace/projects/&lt;repo&gt; ~/workspace/initiatives/&lt;name&gt;/&lt;repo&gt;
+git clone ~/workspace/projects/&lt;repo&gt; ~/workspace/&lt;name&gt;/&lt;repo&gt;
 git -C …/&lt;repo&gt; remote set-url origin git@github.com:org/&lt;repo&gt;.git
 git -C …/&lt;repo&gt; checkout -b &lt;name&gt;/&lt;thing&gt;
 
 # reintegrate: ordinary PRs from the clone. when the branch lands:
-rm -rf ~/workspace/initiatives/&lt;name&gt;/&lt;repo&gt;      # row disappears
+rm -rf ~/workspace/&lt;name&gt;/&lt;repo&gt;                  # row disappears
 
 # wind down: fill INITIATIVE.md's Outcome, commit, delete the directory —
-# the initiatives repo's history is the journal that outlives it.
+# the workspace journal's history is the record that outlives it.
 </code></pre>
 <div class="callout">
 <strong>Rules of thumb.</strong> Canonical checkouts stay boring (never do
@@ -184,13 +188,13 @@ merged &gt;2 weeks ago is rot — delete it, don't nurse it. The
 
 <h2 id="sidebar">Reading the sidebar</h2>
 <pre><code><span class="g-dim">  ─────────────────</span>          mood divider (color = fleet mood)
-<span class="g-init">╭ ai-at-pay</span>                  initiative header — IS its home row
+<span class="g-init">╭ ai-at-pay</span>                  initiative home row — IS its group header
 <span class="g-init">│</span>  · pay-app                 member clone (leaf name; gutter = belonging)
-<span class="g-wait">●</span> <span class="g-init">marketplace</span>                attention on the home replaces the ╭
-<span class="g-dim">─ projects</span>                   container header (a pool, not an initiative)
-<span class="g-dim">│</span>  <span class="g-wait">●</span> pay-app 2m             waiting 2 minutes (pulses faster with age)
-<span class="g-dim">──────</span>                       below this: ungrouped singles
 ▌ · dotfiles                 ▌ = your current session
+<span class="g-wait">●</span> <span class="g-init">marketplace</span>                attention on a home replaces the ╭
+<span class="g-init">▸ marketplace ·11</span>            …or, quiet + unattended: folded, ·N rollup
+<span class="g-dim">─ projects</span>                   unmarked group header (a drawer, dim)
+<span class="g-dim">│</span>  <span class="g-wait">●</span> pay-app 2m             waiting 2 minutes (pulses faster with age)
   <span class="g-work">◐</span> zdev                     working (spinner)
   2 waiting · 1 working      footer tally
 </code></pre>
@@ -204,14 +208,15 @@ switcher keeps full paths for targeting.</li>
 <span class="glyph g-done">◆</span> finished ·
 <span class="glyph g-wait">✗</span> dead · <span class="glyph">·</span> idle.
 Full legend: <code>zdev-show --legend</code>.</li>
-<li>Rows order: grouped sections first (alphabetical), ungrouped singles last.
-Row <em>positions</em> are stable — spatial memory is a contract.</li>
+<li>Row order: pure alphabetical — the tree mirrors the disk, groups and
+singles interleaved. Row <em>positions</em> are stable — spatial memory is a
+contract.</li>
 </ul>
 
 <h2 id="keys">Keys &amp; switcher</h2>
 <table>
 <tr><th>Key</th><th>Does</th></tr>
-<tr><td class="k">M-p</td><td>project switcher (fzf) — grouped like the sidebar, full paths, header rows target the initiative home; team members nest under their lead</td></tr>
+<tr><td class="k">M-p</td><td>project switcher (fzf) — grouped like the sidebar, full paths; a home row heads its own group, INITIATIVE.md previews on hover (ctrl-/ toggles); team members nest under their lead</td></tr>
 <tr><td class="k">M-n</td><td><code>zdev next</code> — jump to what needs you most (skips the session you're in)</td></tr>
 <tr><td class="k">M-a</td><td>triage popup — the ranked queue with wait context; answer without switching</td></tr>
 <tr><td class="k">M-r</td><td><code>zdev ack --all</code> — mark every status read</td></tr>
@@ -266,10 +271,9 @@ persist as <em>absent</em> — reaping is about tmux hygiene, not scope.</li>
 <p>Claude Code loads <code>CLAUDE.md</code> from every directory above the cwd,
 so the workspace teaches itself — a session at an initiative home (or in any
 clone under it) automatically inherits:</p>
-<pre><code>~/workspace/CLAUDE.md                the map (containers, conventions)
+<pre><code>~/workspace/CLAUDE.md                the map + the initiative playbook
 ~/workspace/projects/CLAUDE.md       canonical-pool rules
-~/workspace/initiatives/CLAUDE.md    the initiative playbook
-…/initiatives/&lt;name&gt;/CLAUDE.md       → AGENTS.md: bd conventions, specifics
+~/workspace/&lt;name&gt;/CLAUDE.md         → AGENTS.md: bd conventions, specifics
 </code></pre>
 <p>Plus the <code>/initiative</code> skill for the full lifecycle, and bd's
 <code>bd prime</code> for work-graph context at session start.</p>

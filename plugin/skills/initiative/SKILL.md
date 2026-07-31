@@ -1,52 +1,56 @@
 ---
 name: initiative
 description: >
-  Create, extend, inspect, and wind down cross-project initiatives — directories of
-  full clones under ~/workspace/initiatives that isolate one unit of value delivery
-  (PayX Marketplace, ai-at-pay) from the canonical checkouts and from each other.
-  Use when the user says start an initiative, add a repo to an initiative,
-  initiative status, wind down / close out an initiative, or wants isolated
-  cross-repo work that reintegrates via PRs over time.
+  Create, extend, inspect, and wind down cross-project initiatives — marked
+  groups of full clones at the workspace root that isolate one unit of value
+  delivery (PayX Marketplace, ai-at-pay) from the canonical checkouts and from
+  each other. Use when the user says start an initiative, add a repo to an
+  initiative, initiative status, wind down / close out an initiative, or wants
+  isolated cross-repo work that reintegrates via PRs over time.
 license: MIT
 metadata:
   author: tristankenney
-  version: "3.0"
+  version: "4.0"
 ---
 
 # Initiative
 
-One structural concept exists: the **group** — a directory of members that
-folds behind a sidebar header. Every group has initiative functionality
-available; an **initiative** is a group that utilises it. (`projects/` is a
-group that doesn't — a drawer of standing checkouts, no metadata, no
-identity.) An initiative is the unit of value delivered: it spans repos,
-lives exactly as long as delivery requires, and its scope drifts as work
-reveals itself. The `initiatives/` path is plumbing, not ontology — it is
-the journal repo's working tree. Layout:
+One structural concept exists: the **group** — a workspace-root directory of
+members that folds behind a sidebar header. The tree mirrors the disk;
+nothing about any path is special. Every group has initiative functionality
+available; an **initiative** is a group that utilises it, and the mark is an
+on-disk file — `INITIATIVE.md` in the group directory — never a config
+entry. (`projects/` is a group that doesn't — a drawer of standing
+checkouts, no metadata, no identity.) An initiative is the unit of value
+delivered: it spans repos, lives exactly as long as delivery requires, and
+its scope drifts as work reveals itself. Layout:
 
 ```
-~/workspace/
-  projects/<repo>              # canonical checkouts: mainline, reviews, boring
-  initiatives/                 # ONE git repo versioning all initiative metadata
-    <name>/
-      INITIATIVE.md            # intent, tracker links, decisions, outcome
-      notes/                   # the initiative's knowledge base (never a row)
-      <repo>/                  # FULL CLONE of projects/<repo>, branch <name>/<thing>
+~/workspace/                   # ONE git repo (the journal) versioning all
+  .gitignore                   #   group metadata via a whitelist
+  projects/<repo>              # unmarked group: canonical checkouts
+  <name>/                      # marked group = initiative
+    INITIATIVE.md              # THE mark: intent, tracker links, decisions, outcome
+    notes/                     # the initiative's knowledge base (never a row)
+    <repo>/                    # FULL CLONE of projects/<repo>, branch <name>/<thing>
+  <root-repo>/                 # dirs with .git at the root are plain rows (zdev, dotfiles)
 ```
 
-The initiatives repo needs a **private remote** (it holds your notes;
+The workspace journal needs a **private remote** (it holds your notes;
 `zdev doctor` warns while commits are laptop-only — install.sh scaffolds the
 repo and queues the remote as a next step). Push journal commits like any
-other repo.
+other repo. Root repos with their own top-level CLAUDE.md/AGENTS.md/notes
+need an exclusion line in the workspace .gitignore (e.g. `/zdev/`) so the
+whitelist doesn't pierce into them.
 
 **The disk is the registry** (ZDEV_PROJECTS_DISCOVER=1): a repo is in scope iff
 its clone exists in the initiative directory, and the daemon watches the
-workspace — rows, sidebar groups (`╭─ <name> ──` in the initiative's color), and
-the M-p switcher all follow the filesystem within seconds. There is **no config
-to edit and no daemon to kick** for any verb below. `zdev --list-projects -v`
-shows why every row exists (the audit trail for the implicit convention);
-`~/.config/zdev/projects` holds only overrides — favorites (` *`) and
-off-convention paths.
+workspace — rows, the sidebar group (`╭ <name>` home row in the initiative's
+color), and the M-p switcher all follow the filesystem within seconds. There
+is **no config to edit and no daemon to kick** for any verb below.
+`zdev --list-projects -v` shows why every row exists (the audit trail for the
+implicit convention); `~/.config/zdev/projects` holds only overrides —
+favorites (` *`) and off-convention paths.
 
 **Clones, not worktrees**: an initiative can check out mainline (a worktree
 never could while canonical held the branch), and repo state is fully isolated —
@@ -62,10 +66,11 @@ colleague's branch needs no initiative). Never do initiative work in canonical.
 ### Start an initiative
 
 1. Confirm the name (short, kebab-case — it's a path segment, a branch prefix,
-   a sidebar header, and its color identity). Ask for a one-line intent and
+   a sidebar home row, and its color identity). Ask for a one-line intent and
    tracker link(s) if any.
-2. `mkdir -p ~/workspace/initiatives/<name>/notes`
-3. Write `INITIATIVE.md` (template below); commit in the initiatives repo.
+2. `mkdir -p ~/workspace/<name>/notes`
+3. Write `INITIATIVE.md` (template below) — this file IS what makes the group
+   an initiative; commit in the workspace journal.
 4. Optional: `bd init` in the initiative directory (beads — the agent-native
    work graph; see "Work items" below).
 5. Only add clones for repos with work starting NOW — scope reveals itself
@@ -76,9 +81,9 @@ The sidebar group appears on its own.
 ### Add a repo
 
 ```bash
-git clone ~/workspace/projects/<repo> ~/workspace/initiatives/<name>/<repo>
-git -C ~/workspace/initiatives/<name>/<repo> remote set-url origin <github-url>
-git -C ~/workspace/initiatives/<name>/<repo> checkout -b <name>/<thing>
+git clone ~/workspace/projects/<repo> ~/workspace/<name>/<repo>
+git -C ~/workspace/<name>/<repo> remote set-url origin <github-url>
+git -C ~/workspace/<name>/<repo> checkout -b <name>/<thing>
 ```
 
 That's the whole operation — the row appears within seconds. The local
@@ -91,7 +96,7 @@ actually open it.
 
 ### Status
 
-- `zdev-show review --json` filtered to `initiatives/<name>/` projects — ready
+- `zdev-show review --json` filtered to `<name>/` projects — ready
   to land vs rotting.
 - Per clone: `git log --oneline @{upstream}..` (unpushed); `git fetch -q &&
   git rev-list --count HEAD..origin/HEAD` (drift behind mainline).
@@ -101,12 +106,12 @@ actually open it.
 ### Remove a repo / wind down
 
 ```bash
-rm -rf ~/workspace/initiatives/<name>/<repo>    # full clone; nothing shared
+rm -rf ~/workspace/<name>/<repo>    # full clone; nothing shared
 ```
 
 Row disappears on its own. Wind-down = remove the last clone, fill
-INITIATIVE.md's **Outcome**, commit, delete the directory — the initiatives
-repo's history is the journal that outlives it.
+INITIATIVE.md's **Outcome**, commit, delete the directory — the workspace
+journal's history is the record that outlives it.
 
 ## Work items (beads)
 
@@ -114,7 +119,7 @@ If the initiative runs agents that need shared, durable work state, use
 **beads** (`bd`) rather than TODO lists in notes/ — dependency graph, `bd ready`
 for unblocked work, atomic `--claim`, cross-session memory. `bd init` in the
 initiative directory; agents working in the clones point at it with
-`BEADS_DIR=~/workspace/initiatives/<name>/.beads`. INITIATIVE.md links the
+`BEADS_DIR=~/workspace/<name>/.beads`. INITIATIVE.md links the
 tracker (Jira) above; bd is agent working memory below it. Don't hand-roll
 either layer in markdown.
 

@@ -218,7 +218,18 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   hub-invariants review required). Effort: ~week. Depends: a week of v1
   dogfood. Kill: if v1 headers never change where the eye lands, v2 dies
   with the knob; if collapse ever hides a wait the operator then missed,
-  the rollup is lying — revert to always-expanded headers.
+  the rollup is lying — revert to always-expanded headers. *(FLAT-ROOT
+  ONTOLOGY SHIPPED 2026-07-31, superseding the container framing above:
+  one structural concept, the group — any workspace-root dir; the tree
+  mirrors the disk, no path is special. INITIATIVE.md on disk is the mark
+  (proto.HomeSet derives homes structurally — a bare row that is another
+  row's group key; InitiativesContainer const deleted), the workspace root
+  itself is the journal repo, ordering is pure alpha (proto.GroupSort and
+  the groups-first daemon ordering deleted), separators killed. Unmarked
+  groups like projects/ still fold — the "only initiatives collapse"
+  discriminator became per-kind [collapse] settings in sidebar.toml.
+  Remaining from this entry: header-enter → zdev next <prefix> scoped
+  jump.)*
 - **Agent Teams supervision (hybrid MVP)** *(replaces the killed Gas Town integration as the primary multi-agent target)* — Claude Code's Agent Teams ships in v2.1.169 behind `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` and hidden `--agent-teams`/`--teammate-mode` flags. zdev supervises via fsnotify on `~/.claude/teams/{name}/config.json`, then branches on each member's `tmuxPaneId`: real pane id → group panes under one sidebar entry (reusing the rig-grouping rendering from `zd-l2t`); literal `"in-process"` → render a `team:{name}` badge with member chips on the lead's pane (no panes to group; in-process is the headless default). Disk surface captured verbatim in `zd-dxj` notes from the `zd-amj` probe (2026-06-10). Effort: 3–5 days. Depends: none. Kill: Anthropic ships a first-party dashboard, or `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` leaves experimental with an incompatible layout.
 - **S2 cadence-capped fleet nudge + S4 Round burn-down popup** *(converged)* —
   one nudge per cadence window (count + ETA + "M-a to start a round"; 15m STUCK
