@@ -11,11 +11,11 @@ import (
 
 func TestParseGitHubURL(t *testing.T) {
 	cases := []struct {
-		name      string
-		url       string
-		want      string
-		wantErr   bool
-		errIsNGH  bool // true when error should be ErrNotGitHubRemote
+		name     string
+		url      string
+		want     string
+		wantErr  bool
+		errIsNGH bool // true when error should be ErrNotGitHubRemote
 	}{
 		{"https_with_git", "https://github.com/example/agora.git", "example/agora", false, false},
 		{"https_no_git", "https://github.com/example/agora", "example/agora", false, false},

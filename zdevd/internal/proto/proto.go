@@ -511,13 +511,15 @@ type Project struct {
 	Unmanaged bool `json:"unmanaged,omitempty"`
 
 	// Collapsed (phase4-v22, ZDEV_SIDEBAR_GROUP=collapse) is true when this
-	// project is a MEMBER of an initiative group that is currently
-	// collapsed: no attached client attends any project in the group, and no
-	// project in it demands attention (waiting / dead / finished pierce —
-	// attention never collapses away). Collapsed rows are hidden from the
-	// sidebar and from FlatRows; the group's home row stays visible as the
-	// header and carries the rollup. Set by the DAEMON only — collapse
-	// changes navigation row order, so it must have a single authority.
+	// project is a MEMBER of a group (initiative or container) that is
+	// currently collapsed: no attached client attends any project in the
+	// group, and no project in it demands attention (waiting / dead /
+	// finished pierce — attention never collapses away). Collapsed rows are
+	// hidden from the sidebar and from FlatRows. Initiative groups keep
+	// their home row visible as the header carrying the rollup; homeless
+	// groups (projects/) fold entirely behind the renderer's synthetic
+	// header line. Set by the DAEMON only — collapse changes navigation row
+	// order, so it must have a single authority.
 	Collapsed bool `json:"collapsed,omitempty"`
 }
 

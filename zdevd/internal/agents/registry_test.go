@@ -5,19 +5,19 @@ import "testing"
 func defaultRegistry() *Registry {
 	return NewRegistry([]Spec{
 		{
-			Name:             "claude",
-			Glyph:            "✻",
-			WaitingMarkers:   []string{"● claude", "✳ "},
-			FinishedMarkers:  []string{"◆ claude"},
-			SpinnerMarkers:   []string{"⠂ ", "⠐ ", "⠠ "},
-			Launch:           "claude --continue",
+			Name:            "claude",
+			Glyph:           "✻",
+			WaitingMarkers:  []string{"● claude", "✳ "},
+			FinishedMarkers: []string{"◆ claude"},
+			SpinnerMarkers:  []string{"⠂ ", "⠐ ", "⠠ "},
+			Launch:          "claude --continue",
 		},
 		{
-			Name:             "opencode",
-			Glyph:            "○",
-			WaitingMarkers:   []string{"● opencode"},
-			FinishedMarkers:  []string{"◆ opencode"},
-			Launch:           "opencode",
+			Name:            "opencode",
+			Glyph:           "○",
+			WaitingMarkers:  []string{"● opencode"},
+			FinishedMarkers: []string{"◆ opencode"},
+			Launch:          "opencode",
 		},
 	})
 }

@@ -170,9 +170,9 @@ func TestEventLogRotation(t *testing.T) {
 	runWriter(t, w, func() {
 		for i := 0; i < 10; i++ {
 			drainSubmit(t, w, Event{
-				Ts:      time.Date(2026, 5, 5, 10, 15, 32, i*1_000_000, time.UTC),
-				Type:    "pr-count",
-				Project: "dotfiles",
+				Ts:         time.Date(2026, 5, 5, 10, 15, 32, i*1_000_000, time.UTC),
+				Type:       "pr-count",
+				Project:    "dotfiles",
 				OpenBefore: i,
 				OpenAfter:  i + 1,
 			})

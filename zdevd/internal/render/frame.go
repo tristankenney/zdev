@@ -321,7 +321,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		if GroupMode == "prefix" {
 			if g := groupKeys[i]; g != prevGroup {
 				if !isHome[i] {
-					writeGroupHeader(&buf, g, width)
+					writeGroupHeader(&buf, g, width, animator,
+						collapsedN[g], collapsedWorking[g])
 				}
 				prevGroup = g
 			}
@@ -492,20 +493,36 @@ func displayName(name string) string {
 // width, or a bare dim "  ──────" separator for the unprefixed block
 // (name == ""). Groups WITH a home row get renderHomeRow instead — the
 // home project row IS the header there.
-func writeGroupHeader(buf *bytes.Buffer, name string, width int) {
+func writeGroupHeader(buf *bytes.Buffer, name string, width int, animator *Animator, collapsedN int, collapsedWorking bool) {
 	buf.WriteString("  ")
-	buf.WriteString(Dim)
 	if name == "" {
+		buf.WriteString(Dim)
 		buf.WriteString(strings.Repeat("─", 6))
 	} else {
 		// No trailing dash fill — live dogfood showed a pane that was
 		// half horizontal rules (mood divider + ragged header fills +
 		// the separator). "─ " plus a Bold name reads as a header on
-		// its own.
-		buf.WriteString("─ ")
+		// its own. A collapsed homeless group (projects/) shows its
+		// rollup here — this line is its only remaining trace.
+		if collapsedWorking {
+			buf.WriteString(Icy)
+			buf.WriteString(animator.WorkGlyph())
+			buf.WriteString(Reset)
+			buf.WriteString(Dim)
+			buf.WriteString(" ")
+		} else {
+			buf.WriteString(Dim)
+			buf.WriteString("─ ")
+		}
 		buf.WriteString(Reset)
 		buf.WriteString(Bold)
 		buf.WriteString(name)
+		buf.WriteString(Reset)
+		if collapsedN > 0 {
+			buf.WriteString(" ")
+			buf.WriteString(Dim)
+			fmt.Fprintf(buf, "·%d", collapsedN)
+		}
 	}
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)

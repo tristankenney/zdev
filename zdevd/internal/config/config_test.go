@@ -153,7 +153,7 @@ pi_glyph = "X"
 		PRRefreshSeconds:  120,
 		GitFloorSeconds:   5,
 		ClaudeGlyph:       "C",
-		PiGlyph:        "X",
+		PiGlyph:           "X",
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load(full TOML):\n got  = %+v\n want = %+v", cfg, want)

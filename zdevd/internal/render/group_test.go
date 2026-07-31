@@ -222,3 +222,25 @@ func TestGroupedCollapse(t *testing.T) {
 		t.Errorf("footer must tally hidden members:\n%s", out)
 	}
 }
+
+// A homeless container (projects/) folds entirely behind its synthetic
+// header, which carries the rollup — its only remaining trace.
+func TestGroupedCollapseContainer(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "projects/pay-app", Status: "alive", Collapsed: true},
+		{Name: "projects/pay-id", Status: "absent", Collapsed: true},
+		{Name: "zdev", Status: "alive"},
+	}}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	if strings.Contains(out, "pay-app") || strings.Contains(out, "pay-id") {
+		t.Errorf("collapsed container members must not render:\n%s", out)
+	}
+	if !strings.Contains(out, "─ projects ·2") {
+		t.Errorf("container header must carry the rollup:\n%s", out)
+	}
+	if !strings.Contains(out, "· zdev") {
+		t.Errorf("singles still render:\n%s", out)
+	}
+}

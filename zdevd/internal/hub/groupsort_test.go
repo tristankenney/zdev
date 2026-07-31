@@ -94,10 +94,11 @@ func TestGroupSortUsesSharedKey(t *testing.T) {
 	}
 }
 
-// TestCollapsedNames pins the collapse rule: an initiative group's member
-// rows hide iff the group has a home, no attached client attends any of its
-// projects, and none demands attention. Homes never hide; containers
-// (projects/) never collapse; attention and attendance both pierce.
+// TestCollapsedNames pins the collapse rule: a group's member rows hide iff
+// no attached client attends any of its projects and none demands attention.
+// Homes never hide (they are the header); homeless containers (projects/)
+// hide every row; attention and attendance both pierce — death via
+// DeadSinceTS, the real representation.
 func TestCollapsedNames(t *testing.T) {
 	names := []string{
 		"initiatives/alpha",
@@ -128,6 +129,8 @@ func TestCollapsedNames(t *testing.T) {
 	want := map[string]bool{
 		"initiatives/alpha/repo-a": true,
 		"initiatives/alpha/repo-b": true,
+		// homeless container: unattended, quiet → every row folds
+		"projects/pay-app": true,
 	}
 	for n := range want {
 		if _, ok := hidden[n]; !ok {
@@ -136,7 +139,7 @@ func TestCollapsedNames(t *testing.T) {
 	}
 	for n := range hidden {
 		if !want[n] {
-			t.Errorf("%s hidden but should not be (attended/attention/home/container)", n)
+			t.Errorf("%s hidden but should not be (attended/attention/home/single)", n)
 		}
 	}
 
@@ -171,6 +174,9 @@ func TestCollapseParity(t *testing.T) {
 	}
 	if visibleWire["initiatives/alpha/repo-a"] {
 		t.Fatalf("unattended initiative member must be Collapsed on the wire")
+	}
+	if visibleWire["projects/pay-app"] {
+		t.Fatalf("unattended container member must be Collapsed on the wire")
 	}
 
 	rows := cursorFlatRows(s)

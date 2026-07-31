@@ -748,16 +748,18 @@ func orderedRowNames(st *state) []string {
 }
 
 // collapsedNames returns the set of project names whose rows are HIDDEN
-// because their initiative group is collapsed (phase4-v22,
-// ZDEV_SIDEBAR_GROUP=collapse). The rule, per group with an initiative home:
+// because their group is collapsed (phase4-v22, ZDEV_SIDEBAR_GROUP=collapse).
+// The rule, per group (initiatives AND containers like projects/):
 //
 //   - expanded while ANY project in the group is client-attended (someone is
 //     in there — global attendance, not per-viewer: the cursor indexes ONE
 //     row list, so collapse must be viewer-independent);
 //   - expanded while ANY project in the group demands attention (waiting /
 //     dead / finished) — attention never collapses away, it auto-expands;
-//   - otherwise every MEMBER row collapses; the home row stays visible as
-//     the group's header and carries the rollup.
+//   - otherwise every MEMBER row collapses. Initiative groups keep their
+//     home row visible as the header carrying the rollup; homeless groups
+//     (projects/) hide every row — the renderer's synthetic header line
+//     carries their rollup instead.
 //
 // Reads only state maps (projectData displayed Attention, clientSessions) —
 // no derivation side effects — so buildSnapshot and cursorFlatRows can both
@@ -769,7 +771,6 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 		return nil
 	}
 	type groupInfo struct {
-		hasHome bool
 		hold    bool // attended or attention — group stays expanded
 		members []string
 	}
@@ -784,9 +785,7 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 			g = &groupInfo{}
 			groups[key] = g
 		}
-		if proto.IsInitiativeHome(n) {
-			g.hasHome = true
-		} else {
+		if !proto.IsInitiativeHome(n) {
 			g.members = append(g.members, n)
 		}
 		dash := proto.SessionKey(n)
@@ -816,8 +815,8 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 	}
 	var hidden map[string]struct{}
 	for _, g := range groups {
-		if !g.hasHome || g.hold || len(g.members) == 0 {
-			continue // not an initiative, or held open, or nothing to hide
+		if g.hold || len(g.members) == 0 {
+			continue // held open, or nothing to hide
 		}
 		if hidden == nil {
 			hidden = make(map[string]struct{})

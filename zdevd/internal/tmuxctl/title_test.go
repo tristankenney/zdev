@@ -98,7 +98,7 @@ func TestClassifyPaneTitleNewClaudeIdle(t *testing.T) {
 func TestClassifyPaneTitleBrailleSpinner(t *testing.T) {
 	cases := []string{
 		"⠂ Debug zdev daemon connection issue", // U+2802
-		"⠐ Check backfill progress status",    // U+2810
+		"⠐ Check backfill progress status",     // U+2810
 		"⠋ Building...",                        // U+280B
 		"⠙ Analyzing...",                       // U+2819
 		"⠹ Running tests",                      // U+2839
@@ -131,4 +131,3 @@ func TestClassifyPaneTitleBrailleNoSpace(t *testing.T) {
 		t.Errorf("ClassifyPaneTitle(\"⠂\") = %q, want %q (bare Braille char)", got, StatusAlive)
 	}
 }
-
