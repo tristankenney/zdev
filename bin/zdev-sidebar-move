@@ -5,36 +5,33 @@
 #   bind -n M-j run-shell -b "$HOME/.local/bin/zdev-sidebar-move +1"
 #   bind -n M-k run-shell -b "$HOME/.local/bin/zdev-sidebar-move -1"
 #   bind -n M-Enter run-shell -b "$HOME/.local/bin/zdev-sidebar-move select"
+#   bind -n MouseDown1Pane ... "$HOME/.local/bin/zdev-sidebar-move click <y> <pane>"
 #
 # +1 and -1 move the cursor down/up; zdevd republishes the snapshot and the
 # sidebar re-renders with ▶ on the new row.  "select" queries the current row
 # name and calls `tmux switch-client` to jump there.
+#
+# "click <y> <pane>" resolves a mouse click on a sidebar pane to the row the
+# operator actually clicked, then jumps there.  It does NOT recompute the
+# frame geometry: the RENDERER publishes a screen-line → target map onto its
+# own pane as @zdev-rows every time it paints (see render.RowRef), because
+# the triage strip, review gauge, group headers, folded rows, and a current
+# project's metadata rows all shift where a row lands.  A click is therefore
+# a lookup against what is literally on screen, which cannot drift.  Both
+# verbs funnel into switch_to so there is ONE implementation of "jump to a
+# target" (session naming, Gas Town delegation, member windows).
 set -euo pipefail
 
 ZDEVD="${ZDEVD_BIN:-zdevd}"
 ARG="${1:-}"
 
-case "$ARG" in
-  +1|-1)
-    "$ZDEVD" cursor "$ARG" >/dev/null
-    ;;
-  select)
-    OUT="$("$ZDEVD" cursor select 2>/dev/null || true)"
-    if [[ -z "$OUT" ]]; then
-        exit 0
-    fi
-    # Output contract (Agent Teams slice C): a project row prints just the
-    # name; a team member row prints "name<TAB>@windowID".  Split on the tab
-    # (bash 3.2: no associative arrays, no readarray).  WIN is empty for a
-    # project row, leaving the jump behaviour unchanged.
-    NAME="${OUT%%$'\t'*}"
-    if [[ "$OUT" == *$'\t'* ]]; then
-        WIN="${OUT#*$'\t'}"
-    else
-        WIN=""
-    fi
+# switch_to NAME [WINDOW_ID] — the single jump implementation, shared by the
+# keyboard select and the mouse click.
+switch_to() {
+    local NAME="$1" WIN="${2:-}"
+    [[ -z "$NAME" ]] && return 0
     # Convert slash-form (e.g. "example/backend") to dash-form for tmux.
-    SESSION="${NAME//\//-}"
+    local SESSION="${NAME//\//-}"
 
     # Gas Town sessions live on a separate tmux socket; raw switch-client
     # targets the wrong server and silently fails.  When GT_TOWN_ROOT is
@@ -68,13 +65,73 @@ case "$ARG" in
     tmux switch-client -t "=$SESSION" 2>/dev/null || true
     # Member jump (slice C): the selected row was a team member whose pane was
     # relocated into its own window (team-sweep).  After landing in the lead's
-    # session, select that window so M-Enter jumps straight to the teammate.
+    # session, select that window so the jump reaches the teammate.
     if [[ -n "$WIN" ]]; then
         tmux select-window -t "$WIN" 2>/dev/null || true
     fi
+}
+
+case "$ARG" in
+  +1|-1)
+    "$ZDEVD" cursor "$ARG" >/dev/null
+    ;;
+  select)
+    OUT="$("$ZDEVD" cursor select 2>/dev/null || true)"
+    [[ -z "$OUT" ]] && exit 0
+    # Output contract (Agent Teams slice C): a project row prints just the
+    # name; a team member row prints "name<TAB>@windowID".  Split on the tab
+    # (bash 3.2: no associative arrays, no readarray).
+    NAME="${OUT%%$'\t'*}"
+    if [[ "$OUT" == *$'\t'* ]]; then
+        WIN="${OUT#*$'\t'}"
+    else
+        WIN=""
+    fi
+    switch_to "$NAME" "$WIN"
+    ;;
+  click)
+    Y="${2:-}"
+    PANE="${3:-}"
+    # Both coordinates are required and must be a sane pane row: a missing
+    # or malformed y must do nothing rather than jump somewhere arbitrary.
+    case "$Y" in ''|*[!0-9]*) exit 0 ;; esac
+    [[ -z "$PANE" ]] && exit 0
+    MAP="$(tmux show-option -pqv -t "$PANE" @zdev-rows 2>/dev/null || true)"
+    # No map ⇒ the knob is off or this pane is not a sidebar. Silent no-op;
+    # the tmux binding has already handled plain pane focus.
+    [[ -z "$MAP" ]] && exit 0
+    # #{mouse_y} is PANE-relative (tmux's cmd_mouse_at subtracts the pane
+    # offset — the same path that lands a copy-mode click on the right cell
+    # in a pane that isn't at the window top), which is the frame the
+    # renderer's map uses: y=0 is the mood divider.
+    #
+    # Entries are "<y>:<name>" or "<y>:<name>|<window-id>". A click on an
+    # unmapped line (a divider, a group header, the footer) matches nothing
+    # and falls through — deliberately, rather than guessing a neighbour.
+    for ENTRY in $MAP; do
+        if [[ "${ENTRY%%:*}" == "$Y" ]]; then
+            TARGET="${ENTRY#*:}"
+            # '|' fences the window id: a tmux window id is itself
+            # "@<n>", so '@' would be an ambiguous separator.
+            if [[ "$TARGET" == *"|"* ]]; then
+                switch_to "${TARGET%%|*}" "${TARGET#*|}"
+            else
+                switch_to "$TARGET" ""
+            fi
+            exit 0
+        fi
+    done
+    # Unresolved click. Expected on a divider/header/footer, so this is a
+    # breadcrumb rather than an error: if the coordinate frame ever stops
+    # matching the map (a tmux change to #{mouse_y}, a renderer that forgot
+    # to republish), every click lands here and the log says so instead of
+    # the feature just quietly doing nothing.
+    _LOGD="${ZDEV_LOG_DIR:-$HOME/Library/Logs/zdev}"
+    [[ -d "$_LOGD" ]] && printf '%s click y=%s pane=%s unmapped; map=[%s]\n' \
+        "$(date +%FT%T)" "$Y" "$PANE" "$MAP" >> "$_LOGD/sidebar-click.log" 2>/dev/null
     ;;
   *)
-    echo "zdev-sidebar-move: usage: $0 {+1|-1|select}" >&2
+    echo "zdev-sidebar-move: usage: $0 {+1|-1|select|click <y> <pane>}" >&2
     exit 1
     ;;
 esac

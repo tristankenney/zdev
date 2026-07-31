@@ -88,6 +88,13 @@ printf '  why a row?   %szdev --list-projects -v%s (name -> origin rule)\n' "$CY
 printf '  playbook:    %s/initiative%s in Claude . a session at the home dir\n' "$CYAN" "$RESET"
 printf '  %sinherits the initiative context (CLAUDE.md tiers) automatically%s\n' "$DIM" "$RESET"
 
+# --- mouse ---
+if [[ "${ZDEV_SIDEBAR_MOUSE:-0}" == "1" ]]; then
+  printf '\n%sMOUSE%s %s(ZDEV_SIDEBAR_MOUSE=1)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+  printf '  Click any sidebar row to switch to it. Headers, dividers and the\n'
+  printf '  footer are inert — clicks there just focus the pane.\n'
+fi
+
 # --- agent teams ---
 printf '\n%sAGENT TEAMS%s\n' "$BOLD" "$RESET"
 printf '  Teammates auto-move into their own windows; the sidebar nests them\n'
