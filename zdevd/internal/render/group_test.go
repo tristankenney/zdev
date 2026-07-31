@@ -254,3 +254,28 @@ func TestGroupedCollapseContainer(t *testing.T) {
 		t.Errorf("singles still render:\n%s", out)
 	}
 }
+
+// The current session inside a group keeps the frame: gutter, then the ▌
+// marker — no more out-dented hole ("the indentation is kinda off").
+func TestGroupedCurrentMemberGutter(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := &proto.Snapshot{
+		CurrentSession: "projects/pay-id",
+		Projects: []proto.Project{
+			{Name: "projects/pay-app", Status: "alive"},
+			{Name: "projects/pay-id", Status: "alive", Branch: "main"},
+			{Name: "projects/pay-ops", Status: "alive"},
+		},
+	}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	if !strings.Contains(out, "  │▌") {
+		t.Errorf("current member row must keep the gutter before its ▌ marker:\n%s", out)
+	}
+	// Its metadata row rides the gutter too.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "main") && !strings.Contains(line, "│") {
+			t.Errorf("metadata row must hang on the gutter: %q", line)
+		}
+	}
+}

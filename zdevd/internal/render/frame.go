@@ -290,16 +290,32 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		case home:
 			// The home row IS the group header. When it's also the current
 			// session, the metadata row still follows — the current-project
-			// two-row contract (and projBase math) is glyph-agnostic.
+			// two-row contract (and projBase math) is glyph-agnostic. The
+			// metadata rows hang inside the frame on the group's gutter.
 			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent,
 				collapsedN[groupKeys[i]],
 				collapsedN[groupKeys[i]] > 0 && visibleMembers[groupKeys[i]] == 0)
 			if isCurrent {
-				renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
+				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
+					groupGutter(groupKeys[i], hasHome[groupKeys[i]], "│"))
 			}
+		case isCurrent && grouped:
+			// Current member row: keep the frame — gutter first, then the
+			// ▌ marker in the columns compact rows spend on their indent.
+			// The frame closer still lands here when this row is last; its
+			// metadata rows then hang on blanks below the closed corner.
+			g := "│"
+			mg := "│"
+			if lastInGroup[i] {
+				g, mg = "╰", " "
+			}
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows,
+				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g))
+			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
+				groupGutter(groupKeys[i], hasHome[groupKeys[i]], mg))
 		case isCurrent:
-			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows)
-			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows, "")
+			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent, "")
 		case grouped:
 			// Member row: a │ gutter hangs under the group's header —
 			// hued (PaletteFor, matching the header name) for initiative
@@ -801,7 +817,13 @@ func joinNonEmpty(dst *bytes.Buffer, subs []*bytes.Buffer, sep string) {
 //	urgent=true          → {RedBorder}▌{Reset}" " (foreground-only red; no bg state to leak)
 //	urgent=false+current → {BreathColorForProject}▌{Reset}" " (per-project breath bar, VIS-03)
 //	otherwise            → "  " (2-space indent)
-func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent bool, teamGroups []*proto.TeamGroup, teamRows bool) {
+func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
+	// gutter: the grouped sidebar's frame prefix ("  │" in the group's
+	// color) so a current row no longer punches a hole through its frame
+	// ("the indentation is kinda off" — live review 2026-07-30). Empty
+	// outside groups; the ▌ marker then occupies the columns the compact
+	// rows spend on their own indent, keeping the glyph column aligned.
+	buf.WriteString(gutter)
 	isCurrent := p.Name == current && current != ""
 	switch {
 	case urgent:
@@ -871,8 +893,8 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 // (no double-separator artifacts).
 //
 // Prefix dispatch via metadataPrefix: urgent ▌+5sp / breath ▌+5sp / 6 spaces.
-func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, width int, animator *Animator, nowFn func() int64, urgent bool) {
-	prefix := metadataPrefix(p, current, animator, urgent)
+func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, width int, animator *Animator, nowFn func() int64, urgent bool, gutter string) {
+	prefix := gutter + metadataPrefix(p, current, animator, urgent)
 	now := nowFn()
 
 	// Git domain row: branch + dirty | PR-or-celebrate | CI
@@ -1089,4 +1111,15 @@ func spaceIf(buf *bytes.Buffer) {
 		return
 	}
 	buf.WriteByte(' ')
+}
+
+// groupGutter composes the 3-column frame prefix for rows inside a group:
+// two spaces then the frame glyph (│ run, ╰ closer, or a blank continuation
+// under a closed corner), hued for initiatives and Dim for containers.
+func groupGutter(key string, hued bool, glyph string) string {
+	color := Dim
+	if hued {
+		color = PaletteFor(key)
+	}
+	return "  " + color + glyph + Reset
 }
