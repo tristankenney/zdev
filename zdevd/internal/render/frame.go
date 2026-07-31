@@ -116,7 +116,52 @@ func RenderStub(snap *proto.Snapshot, width int) []byte {
 //
 // Source-of-truth: ~/.local/bin/zdev-sidebar-render lines 622-661.
 func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64) []byte {
+	frame, _ := RenderWithRows(snap, width, animator, nowFn)
+	return frame
+}
+
+// RowRef maps ONE rendered screen line to the switch target it displays.
+//
+// Y is the 0-based line index within the pane — directly comparable to
+// tmux's #{mouse_y}, which is what makes click-to-switch a lookup instead
+// of a second implementation of the frame's geometry. Name is the canonical
+// slash-form project to switch to; WindowID is set only for Agent Teams
+// member rows (select-window after the session switch), mirroring the
+// cursor reply's contract.
+//
+// Only NAVIGABLE lines get an entry. A current project's metadata rows map
+// to their project (they read as one row on screen), so clicking a branch
+// or CI chip lands where the eye expects. Dividers, the footer, and
+// synthetic group headers are absent: a click there is a no-op rather than
+// a guess. Rows folded out of the frame own no line and so no entry.
+//
+// The renderer owns this map because it is the only component that knows
+// where a line actually landed: the triage strip, the review gauge, group
+// headers, the demote divider, and a current project's variable metadata
+// rows all shift the geometry. Deriving it anywhere else would be a second
+// source of truth that drifts the moment a section changes.
+type RowRef struct {
+	Y        int
+	Name     string
+	WindowID string
+}
+
+// RenderWithRows composes the frame and, alongside it, the screen-line →
+// switch-target map (see RowRef). Callers that only paint use Render.
+func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64) ([]byte, []RowRef) {
 	var buf bytes.Buffer
+	var rows []RowRef
+	// lineOf reports the 0-based index of the line the NEXT write lands on:
+	// every emitted line ends in a newline, so the count of newlines so far
+	// IS that index. CursorHome and the SGR escapes carry none.
+	lineOf := func() int { return bytes.Count(buf.Bytes(), []byte("\n")) }
+	// claim maps every line from y0 up to (but excluding) the current line
+	// to one target — a project plus its metadata rows in a single call.
+	claim := func(y0 int, name, windowID string) {
+		for y := y0; y < lineOf(); y++ {
+			rows = append(rows, RowRef{Y: y, Name: name, WindowID: windowID})
+		}
+	}
 	buf.WriteString(CursorHome)
 
 	// Mood divider: the frame's first row. The "  zdev projects" header
@@ -282,6 +327,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		if p.Collapsed {
 			return
 		}
+		rowY := lineOf()
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
 		isCursor := cursorFlatRow == projBase[i] && !isCurrent
@@ -340,13 +386,30 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		default:
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows, "")
 		}
+		// Every line just written belongs to this project — the compact or
+		// project row plus, for the current session, its metadata rows.
+		claim(rowY, p.Name, "")
 		// Nested member rows (Agent Teams slice B, ZDEV_TEAM_WINDOWS): each
 		// teammate of a team led by this project renders on its own indented
 		// row immediately after the lead's row(s). Knob off → no rows (the
 		// bullets on the badge are the surface). Placed here so it runs under
 		// both the fold and the flat layouts.
 		if teamRows {
+			memberY := lineOf()
 			renderMemberRows(&buf, teamsByLead[p.Name], width, projBase[i], cursorFlatRow)
+			// renderMemberRows emits exactly one line per member in this
+			// order, so walking the same groups assigns each its own line.
+			// A member row switches to the LEAD's session, then selects the
+			// member's window — the cursor reply's contract.
+			for _, g := range teamsByLead[p.Name] {
+				if g == nil {
+					continue
+				}
+				for _, m := range g.Members {
+					rows = append(rows, RowRef{Y: memberY, Name: p.Name, WindowID: m.WindowID})
+					memberY++
+				}
+			}
 		}
 	}
 
@@ -430,7 +493,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	renderFooter(&buf, nWait, nDead, nRun, nDone, nAlive, nAbsent)
 
 	buf.WriteString(ClearToEnd)
-	return buf.Bytes()
+	return buf.Bytes(), rows
 }
 
 // FooterMode selects the footer tally style (dogfood #4: the glyph
