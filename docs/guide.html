@@ -156,6 +156,8 @@ mkdir -p ~/workspace/initiatives/&lt;name&gt;/notes
 #  private remote — `zdev doctor` warns while commits are laptop-only)
 
 # add a repo — this is the ENTIRE operation; the row appears by itself
+# (local source = speed + hardlinks only; gh repo clone works identically —
+#  all durable linkage runs through the GitHub remote, not projects/)
 git clone ~/workspace/projects/&lt;repo&gt; ~/workspace/initiatives/&lt;name&gt;/&lt;repo&gt;
 git -C …/&lt;repo&gt; remote set-url origin git@github.com:org/&lt;repo&gt;.git
 git -C …/&lt;repo&gt; checkout -b &lt;name&gt;/&lt;thing&gt;

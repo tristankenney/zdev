@@ -75,7 +75,13 @@ git -C ~/workspace/initiatives/<name>/<repo> remote set-url origin <github-url>
 git -C ~/workspace/initiatives/<name>/<repo> checkout -b <name>/<thing>
 ```
 
-That's the whole operation — the row appears within seconds.
+That's the whole operation — the row appears within seconds. The local
+source is a creation-time optimization only (instant, hardlinked objects);
+`gh repo clone` straight into the initiative works identically — after
+origin points at GitHub the clone has NO ongoing relationship with the
+canonical checkout, and every zdev surface (grouping, review gauge, rot)
+keys on the remote. A canonical checkout only needs to exist if you
+actually open it.
 
 ### Status
 
