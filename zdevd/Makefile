@@ -270,6 +270,7 @@ test: $(PLIST_BUILT)
 	bash "$(ZDEVD_DIR)/scripts/check-no-daemon-fork.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-tmux-poll.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-shell-out.sh"
+	bash "$(ZDEVD_DIR)/scripts/check-no-lipgloss-scatter.sh"
 	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
 else
 test: $(ZDEVD_UNIT_BUILT)
@@ -280,6 +281,7 @@ test: $(ZDEVD_UNIT_BUILT)
 	bash "$(ZDEVD_DIR)/scripts/check-no-daemon-fork.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-tmux-poll.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-shell-out.sh"
+	bash "$(ZDEVD_DIR)/scripts/check-no-lipgloss-scatter.sh"
 	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
 endif
 
