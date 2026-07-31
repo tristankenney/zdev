@@ -44,3 +44,8 @@ sidebar plus a ranked triage queue.
   behavior as the default (`ZDEV_SIDEBAR_*`, `ZDEVD_*` precedents).
 - Timing-sensitive tests must not assume an idle machine: poll with
   generous timeouts that only extend failing runs; never fixed sleeps.
+- All lipgloss styling routes through the single pinned renderer in
+  `zdevd/internal/render/lipgloss.go` (ANSI256-pinned) — gate-enforced by
+  `scripts/check-no-lipgloss-scatter.sh` — because lipgloss's default
+  renderer silently strips color the moment its output isn't a real tty
+  (tests, golden capture, respawned tmux panes).
