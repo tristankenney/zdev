@@ -10,8 +10,13 @@ import (
 // clones beside $ZDEV_WORKSPACE/projects/<repo> canonical checkouts).
 // Projects under it group by the INITIATIVE name, not the container — a
 // single "initiatives" group would erase exactly the distinction the
-// grouping exists to draw. It is the ONLY path segment with special
-// meaning; "projects" is pure convention and groups like any other prefix.
+// grouping exists to draw. Within proto/render/hub it is the ONLY special
+// path segment — "projects" groups, folds, and renders like any other
+// prefix. But "projects" IS special one layer down, in the REGISTRY:
+// bin/zdev's discovery rows every child dir of projects/ (no .git
+// required), excludes a root dir by that name from being a project
+// itself, and the workspace watcher arms it explicitly. Renaming it costs
+// those three sites plus docs, not just a header.
 const InitiativesContainer = "initiatives"
 
 // GroupKey returns the sidebar/switcher grouping key for a project name:
