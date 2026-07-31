@@ -1,55 +1,46 @@
 package proto
 
-import (
-	"reflect"
-	"testing"
-)
+import "testing"
 
-func TestIsInitiativeHome(t *testing.T) {
-	cases := []struct {
-		name string
-		want bool
-	}{
-		{"initiatives/marketplace", true},
-		{"initiatives/marketplace/pay-app", false},
-		{"initiatives", false},
-		{"initiatives/", false},
-		{"projects/pay-app", false},
-		{"marketplace", false},
+func TestGroupKeyUniform(t *testing.T) {
+	cases := map[string]string{
+		"marketplace/pay-app": "marketplace",
+		"projects/pay-app":    "projects",
+		"a/b/c":               "a",
+		"zdev":                "",
+		"":                    "",
+		"/odd":                "",
 	}
-	for _, c := range cases {
-		if got := IsInitiativeHome(c.name); got != c.want {
-			t.Errorf("IsInitiativeHome(%q) = %v, want %v", c.name, got, c.want)
+	for name, want := range cases {
+		if got := GroupKey(name); got != want {
+			t.Errorf("GroupKey(%q) = %q, want %q", name, got, want)
 		}
 	}
 }
 
-func TestGroupSort(t *testing.T) {
+func TestHomeSet(t *testing.T) {
 	names := []string{
-		"zdev",
-		"projects/pay-app",
-		"initiatives/ai-at-pay",
-		"initiatives/ai-at-pay/pay-app",
-		"dotfiles",
-		"initiatives/marketplace",
-		"initiatives/marketplace/pay-app",
+		"marketplace",         // home: bare + has members below
+		"marketplace/pay-app",
+		"projects/pay-app",    // unmarked group: members only, no bare row
 		"projects/onboarding",
-	}
-	GroupSort(names)
-	want := []string{
-		// grouped block: by group key (alpha), home immediately before
-		// members within each group
-		"initiatives/ai-at-pay",
-		"initiatives/ai-at-pay/pay-app",
-		"initiatives/marketplace",
-		"initiatives/marketplace/pay-app",
-		"projects/onboarding",
-		"projects/pay-app",
-		// ungrouped block at the bottom, alpha
+		"zdev",                // single: bare, no members
 		"dotfiles",
-		"zdev",
 	}
-	if !reflect.DeepEqual(names, want) {
-		t.Errorf("GroupSort order:\n got %v\nwant %v", names, want)
+	homes := HomeSet(names)
+	if !homes["marketplace"] {
+		t.Errorf("marketplace must be a home")
+	}
+	if homes["projects"] || homes["zdev"] || homes["dotfiles"] {
+		t.Errorf("unexpected homes: %v", homes)
+	}
+	if got := EffectiveGroupKey("marketplace", homes); got != "marketplace" {
+		t.Errorf("home adopts its own name as key, got %q", got)
+	}
+	if got := EffectiveGroupKey("zdev", homes); got != "" {
+		t.Errorf("single stays ungrouped, got %q", got)
+	}
+	if !IsInitiativeHome("marketplace", homes) || IsInitiativeHome("projects", homes) {
+		t.Errorf("IsInitiativeHome disagrees with HomeSet")
 	}
 }
