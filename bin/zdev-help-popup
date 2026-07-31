@@ -80,7 +80,7 @@ printf '  %s"run /rigorous-review on backend"%s\n' "$DIM" "$RESET"
 
 # --- initiatives ---
 printf '\n%sINITIATIVES%s %s(cross-repo units of value — the disk is the registry)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s~/workspace/initiatives/<name>/%s holds INITIATIVE.md + notes + full\n' "$CYAN" "$RESET"
+printf '  %s~/workspace/<name>/%s marked by %sINITIATIVE.md%s holds notes + full\n' "$CYAN" "$RESET" "$CYAN" "$RESET"
 printf '  clones of the repos it touches, on %s<name>/<thing>%s branches.\n' "$CYAN" "$RESET"
 printf '  add repo:    %sgit clone%s into the initiative — the row appears itself\n' "$CYAN" "$RESET"
 printf '  remove:      %srm -rf%s the clone — the row disappears\n' "$CYAN" "$RESET"

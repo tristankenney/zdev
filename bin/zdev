@@ -19,15 +19,16 @@ REAP_LOG="${ZDEV_REAP_LOG:-$HOME/Library/Logs/zdev/reaper.log}"
 
 # The project list has two sources:
 #
-#   1. DISCOVERY (ZDEV_PROJECTS_DISCOVER=1): the workspace layout IS the
-#      registry —
+#   1. DISCOVERY (ZDEV_PROJECTS_DISCOVER=1): the FLAT workspace layout IS
+#      the registry — no path is special:
 #        <root>/<dir> with .git          → project      (zdev, dotfiles, …)
-#        projects/<dir>                  → project      (canonical pool;
-#                                          non-git dirs like onboarding count)
-#        initiatives/<name>              → project      (initiative home)
-#        initiatives/<name>/<dir>+.git   → project      (initiative member;
-#                                          notes/ has no .git and never rows)
-#      Membership is derived: git clone into an initiative IS add-repo.
+#        <root>/<name>/ + INITIATIVE.md  → marked group (initiative): home
+#                                          row + one row per child with .git
+#                                          (notes/ has no .git, never rows)
+#        <root>/<name>/ unmarked         → drawer group: one row per child
+#                                          dir (projects/ — non-git dirs
+#                                          like onboarding count)
+#      Membership is derived: git clone into a group IS add-repo.
 #   2. The projects FILE: overrides only under discovery — favorites (' *')
 #      and off-convention extras. Without the knob it remains the sole
 #      registry, exactly as before.
@@ -83,36 +84,35 @@ if [[ -f "$PROJECTS_FILE" ]]; then
 fi
 
 if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
-    # Root: only dirs that are git repos — junk without .git never rows.
-    # The containers themselves are never projects.
     for _d in "$WORKSPACE"/*/; do
         [[ -d "$_d" ]] || continue
         _b="${_d%/}"; _b="${_b##*/}"
-        case "$_b" in projects|initiatives|.*) continue ;; esac
-        [[ -e "$_d/.git" ]] && _add_project "$_b" "root-repo"
-    done
-    # Canonical pool: every child dir is deliberate (non-git onboarding/
-    # scratch dirs included).
-    for _d in "$WORKSPACE"/projects/*/; do
-        [[ -d "$_d" ]] || continue
-        _b="${_d%/}"; _b="${_b##*/}"
         [[ "$_b" == .* ]] && continue
-        _add_project "projects/$_b" "projects-dir"
-    done
-    # Initiatives: home row per <name>; members are children WITH .git
-    # (file or dir — clones today, worktrees would count too). notes/ and
-    # other plain dirs stay invisible.
-    for _h in "$WORKSPACE"/initiatives/*/; do
-        [[ -d "$_h" ]] || continue
-        _hb="${_h%/}"; _hb="${_hb##*/}"
-        [[ "$_hb" == .* ]] && continue
-        _add_project "initiatives/$_hb" "initiative-home"
-        for _r in "$WORKSPACE/initiatives/$_hb"/*/; do
-            [[ -d "$_r" ]] || continue
-            _rb="${_r%/}"; _rb="${_rb##*/}"
-            [[ "$_rb" == .* ]] && continue
-            [[ -e "$_r/.git" ]] && _add_project "initiatives/$_hb/$_rb" "initiative-member"
-        done
+        if [[ -e "$_d/.git" ]]; then
+            # A git repo at the root is a single project, never a group.
+            _add_project "$_b" "root-repo"
+        elif [[ -f "$_d/INITIATIVE.md" ]]; then
+            # MARKED group (the on-disk marker, never config): the dir
+            # itself rows as the group home; children WITH .git (file or
+            # dir — clones or worktrees) row as members. notes/ never rows.
+            _add_project "$_b" "initiative-home"
+            for _r in "$_d"*/; do
+                [[ -d "$_r" ]] || continue
+                _rb="${_r%/}"; _rb="${_rb##*/}"
+                [[ "$_rb" == .* ]] && continue
+                [[ -e "$_r/.git" ]] && _add_project "$_b/$_rb" "initiative-member"
+            done
+        else
+            # UNMARKED group (a drawer): every child dir rows; the group
+            # dir itself does not (no home — nothing claimed). A root dir
+            # with no subdirs at all is junk and rows nothing.
+            for _r in "$_d"*/; do
+                [[ -d "$_r" ]] || continue
+                _rb="${_r%/}"; _rb="${_rb##*/}"
+                [[ "$_rb" == .* ]] && continue
+                _add_project "$_b/$_rb" "group-member"
+            done
+        fi
     done
 fi
 
@@ -262,14 +262,15 @@ Usage:
   zdev --help
 
 Projects — two sources:
-  ZDEV_PROJECTS_DISCOVER=1 derives the list from the workspace layout:
+  ZDEV_PROJECTS_DISCOVER=1 derives the list from the workspace layout
+  (flat — no path is special; INITIATIVE.md marks a group as initiative):
       <root>/<dir> with .git          root repos
-      projects/<dir>                  canonical pool (all dirs)
-      initiatives/<name>              initiative home
-      initiatives/<name>/<dir>+.git   member clone (notes/ never rows)
-  The daemon watches the workspace: git clone into an initiative IS
-  add-repo; rm -rf is remove. The projects file then holds OVERRIDES
-  only. Without the knob, the file is the whole registry (classic).
+      <name>/ + INITIATIVE.md         initiative: home row + members
+                                      with .git (notes/ never rows)
+      <name>/ unmarked                drawer: every child dir rows
+  The daemon watches the workspace: git clone into a group IS add-repo;
+  rm -rf is remove. The projects file then holds OVERRIDES only.
+  Without the knob, the file is the whole registry (classic).
 
 Favorites:
   Append ' *' to a line in $PROJECTS_FILE:

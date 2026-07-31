@@ -84,7 +84,7 @@ teams() {
 #                                        when present (empty id ⇒ session only)
 build_list() {
     awk -F"$TAB" -v T="$TAB" \
-        -v grp="$(case "${ZDEV_SIDEBAR_GROUP:-}" in prefix|collapse) echo 1;; *) echo 0;; esac)" \
+        -v grp="$(case "${ZDEV_SIDEBAR_GROUP:-}" in (prefix|collapse) echo 1;; (*) echo 0;; esac)" \
         -v cWait=$'\033[1;91m' -v cWork=$'\033[36m' -v cDone=$'\033[32m' \
         -v cDead=$'\033[1;91m' -v cIdle=$'\033[90m' -v cR=$'\033[0m' '
         # glyph maps a member status to a colored marker (mirrors the sidebar
@@ -113,16 +113,15 @@ build_list() {
             next
         }
         # Project line (bare name). Flat mode (grp=0): emit immediately, in
-        # list order. Grouped mode (grp=1, ZDEV_SIDEBAR_GROUP=prefix —
-        # mirrors the sidebar): buffer, then emit in END with a dim
-        # "─ name ──" header per first-path-segment run and members
-        # indented with the prefix stripped. Buffering is required for the
-        # ROOT-ROW lookahead: a bare name whose slash-form members follow
-        # it ("ai-at-pay" then "ai-at-pay/…") adopts its own name as key so
-        # the initiative home row lands under its header, exactly as the
-        # sidebar renders it. The header row itself is selectable and
-        # targets the group'\''s first project — the root when one exists
-        # (it sorts first), the first member otherwise.
+        # list order. Grouped mode (grp=1 — mirrors the sidebar): buffer,
+        # then emit in END as ONE alpha pass, groups and singles
+        # interleaved in byte order exactly as the sidebar renders them.
+        # Buffering is required for the HOME lookahead: a bare name whose
+        # slash-form members follow it ("marketplace" then "marketplace/…")
+        # is that group'\''s home row and doubles as its header — no
+        # synthetic "─ name ──" line, or the name would show twice. Only
+        # unmarked drawer groups (members with no bare row, e.g.
+        # projects/…) get the synthetic header.
         NF==1 && $0!="" {
             if (!grp) {
                 proj=$0
@@ -132,66 +131,58 @@ build_list() {
                 plist[pn++]=$0
             }
         }
-        # key() mirrors render/frame.go groupKey exactly: first path
-        # segment, except under the "initiatives" container where the key
-        # is the SECOND segment (the initiative), and the initiative home
-        # row (initiatives/<name>) keys as its own name.
-        function key(s,    i, rest, j) {
+        # key() mirrors proto.GroupKey exactly: first path segment,
+        # uniformly — the tree mirrors the disk. Home adoption (a bare name
+        # followed by its members) happens in END via lookahead, mirroring
+        # proto.HomeSet.
+        function key(s,    i) {
             i=index(s,"/")
-            if (i<=1) return ""
-            if (substr(s,1,i-1)!="initiatives") return substr(s,1,i-1)
-            rest=substr(s,i+1)
-            j=index(rest,"/")
-            return j>1 ? substr(rest,1,j-1) : rest
+            return i>1 ? substr(s,1,i-1) : ""
         }
         # Display: FULL paths, always — fzf matches on the display field, so
         # stripped names would make three "pay-app" rows untypeable and
         # indistinguishable (the sidebar strips for legibility; the switcher
-        # keeps paths for targeting). Grouped rows indent 2 under their
-        # header; the header itself is selectable and targets the group'\''s
-        # first project (the initiative home when one exists — it sorts
-        # first).
+        # keeps paths for targeting). Member rows indent 2 under whatever
+        # heads their group (the home row, or a synthetic header); a home
+        # row stays flush left — it IS the header.
         function emitproj(p, k,    disp) {
-            disp = (k!="") ? "  " p : p
+            disp = (k!="" && p!=k) ? "  " p : p
             printf "%s%sP%s%s\n", disp, T, T, p
             if (p in hasteam) printf "%s", nested[p]
         }
-        function emitgroup(i,    p, k) {
-            p=plist[i]; k=gkey[i]
-            if (k!=prev && k!="") \
-                printf "%s\xe2\x94\x80 %s \xe2\x94\x80\xe2\x94\x80%s%sP%s%s\n", cIdle, k, cR, T, T, p
-            prev=k
-            emitproj(p, k)
-        }
         END {
             if (!grp) exit
-            # Emit GROUPED rows first and ungrouped singles as one block at
-            # the bottom — mirroring the daemon'\''s proto.GroupSort order so
-            # the switcher and sidebar agree about shape. Bare names are
-            # always singles (no lookahead), matching GroupSort exactly.
             for (i=0; i<pn; i++) gkey[i]=key(plist[i])
+            # Home adoption mirrors proto.HomeSet: the feed is LC_ALL=C
+            # sorted, so a home'\''s member run is contiguous right after
+            # the bare row — one lookahead suffices.
+            for (i=0; i<pn; i++) \
+                if (gkey[i]=="" && i+1<pn && index(plist[i+1], plist[i] "/")==1) gkey[i]=plist[i]
             prev=""
-            for (i=0; i<pn; i++) if (gkey[i]!="") emitgroup(i)
-            printed=0
-            for (i=0; i<pn; i++) if (gkey[i]=="") {
-                if (!printed) { printf "%s\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80%s%sP%s%s\n", cIdle, cR, T, T, plist[i]; printed=1 }
-                emitproj(plist[i], "")
+            for (i=0; i<pn; i++) {
+                p=plist[i]; k=gkey[i]
+                # Synthetic header only when the group opens WITHOUT a home
+                # row (unmarked drawer): a home is its own header, and a
+                # "─ name ──" line above it would show the name twice. The
+                # header is selectable and targets the group'\''s first
+                # member.
+                if (k!="" && k!=prev && p!=k) \
+                    printf "%s\xe2\x94\x80 %s \xe2\x94\x80\xe2\x94\x80%s%sP%s%s\n", cIdle, k, cR, T, T, p
+                prev=k
+                emitproj(p, k)
             }
         }
     ' <(teams) <(projects_feed)
 }
 
-# Initiative metadata preview: hovering any initiative-related row (its
-# header, home, or a member clone) shows INITIATIVE.md — intent, tracker,
-# decisions — before you jump in. {3} is the switch target (fzf quotes
-# placeholder substitutions itself); non-initiative rows show nothing and
-# the pane collapses out of the way (hidden unless matched via the
-# preview-window ,<preview-fn> trick is overkill — a blank pane is fine,
-# and ctrl-/ toggles it off entirely).
-_preview='case {3} in initiatives/*)
-    d="${ZDEV_WORKSPACE:-$HOME/workspace}/initiatives/$(printf %s {3} | cut -d/ -f2)"
-    if [ -f "$d/INITIATIVE.md" ]; then head -40 "$d/INITIATIVE.md"; fi
-;; esac'
+# Initiative metadata preview: hovering any row whose group is marked
+# (INITIATIVE.md in its root dir) shows that file — intent, tracker,
+# decisions — before you jump in. {3} is the switch target; the group is
+# its first path segment (or the name itself for a home row). Unmarked
+# rows have no INITIATIVE.md, so the pane stays blank and out of the way;
+# ctrl-/ toggles it off entirely.
+_preview='d="${ZDEV_WORKSPACE:-$HOME/workspace}/$(printf %s {3} | cut -d/ -f1)"
+if [ -f "$d/INITIATIVE.md" ]; then head -40 "$d/INITIATIVE.md"; fi'
 SEL=$(build_list | fzf --prompt='go › ' --height=100% --reverse --ansi \
         --delimiter="$TAB" --with-nth=1 \
         --preview="$_preview" --preview-window='right,45%,border-left,wrap' \
