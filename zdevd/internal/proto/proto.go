@@ -171,7 +171,15 @@ import (
 // renderer ignores the field silently (no gauge row), so this is forward-
 // compatible in practice, but bumped for strict-equality validation. Restart
 // all zdev-sidebar-render instances after deploying the new zdevd binary.
-const SchemaVersion = "phase4-v21"
+//
+// phase4-v22 (initiative grouping v2 — collapse): adds Project.Collapsed —
+// true when the project's initiative group is collapsed (no attached client
+// attends any project in the group, and none demands attention), so the row
+// is HIDDEN from the sidebar and from FlatRows. The daemon is the sole
+// authority for the flag: navigation row order derives from it on both
+// sides, and a renderer deciding collapse locally would be the exact
+// cursor-drift class FlatRows exists to kill.
+const SchemaVersion = "phase4-v22"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -501,6 +509,16 @@ type Project struct {
 	// ZDEV_SIDEBAR_UNMANAGED=show; omitted otherwise (omitempty, default false).
 	// Renderers dim these rows and position them below the managed block.
 	Unmanaged bool `json:"unmanaged,omitempty"`
+
+	// Collapsed (phase4-v22, ZDEV_SIDEBAR_GROUP=collapse) is true when this
+	// project is a MEMBER of an initiative group that is currently
+	// collapsed: no attached client attends any project in the group, and no
+	// project in it demands attention (waiting / dead / finished pierce —
+	// attention never collapses away). Collapsed rows are hidden from the
+	// sidebar and from FlatRows; the group's home row stays visible as the
+	// header and carries the rollup. Set by the DAEMON only — collapse
+	// changes navigation row order, so it must have a single authority.
+	Collapsed bool `json:"collapsed,omitempty"`
 }
 
 // ValidateHello returns nil when the hello frame is well-formed and the

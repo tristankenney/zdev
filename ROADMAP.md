@@ -198,8 +198,13 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   `--list-projects -v` is the provenance audit trail; `git clone` into an
   initiative IS add-repo, no config edit, no daemon kick. v1.2 SHIPPED:
   home-as-header with PaletteFor color identity + gutter frames, leaf-name
-  display, groups-first daemon ordering via proto.GroupSort.)* v2 is the part
-  that earns the vertical space back: groups the operator is NOT currently in
+  display, groups-first daemon ordering via proto.GroupSort.)* *(v2 collapse+rollup SHIPPED
+  2026-07-30 behind ZDEV_SIDEBAR_GROUP=collapse: groups nobody attends and
+  nothing demands fold to "╭ name ·N"; waiting/dead/finished pierce — dead
+  via DeadSinceTS, the invariants review caught Attention never holding
+  AttDead; Collapsed rides the wire (phase4-v22) so FlatRows stays the one
+  row-order authority. Remaining from this entry: header-enter →
+  zdev next <prefix> scoped jump.)* v2 as designed: groups the operator is NOT currently in
   collapse to their header with a rolled-up worst-of glyph and count —
   attention never collapses away (waiting/dead pierce or auto-expand); a
   select on the header jumps to the group's oldest project requiring

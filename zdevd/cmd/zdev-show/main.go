@@ -242,6 +242,8 @@ func formatLegend() string {
 	row("", "name + frame take the initiative's stable color")
 	row(redPulse+"●"+reset+"─ name ──", "attention on the home replaces the corner — marker wins")
 	row("│ · name", "member row (a clone) — gutter hangs from its header")
+	row("╭ name "+dim+"·N"+reset, "collapsed initiative (nobody in it, nothing demanding) —")
+	row("", "N member rows folded; attention or entering auto-expands")
 	row(dim+"─ name ──"+reset, "container header (projects/ — a pool, not an initiative)")
 	row(dim+"──────"+reset, "separator: rows below are ungrouped singles")
 	row(dim+"rows"+reset, "grouped rows show the LEAF (pay-app); switcher keeps full paths")

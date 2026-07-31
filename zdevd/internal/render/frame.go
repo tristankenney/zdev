@@ -175,6 +175,11 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	acc := 0
 	for i := range snap.Projects {
 		projBase[i] = acc
+		// Collapsed rows (phase4-v22) own no flat row — skip them here
+		// EXACTLY as proto.FlatRows does, or the cursor and the ▶ drift.
+		if snap.Projects[i].Collapsed {
+			continue
+		}
 		acc++
 		if teamRows {
 			for _, g := range teamsByLead[snap.Projects[i].Name] {
@@ -197,16 +202,24 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// invariants review caught exactly that divergence.
 	var groupKeys []string
 	var isHome []bool
-	hasHome := map[string]bool{} // group key → has an initiative home row
+	hasHome := map[string]bool{}          // group key → has an initiative home row
+	collapsedN := map[string]int{}        // group key → hidden member count
+	collapsedWorking := map[string]bool{} // group key → any hidden member working
 	if GroupMode == "prefix" {
 		groupKeys = make([]string, len(snap.Projects))
 		isHome = make([]bool, len(snap.Projects))
 		for i := range snap.Projects {
-			name := snap.Projects[i].Name
-			groupKeys[i] = groupKey(name)
-			isHome[i] = proto.IsInitiativeHome(name)
+			p := &snap.Projects[i]
+			groupKeys[i] = groupKey(p.Name)
+			isHome[i] = proto.IsInitiativeHome(p.Name)
 			if isHome[i] {
 				hasHome[groupKeys[i]] = true
+			}
+			if p.Collapsed {
+				collapsedN[groupKeys[i]]++
+				if projectAttention(p) == proto.AttWorking {
+					collapsedWorking[groupKeys[i]] = true
+				}
 			}
 		}
 	}
@@ -239,6 +252,11 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 				nAlive++
 			}
 		}
+		// Collapsed rows are tallied (the footer reports fleet truth) but
+		// never drawn — their group's home row carries the rollup.
+		if p.Collapsed {
+			return
+		}
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
 		isCursor := cursorFlatRow == projBase[i] && !isCurrent
@@ -252,7 +270,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			// The home row IS the group header. When it's also the current
 			// session, the metadata row still follows — the current-project
 			// two-row contract (and projBase math) is glyph-agnostic.
-			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent)
+			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent,
+				collapsedN[groupKeys[i]], collapsedWorking[groupKeys[i]])
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 			}
@@ -500,7 +519,7 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int) {
 // replaces both the synthetic header and the home's compact row, so the
 // group costs no extra line and the home stays a real, navigable FlatRow
 // whose agent attention lights the header.
-func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool) {
+func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool, collapsedN int, collapsedWorking bool) {
 	switch {
 	case isCurrent:
 		// Same breath-pulsing ▌ the current project row carries — without
@@ -522,8 +541,16 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// waiting pulse's off-phase frame is itself "·".
 	name := proto.GroupKey(p.Name)
 	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
-		buf.WriteString(PaletteFor(name))
-		buf.WriteString("╭")
+		// Collapsed group with a working member: the corner shows the work
+		// spinner so a collapsed initiative still reads as ALIVE — the only
+		// state a collapsed group can be, since attention auto-expands.
+		if collapsedWorking {
+			buf.WriteString(Icy)
+			buf.WriteString(animator.WorkGlyph())
+		} else {
+			buf.WriteString(PaletteFor(name))
+			buf.WriteString("╭")
+		}
 	} else {
 		glyph, color := MarkerFor(*p, animator, nowFn())
 		buf.WriteString(color)
@@ -541,6 +568,14 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	buf.WriteString(PaletteFor(name))
 	buf.WriteString(name)
 	buf.WriteString(Reset)
+	// Rollup (phase4-v22): a collapsed group folds its member rows into a
+	// dim count on the header — "·N" reads as "N rows live under here".
+	if collapsedN > 0 {
+		buf.WriteString(" ")
+		buf.WriteString(Dim)
+		fmt.Fprintf(buf, "·%d", collapsedN)
+		buf.WriteString(Reset)
+	}
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
 }

@@ -54,11 +54,10 @@ TAB=$(printf '\t')
 # (A function, not inline in the <(...): bash 3.2 mis-parses multi-line
 # process substitutions.)
 projects_feed() {
-    if [ "${ZDEV_SIDEBAR_GROUP:-}" = prefix ]; then
-        zdev --list-projects 2>/dev/null | LC_ALL=C sort
-    else
-        zdev --list-projects 2>/dev/null
-    fi
+    case "${ZDEV_SIDEBAR_GROUP:-}" in
+        prefix|collapse) zdev --list-projects 2>/dev/null | LC_ALL=C sort ;;
+        *)               zdev --list-projects 2>/dev/null ;;
+    esac
 }
 
 # Live team members, one per line: <lead_project>\t<member>\t<status>\t<wid>.
@@ -85,7 +84,7 @@ teams() {
 #                                        when present (empty id ⇒ session only)
 build_list() {
     awk -F"$TAB" -v T="$TAB" \
-        -v grp="$([ "${ZDEV_SIDEBAR_GROUP:-}" = prefix ] && echo 1 || echo 0)" \
+        -v grp="$(case "${ZDEV_SIDEBAR_GROUP:-}" in prefix|collapse) echo 1;; *) echo 0;; esac)" \
         -v cWait=$'\033[1;91m' -v cWork=$'\033[36m' -v cDone=$'\033[32m' \
         -v cDead=$'\033[1;91m' -v cIdle=$'\033[90m' -v cR=$'\033[0m' '
         # glyph maps a member status to a colored marker (mirrors the sidebar

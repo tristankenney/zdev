@@ -57,6 +57,12 @@ func FlatRows(snap *Snapshot, teamRows bool) []FlatRow {
 	rows := make([]FlatRow, 0, len(snap.Projects))
 	for i := range snap.Projects {
 		p := &snap.Projects[i]
+		// Collapsed rows (phase4-v22) are hidden from navigation entirely —
+		// the project row AND any team member rows nested under it. The
+		// renderer skips the same rows, so cursor math stays in lockstep.
+		if p.Collapsed {
+			continue
+		}
 		rows = append(rows, FlatRow{Project: p, SwitchTo: p.Name})
 		for _, g := range teamsByLead[p.Name] {
 			for j := range g.Members {

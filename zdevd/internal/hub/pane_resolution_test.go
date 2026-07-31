@@ -16,8 +16,9 @@ import (
 // This test isolates the `sessionForPane` resolution logic from the
 // bootstrap-ordering and renderer-env questions. If this test passes
 // but live current_session is still empty, the bug is in either:
-//   (a) bootstrap event delivery in supervisor.applyPanesList, OR
-//   (b) the renderer's $TMUX_PANE env not being set under launchd.
+//
+//	(a) bootstrap event delivery in supervisor.applyPanesList, OR
+//	(b) the renderer's $TMUX_PANE env not being set under launchd.
 func TestSnapWithCurrentSession_HappyPath(t *testing.T) {
 	h, cleanup := startHub(t)
 	defer cleanup()

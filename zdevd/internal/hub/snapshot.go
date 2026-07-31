@@ -283,6 +283,16 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 	// with rankTriage so the queue's member entries agree with the wire groups.
 	teamGroups := teamGroupsFor(st)
 
+	// Initiative collapse (phase4-v22): mark member rows of unattended,
+	// attention-free initiative groups. Applied AFTER full assembly so the
+	// collapse decision itself reads the same displayed Attention the wire
+	// carries; hidden rows keep every field (zdev-show list still reports
+	// the whole fleet) — only navigation and the sidebar skip them.
+	hiddenNames := collapsedNames(st, allNames)
+	for i := range projects {
+		_, projects[i].Collapsed = hiddenNames[projects[i].Name]
+	}
+
 	return &proto.Snapshot{
 		V:              proto.CurrentProtocolVersion,
 		Type:           "snapshot",
@@ -737,6 +747,88 @@ func orderedRowNames(st *state) []string {
 	return append(names, unmanagedNames...)
 }
 
+// collapsedNames returns the set of project names whose rows are HIDDEN
+// because their initiative group is collapsed (phase4-v22,
+// ZDEV_SIDEBAR_GROUP=collapse). The rule, per group with an initiative home:
+//
+//   - expanded while ANY project in the group is client-attended (someone is
+//     in there — global attendance, not per-viewer: the cursor indexes ONE
+//     row list, so collapse must be viewer-independent);
+//   - expanded while ANY project in the group demands attention (waiting /
+//     dead / finished) — attention never collapses away, it auto-expands;
+//   - otherwise every MEMBER row collapses; the home row stays visible as
+//     the group's header and carries the rollup.
+//
+// Reads only state maps (projectData displayed Attention, clientSessions) —
+// no derivation side effects — so buildSnapshot and cursorFlatRows can both
+// call it and MUST both call it: it participates in navigation row order,
+// the single-authority contract sortRowNames also lives under. Hub goroutine
+// only.
+func collapsedNames(st *state, names []string) map[string]struct{} {
+	if !st.collapseGroups {
+		return nil
+	}
+	type groupInfo struct {
+		hasHome bool
+		hold    bool // attended or attention — group stays expanded
+		members []string
+	}
+	groups := make(map[string]*groupInfo)
+	for _, n := range names {
+		key := proto.GroupKey(n)
+		if key == "" {
+			continue
+		}
+		g := groups[key]
+		if g == nil {
+			g = &groupInfo{}
+			groups[key] = g
+		}
+		if proto.IsInitiativeHome(n) {
+			g.hasHome = true
+		} else {
+			g.members = append(g.members, n)
+		}
+		dash := proto.SessionKey(n)
+		if isClientAttended(st, dash) {
+			g.hold = true
+		}
+		pd := st.projectData[dash]
+		// Death pierces via DeadSinceTS, NOT Attention: displayed Attention
+		// never holds AttDead — death is a display-only override applied at
+		// wire-assembly time (invariants review 2026-07-30 caught the dead
+		// arm being unreachable, which would have HIDDEN a dead agent in an
+		// unattended group). buildSnapshot's revival check clears
+		// DeadSinceTS before this runs, so the field tracks displayed death
+		// exactly; between publishes an event-set death holds the group
+		// open in the safe direction.
+		if pd.DeadSinceTS > 0 {
+			g.hold = true
+		}
+		// Known fail-open staleness: a member killed while displayed-waiting
+		// freezes Attention in projectData (absent sessions are not written
+		// back), holding its group expanded until eviction or recreation.
+		// Accepted: it can only ever keep a group OPEN, never hide demand.
+		switch pd.Attention {
+		case proto.AttWaiting, proto.AttFinished:
+			g.hold = true
+		}
+	}
+	var hidden map[string]struct{}
+	for _, g := range groups {
+		if !g.hasHome || g.hold || len(g.members) == 0 {
+			continue // not an initiative, or held open, or nothing to hide
+		}
+		if hidden == nil {
+			hidden = make(map[string]struct{})
+		}
+		for _, m := range g.members {
+			hidden[m] = struct{}{}
+		}
+	}
+	return hidden
+}
+
 // sortRowNames applies the row ordering for the managed block: plain
 // lexicographic by default (byte-identical legacy order), group-aware via
 // proto.GroupSort when the grouped sidebar is on (grouped names first, by
@@ -765,6 +857,10 @@ func cursorFlatRows(st *state) []proto.FlatRow {
 	projects := make([]proto.Project, len(names))
 	for i, n := range names {
 		projects[i] = proto.Project{Name: n}
+	}
+	hidden := collapsedNames(st, names)
+	for i := range projects {
+		_, projects[i].Collapsed = hidden[projects[i].Name]
 	}
 	snap := &proto.Snapshot{Projects: projects, TeamGroups: teamGroupsFor(st)}
 	return proto.FlatRows(snap, st.teamWindows)

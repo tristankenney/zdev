@@ -221,7 +221,9 @@ func run() error {
 		// (proto.GroupSort) so the renderer's headers sit over contiguous
 		// runs. Same knob the renderer reads for header drawing; both are
 		// gap-filled from ~/.config/zdev/env, so they agree in practice.
-		GroupSidebar: os.Getenv("ZDEV_SIDEBAR_GROUP") == "prefix",
+		GroupSidebar: os.Getenv("ZDEV_SIDEBAR_GROUP") == "prefix" ||
+			os.Getenv("ZDEV_SIDEBAR_GROUP") == "collapse",
+		CollapseGroups: os.Getenv("ZDEV_SIDEBAR_GROUP") == "collapse",
 		// Agent Teams slice B: ZDEV_TEAM_WINDOWS=1 de-aggregates teammate
 		// panes out of the lead's session row (the hub never reads env itself).
 		TeamWindows: os.Getenv("ZDEV_TEAM_WINDOWS") == "1",

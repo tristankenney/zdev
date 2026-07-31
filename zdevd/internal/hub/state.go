@@ -108,6 +108,13 @@ type state struct {
 	// Run starts; read-only throughout Run.
 	groupSidebar bool
 
+	// collapseGroups mirrors hub.Config.CollapseGroups
+	// (ZDEV_SIDEBAR_GROUP=collapse). When true, buildSnapshot and
+	// cursorFlatRows hide member rows of unattended, attention-free
+	// initiative groups via collapsedNames. Set once by NewHub before Run;
+	// read-only throughout.
+	collapseGroups bool
+
 	// teamWindows mirrors hub.Config.TeamWindows (set from ZDEV_TEAM_WINDOWS
 	// in cmd/zdevd — the hub NEVER reads env itself). When true, panes
 	// claimed by an Agent Teams member are EXCLUDED from their session's

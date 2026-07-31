@@ -194,3 +194,31 @@ func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 		t.Errorf("straddling group must render its header in BOTH blocks, got %d:\n%s", n, out)
 	}
 }
+
+// Collapsed member rows (phase4-v22): hidden from the frame, rolled up as a
+// dim count on the home header; a working hidden member lights the corner.
+func TestGroupedCollapse(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "initiatives/alpha", Status: "alive"},
+		{Name: "initiatives/alpha/repo-a", Status: "alive", Collapsed: true},
+		{Name: "initiatives/alpha/repo-b", Status: "shell-running", Attention: proto.AttWorking, Collapsed: true},
+		{Name: "initiatives/beta", Status: "alive"},
+		{Name: "initiatives/beta/repo-c", Status: "alive"},
+	}}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	if strings.Contains(out, "repo-a") || strings.Contains(out, "repo-b") {
+		t.Errorf("collapsed members must not render:\n%s", out)
+	}
+	if !strings.Contains(out, "alpha ·2") {
+		t.Errorf("collapsed home must carry the ·2 rollup:\n%s", out)
+	}
+	if !strings.Contains(out, "repo-c") {
+		t.Errorf("expanded group's members must still render:\n%s", out)
+	}
+	// Footer still counts the hidden working member (fleet truth).
+	if !strings.Contains(out, "1 working") {
+		t.Errorf("footer must tally hidden members:\n%s", out)
+	}
+}

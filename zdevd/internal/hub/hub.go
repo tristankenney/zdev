@@ -204,6 +204,13 @@ type Config struct {
 	// The hub never reads the env var — cmd/zdevd resolves it.
 	GroupSidebar bool
 
+	// CollapseGroups mirrors ZDEV_SIDEBAR_GROUP=collapse (implies
+	// GroupSidebar). Member rows of initiative groups that no client
+	// attends and that demand no attention are hidden from the wire and
+	// from navigation; the home row carries the rollup. The hub never
+	// reads the env var — cmd/zdevd resolves it.
+	CollapseGroups bool
+
 	// TeamWindows mirrors ZDEV_TEAM_WINDOWS=1 (Agent Teams slice B). When
 	// true, buildSnapshot excludes Agent Teams member panes from their
 	// session's attention derivation so the lead's project row reflects the
@@ -238,6 +245,7 @@ func NewHub(cfg Config) *Hub {
 	st.waitingDwell = cfg.WaitingDwell
 	st.showUnmanaged = cfg.ShowUnmanaged
 	st.groupSidebar = cfg.GroupSidebar
+	st.collapseGroups = cfg.CollapseGroups
 	st.teamWindows = cfg.TeamWindows
 	return &Hub{
 		debounce:       cfg.Debounce,
@@ -1075,7 +1083,10 @@ func projectEquals(a, b proto.Project) bool {
 		a.AgentPi != b.AgentPi ||
 		a.WaitContext != b.WaitContext ||
 		a.CIStatus != b.CIStatus ||
-		a.CIConclusion != b.CIConclusion {
+		a.CIConclusion != b.CIConclusion ||
+		// Collapse transitions change navigation row order — they MUST
+		// publish so cursor and rows move together (phase4-v22).
+		a.Collapsed != b.Collapsed {
 		return false
 	}
 	if len(a.ListeningPorts) != len(b.ListeningPorts) {

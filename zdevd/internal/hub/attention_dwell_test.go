@@ -296,7 +296,7 @@ func TestBuildSnapshot_WaitingDwell_TitleOnlyCommitsAfterDwell(t *testing.T) {
 	_ = buildSnapshot(s, 1, time.Time{}, now, 0)
 
 	setTitle(s, "● someagent")
-	_ = buildSnapshot(s, 2, time.Time{}, now+5, 5000)   // candidate starts
+	_ = buildSnapshot(s, 2, time.Time{}, now+5, 5000)       // candidate starts
 	snap := buildSnapshot(s, 3, time.Time{}, now+13, 13000) // 8s held > 7s window
 	if got := findProject(snap.Projects, name).Attention; got != proto.AttWaiting {
 		t.Fatalf("sustained title wait Attention = %q; want waiting after dwell", got)

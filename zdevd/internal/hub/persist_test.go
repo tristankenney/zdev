@@ -346,7 +346,7 @@ func TestSaveOnDebounce_CoalescesEventBurst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat after burst: %v", err)
 	}
-	time.Sleep(2 * debounce + 30*time.Millisecond)
+	time.Sleep(2*debounce + 30*time.Millisecond)
 	info2, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat after quiet period: %v", err)

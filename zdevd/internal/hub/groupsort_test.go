@@ -93,3 +93,99 @@ func TestGroupSortUsesSharedKey(t *testing.T) {
 		t.Fatal("proto.GroupKey contract changed under the hub's feet")
 	}
 }
+
+// TestCollapsedNames pins the collapse rule: an initiative group's member
+// rows hide iff the group has a home, no attached client attends any of its
+// projects, and none demands attention. Homes never hide; containers
+// (projects/) never collapse; attention and attendance both pierce.
+func TestCollapsedNames(t *testing.T) {
+	names := []string{
+		"initiatives/alpha",
+		"initiatives/alpha/repo-a",
+		"initiatives/alpha/repo-b",
+		"initiatives/beta",
+		"initiatives/beta/repo-c",
+		"initiatives/gamma",
+		"initiatives/gamma/repo-d",
+		"initiatives/delta",
+		"initiatives/delta/repo-e",
+		"projects/pay-app",
+		"zdev",
+	}
+	s := newState()
+	s.collapseGroups = true
+	// beta is attended: a client sits in its member session.
+	s.clientSessions = map[string]string{"c1": "initiatives-beta-repo-c"}
+	// gamma demands attention: its member is waiting.
+	s.projectData["initiatives-gamma-repo-d"] = projectData{Attention: proto.AttWaiting}
+	// delta's member is DEAD — represented as it is in real flow: DeadSinceTS
+	// set, Attention NOT AttDead (death is a display-only override; writing
+	// Attention: AttDead here would test an unreachable arm — the exact trap
+	// the 2026-07-30 invariants review caught).
+	s.projectData["initiatives-delta-repo-e"] = projectData{DeadSinceTS: 12345}
+
+	hidden := collapsedNames(s, names)
+	want := map[string]bool{
+		"initiatives/alpha/repo-a": true,
+		"initiatives/alpha/repo-b": true,
+	}
+	for n := range want {
+		if _, ok := hidden[n]; !ok {
+			t.Errorf("%s should be hidden", n)
+		}
+	}
+	for n := range hidden {
+		if !want[n] {
+			t.Errorf("%s hidden but should not be (attended/attention/home/container)", n)
+		}
+	}
+
+	// Knob off: nothing hides.
+	s.collapseGroups = false
+	if h := collapsedNames(s, names); h != nil {
+		t.Errorf("collapseGroups=false must hide nothing, got %v", h)
+	}
+}
+
+// TestCollapseParity extends the Invariant-9 contract to collapse: the
+// published snapshot's Collapsed flags and cursorFlatRows' visible rows must
+// agree — a row hidden on the wire must be absent from navigation.
+func TestCollapseParity(t *testing.T) {
+	s := buildTestState("scratch-session", []string{"%1"}, []string{"shell"})
+	s.groupSidebar = true
+	s.collapseGroups = true
+	s.projectListNames = []string{
+		"initiatives/alpha",
+		"initiatives/alpha/repo-a",
+		"projects/pay-app",
+		"zdev",
+	}
+
+	now := time.Now().Unix()
+	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
+	visibleWire := map[string]bool{}
+	for _, p := range snap.Projects {
+		if !p.Collapsed {
+			visibleWire[p.Name] = true
+		}
+	}
+	if visibleWire["initiatives/alpha/repo-a"] {
+		t.Fatalf("unattended initiative member must be Collapsed on the wire")
+	}
+
+	rows := cursorFlatRows(s)
+	for _, r := range rows {
+		if !visibleWire[r.Project.Name] {
+			t.Errorf("cursor row %q is not wire-visible — cursor/wire drift", r.Project.Name)
+		}
+	}
+	rowNames := map[string]bool{}
+	for _, r := range rows {
+		rowNames[r.Project.Name] = true
+	}
+	for n := range visibleWire {
+		if !rowNames[n] {
+			t.Errorf("wire-visible %q missing from cursor rows", n)
+		}
+	}
+}

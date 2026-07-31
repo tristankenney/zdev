@@ -265,7 +265,10 @@ func run() error {
 	// Sidebar grouping: off (default, flat list) | prefix (dim header per
 	// first-path-segment run — the initiative-grouping surface for the
 	// worktree layout). Unknown values fall back to off.
-	if os.Getenv("ZDEV_SIDEBAR_GROUP") == "prefix" {
+	switch os.Getenv("ZDEV_SIDEBAR_GROUP") {
+	case "prefix", "collapse":
+		// "collapse" styles identically to prefix — hiding is the DAEMON's
+		// call (Project.Collapsed on the wire); the renderer just obeys.
 		render.GroupMode = "prefix"
 	}
 
