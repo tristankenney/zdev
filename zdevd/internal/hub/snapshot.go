@@ -81,7 +81,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			names = append(names, sess.Name)
 		}
 	}
-	sortRowNames(st, names)
+	sort.Strings(names)
 	sort.Strings(unmanagedNames) // no-op when hide (default)
 
 	// Lead de-aggregation (Agent Teams slice B): when teamWindows is on,
@@ -754,7 +754,7 @@ func orderedRowNames(st *state) []string {
 			names = append(names, sess.Name)
 		}
 	}
-	sortRowNames(st, names)
+	sort.Strings(names)
 	sort.Strings(unmanagedNames)
 
 	return append(names, unmanagedNames...)
@@ -790,9 +790,10 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 		hasHome bool // initiative (home row) vs homeless container
 		members []string
 	}
+	homes := proto.HomeSet(names)
 	groups := make(map[string]*groupInfo)
 	for _, n := range names {
-		key := proto.GroupKey(n)
+		key := proto.EffectiveGroupKey(n, homes)
 		if key == "" {
 			continue
 		}
@@ -801,7 +802,7 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 			g = &groupInfo{}
 			groups[key] = g
 		}
-		if proto.IsInitiativeHome(n) {
+		if homes[n] {
 			g.hasHome = true
 		} else {
 			g.members = append(g.members, n)
@@ -858,20 +859,6 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 		}
 	}
 	return hidden
-}
-
-// sortRowNames applies the row ordering for the managed block: plain
-// lexicographic by default (byte-identical legacy order), group-aware via
-// proto.GroupSort when the grouped sidebar is on (grouped names first, by
-// group key then name; ungrouped names one block at the bottom). The ONE
-// ordering rule shared by buildSnapshot and orderedRowNames — cursor row
-// math and the published snapshot must never order rows differently.
-func sortRowNames(st *state, names []string) {
-	if st.groupSidebar {
-		proto.GroupSort(names)
-		return
-	}
-	sort.Strings(names)
 }
 
 // cursorFlatRows builds the FLATTENED navigation row list for the cursor —

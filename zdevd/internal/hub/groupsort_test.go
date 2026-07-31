@@ -8,138 +8,67 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
-// TestGroupSidebarOrderingParity locks the Invariant-9 contract for the
-// grouped sidebar: buildSnapshot's published Projects order and
-// orderedRowNames (the cursor's row source via cursorFlatRows) must be
-// IDENTICAL under both knob states — the exact drift class sortRowNames
-// exists to prevent. Fleet shape mirrors the live layout: initiative homes
-// + members, the projects container, bare singles, plus a session-only
-// (unlisted) project that unions in.
-func TestGroupSidebarOrderingParity(t *testing.T) {
-	for _, grouped := range []bool{false, true} {
-		s := buildTestState("scratch-session", []string{"%1"}, []string{"shell"})
-		s.groupSidebar = grouped
-		s.projectListNames = []string{
-			"zdev",
-			"projects/pay-app",
-			"initiatives/ai-at-pay",
-			"initiatives/ai-at-pay/pay-app",
-			"dotfiles",
-			"initiatives/marketplace",
-			"projects/onboarding",
-		}
+// TestOrderingIsAlpha pins the flat-root contract: row order is plain
+// lexicographic on both ordering sites (the tree mirrors the disk; homes
+// naturally precede their members), and buildSnapshot and orderedRowNames
+// agree — the Invariant-9 drift class.
+func TestOrderingIsAlpha(t *testing.T) {
+	s := buildTestState("scratch-session", []string{"%1"}, []string{"shell"})
+	s.projectListNames = []string{
+		"zdev", "projects/pay-app", "marketplace",
+		"marketplace/pay-app", "dotfiles", "projects/onboarding",
+	}
 
-		fromOrdered := orderedRowNames(s)
+	fromOrdered := orderedRowNames(s)
+	want := []string{
+		"dotfiles", "marketplace", "marketplace/pay-app",
+		"projects/onboarding", "projects/pay-app",
+		"scratch-session", "zdev",
+	}
+	if !reflect.DeepEqual(fromOrdered, want) {
+		t.Errorf("order:\n got %v\nwant %v", fromOrdered, want)
+	}
 
-		now := time.Now().Unix()
-		snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
-		fromSnapshot := make([]string, len(snap.Projects))
-		for i := range snap.Projects {
-			fromSnapshot[i] = snap.Projects[i].Name
-		}
-
-		if !reflect.DeepEqual(fromOrdered, fromSnapshot) {
-			t.Errorf("grouped=%v: orderedRowNames and buildSnapshot disagree\n ordered:  %v\n snapshot: %v",
-				grouped, fromOrdered, fromSnapshot)
-		}
-
-		if grouped {
-			// Grouped block first (group-alpha, home before members),
-			// singles at the bottom, session-only union last of all
-			// (bare name → ungrouped block).
-			want := []string{
-				"initiatives/ai-at-pay",
-				"initiatives/ai-at-pay/pay-app",
-				"initiatives/marketplace",
-				"projects/onboarding",
-				"projects/pay-app",
-				"dotfiles",
-				"scratch-session",
-				"zdev",
-			}
-			if !reflect.DeepEqual(fromOrdered, want) {
-				t.Errorf("grouped order:\n got %v\nwant %v", fromOrdered, want)
-			}
-		} else {
-			want := []string{
-				"dotfiles",
-				"initiatives/ai-at-pay",
-				"initiatives/ai-at-pay/pay-app",
-				"initiatives/marketplace",
-				"projects/onboarding",
-				"projects/pay-app",
-				"scratch-session",
-				"zdev",
-			}
-			if !reflect.DeepEqual(fromOrdered, want) {
-				t.Errorf("legacy order must stay plain lexicographic:\n got %v\nwant %v", fromOrdered, want)
-			}
-		}
-
-		// And the cursor's flattened rows follow the same order.
-		rows := cursorFlatRows(s)
-		for i, r := range rows {
-			if r.Project.Name != fromOrdered[i] {
-				t.Errorf("grouped=%v: cursorFlatRows[%d]=%q, want %q", grouped, i, r.Project.Name, fromOrdered[i])
-			}
-		}
+	now := time.Now().Unix()
+	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
+	fromSnapshot := make([]string, len(snap.Projects))
+	for i := range snap.Projects {
+		fromSnapshot[i] = snap.Projects[i].Name
+	}
+	if !reflect.DeepEqual(fromOrdered, fromSnapshot) {
+		t.Errorf("orderedRowNames and buildSnapshot disagree\n ordered:  %v\n snapshot: %v",
+			fromOrdered, fromSnapshot)
 	}
 }
 
-// Compile-time-ish guard that the shared key really is shared: the hub
-// orders by the same proto.GroupKey the renderer draws headers from.
-func TestGroupSortUsesSharedKey(t *testing.T) {
-	if proto.GroupKey("initiatives/x/y") != "x" || proto.GroupKey("projects/y") != "projects" {
-		t.Fatal("proto.GroupKey contract changed under the hub's feet")
-	}
-}
-
-// TestCollapsedNames pins the collapse rule: attendance holds a whole group
-// open; otherwise visibility is PER ROW — quiet members fold, and rows that
-// are working, waiting, finished, or dead stay individually visible (death
-// via DeadSinceTS, the real representation). Homes never hide.
+// TestCollapsedNames pins the collapse rule under the flat model:
+// attendance holds a whole group open; otherwise per-row — quiet members
+// fold, working/waiting/finished/dead stay visible (death via DeadSinceTS).
+// Homes (bare group rows) never fold; unmarked groups (no home row) fold
+// their quiet members behind the synthetic header.
 func TestCollapsedNames(t *testing.T) {
 	names := []string{
-		"initiatives/alpha",
-		"initiatives/alpha/repo-a",
-		"initiatives/alpha/repo-b",
-		"initiatives/beta",
-		"initiatives/beta/repo-c",
-		"initiatives/gamma",
-		"initiatives/gamma/repo-d",
-		"initiatives/delta",
-		"initiatives/delta/repo-e",
-		"initiatives/epsilon",
-		"initiatives/epsilon/repo-w",
-		"initiatives/epsilon/repo-q",
+		"alpha", "alpha/repo-a", "alpha/repo-b",
+		"beta", "beta/repo-c",
+		"gamma", "gamma/repo-d",
+		"delta", "delta/repo-e",
+		"epsilon", "epsilon/repo-w", "epsilon/repo-q",
 		"projects/pay-app",
 		"zdev",
 	}
 	s := newState()
 	s.collapseGroups = true
-	// beta is attended: a client sits in its member session.
-	s.clientSessions = map[string]string{"c1": "initiatives-beta-repo-c"}
-	// gamma demands attention: its member is waiting.
-	s.projectData["initiatives-gamma-repo-d"] = projectData{Attention: proto.AttWaiting}
-	// delta's member is DEAD — represented as it is in real flow: DeadSinceTS
-	// set, Attention NOT AttDead (death is a display-only override; writing
-	// Attention: AttDead here would test an unreachable arm — the exact trap
-	// the 2026-07-30 invariants review caught).
-	s.projectData["initiatives-delta-repo-e"] = projectData{DeadSinceTS: 12345}
-
-	// epsilon has a working member and a quiet sibling: per-row, the
-	// worker stays visible and only the sibling folds.
-	s.projectData["initiatives-epsilon-repo-w"] = projectData{Attention: proto.AttWorking}
+	s.clientSessions = map[string]string{"c1": "beta-repo-c"}
+	s.projectData["gamma-repo-d"] = projectData{Attention: proto.AttWaiting}
+	s.projectData["delta-repo-e"] = projectData{DeadSinceTS: 12345}
+	s.projectData["epsilon-repo-w"] = projectData{Attention: proto.AttWorking}
 
 	hidden := collapsedNames(s, names)
 	want := map[string]bool{
-		"initiatives/alpha/repo-a": true,
-		"initiatives/alpha/repo-b": true,
-		// homeless container: unattended, quiet → every row folds
+		"alpha/repo-a":     true,
+		"alpha/repo-b":     true,
+		"epsilon/repo-q":   true,
 		"projects/pay-app": true,
-		// per-row: gamma's waiting and delta's dead members stay visible,
-		// epsilon's quiet sibling folds while its worker stays.
-		"initiatives/epsilon/repo-q": true,
 	}
 	for n := range want {
 		if _, ok := hidden[n]; !ok {
@@ -148,69 +77,21 @@ func TestCollapsedNames(t *testing.T) {
 	}
 	for n := range hidden {
 		if !want[n] {
-			t.Errorf("%s hidden but should not be (attended/attention/home/single)", n)
+			t.Errorf("%s hidden but should not be", n)
 		}
 	}
 
-	// Knob off: nothing hides.
 	s.collapseGroups = false
 	if h := collapsedNames(s, names); h != nil {
 		t.Errorf("collapseGroups=false must hide nothing, got %v", h)
 	}
 }
 
-// TestCollapseParity extends the Invariant-9 contract to collapse: the
-// published snapshot's Collapsed flags and cursorFlatRows' visible rows must
-// agree — a row hidden on the wire must be absent from navigation.
-func TestCollapseParity(t *testing.T) {
-	s := buildTestState("scratch-session", []string{"%1"}, []string{"shell"})
-	s.groupSidebar = true
-	s.collapseGroups = true
-	s.projectListNames = []string{
-		"initiatives/alpha",
-		"initiatives/alpha/repo-a",
-		"projects/pay-app",
-		"zdev",
-	}
-
-	now := time.Now().Unix()
-	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
-	visibleWire := map[string]bool{}
-	for _, p := range snap.Projects {
-		if !p.Collapsed {
-			visibleWire[p.Name] = true
-		}
-	}
-	if visibleWire["initiatives/alpha/repo-a"] {
-		t.Fatalf("unattended initiative member must be Collapsed on the wire")
-	}
-	if visibleWire["projects/pay-app"] {
-		t.Fatalf("unattended container member must be Collapsed on the wire")
-	}
-
-	rows := cursorFlatRows(s)
-	for _, r := range rows {
-		if !visibleWire[r.Project.Name] {
-			t.Errorf("cursor row %q is not wire-visible — cursor/wire drift", r.Project.Name)
-		}
-	}
-	rowNames := map[string]bool{}
-	for _, r := range rows {
-		rowNames[r.Project.Name] = true
-	}
-	for n := range visibleWire {
-		if !rowNames[n] {
-			t.Errorf("wire-visible %q missing from cursor rows", n)
-		}
-	}
-}
-
-// TestCollapseSettings pins the [collapse] sidebar.toml gates: per-kind
-// booleans and pinned-open keys can only KEEP groups open — never fold an
-// attended or attention-holding group.
+// TestCollapseSettings pins the [collapse] gates under the flat model:
+// initiatives = marked groups (home row present), containers = unmarked.
 func TestCollapseSettings(t *testing.T) {
 	names := []string{
-		"initiatives/alpha", "initiatives/alpha/repo-a",
+		"alpha", "alpha/repo-a",
 		"projects/pay-app",
 	}
 	base := func() *state {
@@ -222,30 +103,66 @@ func TestCollapseSettings(t *testing.T) {
 	s := base()
 	s.collapseInitiatives = false
 	h := collapsedNames(s, names)
-	if _, ok := h["initiatives/alpha/repo-a"]; ok {
-		t.Errorf("collapse.initiatives=false must keep initiative members visible")
+	if _, ok := h["alpha/repo-a"]; ok {
+		t.Errorf("collapse.initiatives=false must keep marked-group members visible")
 	}
 	if _, ok := h["projects/pay-app"]; !ok {
-		t.Errorf("containers still fold when only initiatives are gated off")
+		t.Errorf("unmarked groups still fold")
 	}
 
 	s = base()
 	s.collapseContainers = false
 	h = collapsedNames(s, names)
 	if _, ok := h["projects/pay-app"]; ok {
-		t.Errorf("collapse.containers=false must keep container members visible")
+		t.Errorf("collapse.containers=false must keep unmarked-group members visible")
 	}
-	if _, ok := h["initiatives/alpha/repo-a"]; !ok {
-		t.Errorf("initiatives still fold when only containers are gated off")
+	if _, ok := h["alpha/repo-a"]; !ok {
+		t.Errorf("marked groups still fold")
 	}
 
 	s = base()
 	s.collapseExpand = map[string]struct{}{"alpha": {}}
 	h = collapsedNames(s, names)
-	if _, ok := h["initiatives/alpha/repo-a"]; ok {
+	if _, ok := h["alpha/repo-a"]; ok {
 		t.Errorf("expand-pinned group must never fold")
 	}
-	if _, ok := h["projects/pay-app"]; !ok {
-		t.Errorf("unpinned groups still fold")
+}
+
+// TestCollapseParity: wire Collapsed flags and cursorFlatRows visible rows
+// agree.
+func TestCollapseParity(t *testing.T) {
+	s := buildTestState("scratch-session", []string{"%1"}, []string{"shell"})
+	s.collapseGroups = true
+	s.projectListNames = []string{
+		"alpha", "alpha/repo-a", "projects/pay-app", "zdev",
+	}
+
+	now := time.Now().Unix()
+	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
+	visibleWire := map[string]bool{}
+	for _, p := range snap.Projects {
+		if !p.Collapsed {
+			visibleWire[p.Name] = true
+		}
+	}
+	if visibleWire["alpha/repo-a"] {
+		t.Fatalf("unattended marked-group member must be Collapsed on the wire")
+	}
+	if visibleWire["projects/pay-app"] {
+		t.Fatalf("unattended unmarked-group member must be Collapsed on the wire")
+	}
+
+	rows := cursorFlatRows(s)
+	rowNames := map[string]bool{}
+	for _, r := range rows {
+		rowNames[r.Project.Name] = true
+		if !visibleWire[r.Project.Name] {
+			t.Errorf("cursor row %q is not wire-visible", r.Project.Name)
+		}
+	}
+	for n := range visibleWire {
+		if !rowNames[n] {
+			t.Errorf("wire-visible %q missing from cursor rows", n)
+		}
 	}
 }

@@ -209,20 +209,14 @@ func run() error {
 	// WithStatePath/WithNotifier fluent chain). Fields are read-only after
 	// Run starts; nil/empty values stay disabled.
 	hubCfg := hub.Config{
-		Debounce:      debounce,
-		StatusDwell:   statusDwell,
-		WaitingDwell:  waitingDwell,
-		SocketPath:    *socketFlag,
-		EventLog:      evlog,
-		StatePath:     *stateFlag,
-		Agents:        cfg.AgentRegistry(),
-		ShowUnmanaged: cfg.ShowUnmanaged,
-		// Grouped sidebar: ZDEV_SIDEBAR_GROUP=prefix orders rows group-aware
-		// (proto.GroupSort) so the renderer's headers sit over contiguous
-		// runs. Same knob the renderer reads for header drawing; both are
-		// gap-filled from ~/.config/zdev/env, so they agree in practice.
-		GroupSidebar: os.Getenv("ZDEV_SIDEBAR_GROUP") == "prefix" ||
-			os.Getenv("ZDEV_SIDEBAR_GROUP") == "collapse",
+		Debounce:            debounce,
+		StatusDwell:         statusDwell,
+		WaitingDwell:        waitingDwell,
+		SocketPath:          *socketFlag,
+		EventLog:            evlog,
+		StatePath:           *stateFlag,
+		Agents:              cfg.AgentRegistry(),
+		ShowUnmanaged:       cfg.ShowUnmanaged,
 		CollapseGroups:      os.Getenv("ZDEV_SIDEBAR_GROUP") == "collapse",
 		CollapseInitiatives: cfg.Collapse.CollapseInitiatives(),
 		CollapseContainers:  cfg.Collapse.CollapseContainers(),

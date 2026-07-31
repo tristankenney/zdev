@@ -101,13 +101,6 @@ type state struct {
 	// Run starts; read-only throughout Run.
 	showUnmanaged bool
 
-	// groupSidebar mirrors hub.Config.GroupSidebar (set from
-	// ZDEV_SIDEBAR_GROUP=prefix in cmd/zdevd — the hub NEVER reads env
-	// itself). When true, orderedRowNames and buildSnapshot order rows via
-	// proto.GroupSort instead of sort.Strings. Set once by NewHub before
-	// Run starts; read-only throughout Run.
-	groupSidebar bool
-
 	// collapseGroups mirrors hub.Config.CollapseGroups
 	// (ZDEV_SIDEBAR_GROUP=collapse). When true, buildSnapshot and
 	// cursorFlatRows hide member rows of unattended, attention-free

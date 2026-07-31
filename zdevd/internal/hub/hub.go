@@ -193,17 +193,6 @@ type Config struct {
 	// Default false preserves existing sidebar behaviour.
 	ShowUnmanaged bool
 
-	// GroupSidebar mirrors ZDEV_SIDEBAR_GROUP=prefix. When true, project
-	// row ORDER is group-aware (proto.GroupSort: grouped names first by
-	// group key, ungrouped names as one block at the bottom) so the
-	// renderer's group headers sit over contiguous runs and singles stop
-	// interleaving between groups. Order is the daemon's authority —
-	// cursorFlatRows and buildSnapshot both derive from the same ordering
-	// function, so cursor row math cannot drift from the published rows.
-	// Default false preserves the plain lexicographic order byte-for-byte.
-	// The hub never reads the env var — cmd/zdevd resolves it.
-	GroupSidebar bool
-
 	// CollapseGroups mirrors ZDEV_SIDEBAR_GROUP=collapse (implies
 	// GroupSidebar). Member rows of groups that no client attends and that
 	// demand no attention are hidden from the wire and from navigation.
@@ -256,7 +245,6 @@ func NewHub(cfg Config) *Hub {
 	st.statusDwell = cfg.StatusDwell
 	st.waitingDwell = cfg.WaitingDwell
 	st.showUnmanaged = cfg.ShowUnmanaged
-	st.groupSidebar = cfg.GroupSidebar
 	st.collapseGroups = cfg.CollapseGroups
 	st.collapseInitiatives = cfg.CollapseInitiatives
 	st.collapseContainers = cfg.CollapseContainers
