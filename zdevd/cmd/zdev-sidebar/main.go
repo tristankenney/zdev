@@ -32,6 +32,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -128,6 +130,132 @@ func stampLastRender(ctx context.Context, paneID string, ts int64) {
 		defer func() { <-stampSem }()
 		run(ctx, paneID, ts)
 	}()
+}
+
+// MouseRows gates click-to-switch (ZDEV_SIDEBAR_MOUSE=1). Off by default:
+// the pane option is never published, and the tmux binding — which gates on
+// that option being non-empty — falls through to tmux's stock click
+// behaviour. So off is byte-for-byte today's sidebar.
+var MouseRows bool
+
+// rowMapCh is a LATEST-WINS slot feeding the single publisher goroutine.
+// Depth 1 with replace-on-full: the render loop never blocks, and the value
+// that eventually reaches tmux is always the newest one.
+//
+// This deliberately does NOT use stampSem's drop-and-retry pattern. The two
+// values have opposite staleness semantics: a dropped @last-render-ts is
+// harmless (the supervisor reads it with ±1s tolerance), but a dropped
+// @zdev-rows leaves a map describing a frame the pane is no longer showing —
+// and clicks then land on the WRONG project. It also cannot self-heal,
+// because a republish only happens when a frame is painted and an idle
+// sidebar paints nothing. Sharing the semaphore made this near-certain:
+// publishRowMap is called immediately after stampLastRender takes it, so
+// every stamping frame dropped the map (found live, 2026-08-01 — the pane
+// had folded a group while the map still listed its members).
+var rowMapCh = make(chan string, 1)
+
+// rowMapOnce starts the publisher lazily so a renderer with the knob off
+// (or outside tmux) spawns no goroutine at all.
+var rowMapOnce sync.Once
+
+// lastRowMap dedups at the producer: the 15fps animation path rebuilds an
+// identical map on nearly every tick; only a LAYOUT change (a row
+// appearing, folding, or gaining a metadata row) actually moves it.
+var lastRowMap atomic.Value // string
+
+// rowMapValue serializes the click map for the @zdev-rows pane option:
+//
+//	"<y>:<name>[|<window-id>] <y>:<name> …"
+//
+// Space-separated because project names and tmux window ids never contain
+// spaces, which keeps the bash 3.2 reader a plain `for` over $(...). The
+// window id is fenced with '|' rather than '@' because a tmux window id IS
+// "@<n>" — splitting on '@' would cut "alpha@@7" in the wrong place.
+func rowMapValue(rows []render.RowRef) string {
+	var b strings.Builder
+	for i, r := range rows {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%d:%s", r.Y, r.Name)
+		if r.WindowID != "" {
+			b.WriteByte('|')
+			b.WriteString(r.WindowID)
+		}
+	}
+	return b.String()
+}
+
+// publishRowMapFn is a test seam, mirroring stampLastRenderFn.
+var publishRowMapFn = publishRowMap
+
+// publishRowMap hands the screen-line → switch-target map to the publisher
+// goroutine, which writes it onto the renderer's OWN pane as @zdev-rows.
+// A MouseDown binding then resolves a click with one `tmux show -pv` and no
+// round trip to the daemon.
+//
+// The map lives on the PANE because that is what click coordinates are
+// relative to: two sidebars of different widths (or one showing a folded
+// group the other has open) each publish their own geometry, and neither
+// can send a click to the other's rows.
+//
+// Never blocks the render loop; no-op without a pane or with the knob off.
+func publishRowMap(ctx context.Context, paneID string, rows []render.RowRef) {
+	if paneID == "" || !MouseRows {
+		return
+	}
+	val := rowMapValue(rows)
+	if prev, ok := lastRowMap.Load().(string); ok && prev == val {
+		return
+	}
+	lastRowMap.Store(val)
+	rowMapOnce.Do(func() { go rowMapPublisher(ctx, paneID) })
+	// Latest-wins: displace any value still queued, then enqueue this one.
+	select {
+	case <-rowMapCh:
+	default:
+	}
+	select {
+	case rowMapCh <- val:
+	default:
+	}
+}
+
+// rowMapPublisher serializes @zdev-rows writes for this pane. One write at a
+// time (a slow tmux throttles naturally via the channel), 500ms bound each.
+func rowMapPublisher(ctx context.Context, paneID string) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case val := <-rowMapCh:
+			sctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			err := exec.CommandContext(sctx, "tmux",
+				"set-option", "-p", "-t", paneID, "@zdev-rows", val,
+			).Run()
+			cancel()
+			if err != nil {
+				slog.Warn("zdev-sidebar: publish @zdev-rows failed", "pane", paneID, "err", err)
+				// Clear the producer-side dedup so the next differing frame
+				// re-sends rather than deduping against a map that never
+				// reached tmux.
+				lastRowMap.Store("")
+			}
+		}
+	}
+}
+
+// clearRowMap blanks @zdev-rows so a pane that once had click-to-switch on
+// stops resolving clicks when the knob is turned off. Synchronous and
+// best-effort — it runs once at startup, not on the render path.
+func clearRowMap(ctx context.Context, paneID string) {
+	sctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	if err := exec.CommandContext(sctx, "tmux",
+		"set-option", "-p", "-t", paneID, "@zdev-rows", "",
+	).Run(); err != nil {
+		slog.Debug("zdev-sidebar: clear @zdev-rows failed", "pane", paneID, "err", err)
+	}
 }
 
 // selfTagIsSidebarFn is the production implementation of the
@@ -284,6 +412,15 @@ func run() error {
 	// switches the sidebar from per-member badge bullets to indented member
 	// rows under the lead. Default off → bullets, no byte change.
 	render.TeamRows = os.Getenv("ZDEV_TEAM_WINDOWS") == "1"
+
+	// Click-to-switch opt-in (ZDEV_SIDEBAR_MOUSE=1). When off, clear any
+	// map a previous enabled run left on this pane — respawn-pane reuses
+	// the pane, so a stale option would keep clicks live after the knob
+	// was turned off.
+	MouseRows = os.Getenv("ZDEV_SIDEBAR_MOUSE") == "1"
+	if !MouseRows && tmuxPane != "" {
+		clearRowMap(context.Background(), tmuxPane)
+	}
 	snap, conn, err := initialSubscribe(ctx, func(ctx context.Context) (*proto.Snapshot, net.Conn, error) {
 		return socket.Subscribe(ctx, socketPath, tmuxPane, tmuxSession)
 	}, width)
@@ -380,12 +517,16 @@ func run() error {
 	paint := func(s *proto.Snapshot) error {
 		now := time.Now().Unix()
 		lastSig = animator.FrameSigFor(s, now)
-		lastFrame = render.Render(s, width, animator, time.Now().Unix)
+		frame, rows := render.RenderWithRows(s, width, animator, time.Now().Unix)
+		lastFrame = frame
 		if _, werr := fw.Write(lastFrame); werr != nil {
 			return werr
 		}
 		if fw.WroteLast() {
 			stampLastRenderFn(ctx, tmuxPane, now)
+			// Publish alongside the paint that produced it: the map must
+			// never describe a frame the pane isn't showing.
+			publishRowMapFn(ctx, tmuxPane, rows)
 		}
 		return nil
 	}
