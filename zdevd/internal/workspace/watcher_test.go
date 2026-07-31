@@ -118,14 +118,13 @@ func TestWorkspaceWatcher_MissingDirSurvives(t *testing.T) {
 	}
 }
 
-// TestWorkspaceWatcher_InitiativeCloneCreate pins the depth-2 coverage the
-// discovery convention depends on: a directory appearing INSIDE
-// initiatives/<name>/ (a git clone — the entire add-repo gesture) must
-// trigger a refresh. The pre-fix watcher only watched the root, so clones
-// were invisible until a daemon restart.
-func TestWorkspaceWatcher_InitiativeCloneCreate(t *testing.T) {
+// TestWorkspaceWatcher_GroupMemberCreate pins the group coverage the flat
+// discovery convention depends on: a directory appearing INSIDE a root
+// group dir (a git clone — the entire add-repo gesture) must trigger a
+// refresh. The root watch is shallow, so groups are armed explicitly.
+func TestWorkspaceWatcher_GroupMemberCreate(t *testing.T) {
 	dir := t.TempDir()
-	initiative := filepath.Join(dir, "initiatives", "marketplace")
+	initiative := filepath.Join(dir, "marketplace")
 	if err := os.MkdirAll(initiative, 0o755); err != nil {
 		t.Fatal(err)
 	}

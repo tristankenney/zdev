@@ -2,18 +2,13 @@
 // triggers `zdev --list-projects` re-shells via the projects.Lister.
 //
 // D3-06: workspace is the source of truth for projects — literally, under
-// ZDEV_PROJECTS_DISCOVER=1, where the layout IS the registry. The root
-// watch is non-recursive (kqueue is shallow), so the containers the
-// discovery convention makes meaningful are watched explicitly:
-//
-//	<root>                       root repos appear/vanish
-//	<root>/projects              canonical pool membership
-//	<root>/initiatives           initiatives appear/vanish
-//	<root>/initiatives/<name>    members (clones) appear/vanish — armed
-//	                             dynamically as initiatives appear, the
-//	                             teams-watcher pattern
-//
-// Without the depth-2 watches, `git clone` into an initiative — the entire
+// ZDEV_PROJECTS_DISCOVER=1, where the flat layout IS the registry. The
+// root watch is non-recursive (kqueue is shallow), so GROUP directories
+// (root dirs WITHOUT .git — marked initiatives and unmarked drawers alike)
+// are armed explicitly and dynamically as they appear; root REPO dirs are
+// deliberately NOT armed — their internal churn (builds, checkouts) would
+// storm the debounce for membership changes that cannot happen inside a
+// repo. Without the group watches, `git clone` into a group — the entire
 // add-repo gesture under discovery — was invisible until a daemon restart.
 package workspace
 
@@ -29,11 +24,6 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/fswatch"
 	"github.com/tristankenney/zdev/zdevd/internal/projects"
 )
-
-// initiativesDirName mirrors proto.InitiativesContainer (not imported — this
-// package predates proto here and one duplicated literal beats a dependency;
-// the value is load-bearing in proto, conventional in this watcher).
-const initiativesDirName = "initiatives"
 
 // Watcher watches the workspace directory tree (root + containers) for
 // directory create/remove events and triggers a project-list refresh via the
@@ -55,20 +45,22 @@ func NewWatcher(dir string, lister *projects.Lister) *Watcher {
 	return &Watcher{dir: dir, lister: lister, debounce: 500 * time.Millisecond}
 }
 
-// addInitiativeWatches arms a watch on every existing initiatives/<name>
-// directory so member clones appearing inside them are seen. Called from
-// OnStart for pre-existing initiatives; OnEvent arms brand-new ones as they
-// appear.
-func (w *Watcher) addInitiativeWatches(h *fswatch.Handle) {
-	entries, err := os.ReadDir(filepath.Join(w.dir, initiativesDirName))
+// addGroupWatches arms a watch on every existing root GROUP directory —
+// a non-dot root dir without .git — so members appearing inside are seen.
+// Called from OnStart; OnEvent arms brand-new groups as they appear.
+func (w *Watcher) addGroupWatches(h *fswatch.Handle) {
+	entries, err := os.ReadDir(w.dir)
 	if err != nil {
-		return // no initiatives container — nothing to arm
+		return
 	}
 	for _, e := range entries {
 		if !e.IsDir() || e.Name()[0] == '.' {
 			continue
 		}
-		h.Add(filepath.Join(w.dir, initiativesDirName, e.Name()))
+		if _, err := os.Stat(filepath.Join(w.dir, e.Name(), ".git")); err == nil {
+			continue // a repo, not a group — never armed
+		}
+		h.Add(filepath.Join(w.dir, e.Name()))
 	}
 }
 
@@ -90,19 +82,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 		Ops:      fsnotify.Create | fsnotify.Remove | fsnotify.Rename,
 		Debounce: w.debounce,
 		OnStart: func(h *fswatch.Handle) {
-			h.Add(filepath.Join(w.dir, "projects"))
-			h.Add(filepath.Join(w.dir, initiativesDirName))
-			w.addInitiativeWatches(h)
+			w.addGroupWatches(h)
 		},
 		OnEvent: func(h *fswatch.Handle, ev fsnotify.Event) {
-			// A Create directly under the root or the initiatives container
-			// may be a brand-new container or initiative — arm its watch
-			// immediately so the first clone into it is already covered.
-			// Add on a non-directory or a since-vanished path soft-fails in
-			// the engine, so no stat gating is needed here.
-			if ev.Op&fsnotify.Create != 0 {
-				switch filepath.Dir(ev.Name) {
-				case w.dir, filepath.Join(w.dir, initiativesDirName):
+			// A Create directly under the root may be a brand-new group —
+			// arm it immediately so the first clone into it is covered.
+			// Repos self-identify later (a .git appears inside), but an
+			// extra watch on a repo dir only costs noise-triggered
+			// refreshes until the next restart re-evaluates; Add on a
+			// vanished path soft-fails in the engine.
+			if ev.Op&fsnotify.Create != 0 && filepath.Dir(ev.Name) == w.dir {
+				if _, err := os.Stat(filepath.Join(ev.Name, ".git")); err != nil {
 					h.Add(ev.Name)
 				}
 			}
