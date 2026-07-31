@@ -15,8 +15,14 @@ metadata:
 
 # Initiative
 
-An **initiative** is the unit of value delivered. It spans repos, lives exactly as
-long as delivery requires, and its scope drifts as work reveals itself. Layout:
+One structural concept exists: the **group** — a directory of members that
+folds behind a sidebar header. Every group has initiative functionality
+available; an **initiative** is a group that utilises it. (`projects/` is a
+group that doesn't — a drawer of standing checkouts, no metadata, no
+identity.) An initiative is the unit of value delivered: it spans repos,
+lives exactly as long as delivery requires, and its scope drifts as work
+reveals itself. The `initiatives/` path is plumbing, not ontology — it is
+the journal repo's working tree. Layout:
 
 ```
 ~/workspace/

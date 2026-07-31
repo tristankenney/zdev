@@ -131,9 +131,15 @@ favorites (append <code>&nbsp;*</code> — started by <code>zdev up</code>, neve
 reaped) and off-convention paths.</p>
 
 <h2 id="initiatives">Initiatives</h2>
-<p>An <strong>initiative</strong> is the unit of value delivered. It spans
-repos, lives exactly as long as delivery requires, and its scope drifts as work
-reveals itself. Mechanically:</p>
+<p><strong>The ontology, settled:</strong> there is ONE structural concept —
+the <em>group</em> (a directory of members that folds behind a header). Every
+group has initiative functionality available; utilisation is optional.
+<code>projects/</code> is a group that doesn't utilise it — no INITIATIVE.md,
+no identity, dim. An <strong>initiative</strong> is a group that does: the
+unit of value delivered, spanning repos, living exactly as long as delivery
+requires, its scope drifting as work reveals itself. The
+<code>initiatives/</code> path is plumbing, not ontology — it is the journal
+repo's working tree, which is why utilised groups live there. Mechanically:</p>
 <pre><code>initiatives/&lt;name&gt;/
   INITIATIVE.md     identity: intent, tracker links, dated decisions, outcome
   notes/            the knowledge base (never a sidebar row)
