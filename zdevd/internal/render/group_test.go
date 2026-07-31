@@ -126,7 +126,10 @@ func TestGroupedFrame(t *testing.T) {
 	iAI := strings.Index(out, "╭ ai-at-pay")
 	iMkt := strings.Index(out, "╭ marketplace")
 	iProj := strings.Index(out, "╭ projects")
-	iSep := strings.Index(out, "\n  ──────\n")
+	iSep := strings.Index(out[iProj:], "\n\n")
+	if iSep >= 0 {
+		iSep += iProj
+	}
 	iDot := strings.Index(out, "· dotfiles")
 	iZdev := strings.Index(out, "· zdev")
 	if !(iAI < iMkt && iMkt < iProj && iProj < iSep && iSep < iDot && iDot < iZdev) {

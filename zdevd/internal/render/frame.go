@@ -489,11 +489,16 @@ func displayName(name string) string {
 // (name == ""). Groups WITH a home row get renderHomeRow instead — the
 // home project row IS the header there.
 func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int) {
-	buf.WriteString("  ")
 	if name == "" {
-		buf.WriteString(Dim)
-		buf.WriteString(strings.Repeat("─", 6))
-	} else {
+		// The transition into the ungrouped block is a BLANK line, not a
+		// rule — after the dash-soup cull, whitespace separates better
+		// than another hyphen run ("kinda mid", live review 2026-07-30).
+		buf.WriteString(ClearLineEnd)
+		buf.WriteByte('\n')
+		return
+	}
+	buf.WriteString("  ")
+	{
 		// Same ╭ corner as initiative headers (uniform group language;
 		// dim = container, hued = initiative), no trailing dash fill. A
 		// collapsed homeless group (projects/) shows its rollup here —
