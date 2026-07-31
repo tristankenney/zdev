@@ -223,7 +223,10 @@ func run() error {
 		// gap-filled from ~/.config/zdev/env, so they agree in practice.
 		GroupSidebar: os.Getenv("ZDEV_SIDEBAR_GROUP") == "prefix" ||
 			os.Getenv("ZDEV_SIDEBAR_GROUP") == "collapse",
-		CollapseGroups: os.Getenv("ZDEV_SIDEBAR_GROUP") == "collapse",
+		CollapseGroups:      os.Getenv("ZDEV_SIDEBAR_GROUP") == "collapse",
+		CollapseInitiatives: cfg.Collapse.CollapseInitiatives(),
+		CollapseContainers:  cfg.Collapse.CollapseContainers(),
+		CollapseExpand:      cfg.Collapse.Expand,
 		// Agent Teams slice B: ZDEV_TEAM_WINDOWS=1 de-aggregates teammate
 		// panes out of the lead's session row (the hub never reads env itself).
 		TeamWindows: os.Getenv("ZDEV_TEAM_WINDOWS") == "1",

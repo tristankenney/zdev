@@ -205,11 +205,23 @@ type Config struct {
 	GroupSidebar bool
 
 	// CollapseGroups mirrors ZDEV_SIDEBAR_GROUP=collapse (implies
-	// GroupSidebar). Member rows of initiative groups that no client
-	// attends and that demand no attention are hidden from the wire and
-	// from navigation; the home row carries the rollup. The hub never
-	// reads the env var — cmd/zdevd resolves it.
+	// GroupSidebar). Member rows of groups that no client attends and that
+	// demand no attention are hidden from the wire and from navigation.
+	// The hub never reads the env var — cmd/zdevd resolves it.
 	CollapseGroups bool
+
+	// CollapseInitiatives / CollapseContainers narrow WHICH group kinds
+	// fold when CollapseGroups is on (sidebar.toml [collapse] section).
+	// NOTE: the true-by-default resolution lives in
+	// config.CollapseConfig's pointer-bool accessors, applied by
+	// cmd/zdevd — a zero-value hub.Config folds NOTHING even with
+	// CollapseGroups set (invariants review, observation B). CollapseExpand
+	// pins named group keys open — they never fold. Per-row activity and
+	// attention pierce regardless: no configuration can hide a working,
+	// waiting, or dead agent.
+	CollapseInitiatives bool
+	CollapseContainers  bool
+	CollapseExpand      []string
 
 	// TeamWindows mirrors ZDEV_TEAM_WINDOWS=1 (Agent Teams slice B). When
 	// true, buildSnapshot excludes Agent Teams member panes from their
@@ -246,6 +258,12 @@ func NewHub(cfg Config) *Hub {
 	st.showUnmanaged = cfg.ShowUnmanaged
 	st.groupSidebar = cfg.GroupSidebar
 	st.collapseGroups = cfg.CollapseGroups
+	st.collapseInitiatives = cfg.CollapseInitiatives
+	st.collapseContainers = cfg.CollapseContainers
+	st.collapseExpand = make(map[string]struct{}, len(cfg.CollapseExpand))
+	for _, k := range cfg.CollapseExpand {
+		st.collapseExpand[k] = struct{}{}
+	}
 	st.teamWindows = cfg.TeamWindows
 	return &Hub{
 		debounce:       cfg.Debounce,

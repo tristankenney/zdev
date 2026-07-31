@@ -52,6 +52,21 @@ type Config struct {
 	ClaudeGlyph       string   `toml:"claude_glyph"`
 	PiGlyph           string   `toml:"pi_glyph"` // 260512-cpa: was codex_glyph
 
+	// Collapse configures the grouped sidebar's fold behavior
+	// (ZDEV_SIDEBAR_GROUP=collapse — the env knob remains the master
+	// switch; this section tunes WHICH groups fold). Nested table:
+	//
+	//	[collapse]
+	//	initiatives = true          # fold initiative groups (default true)
+	//	containers  = true          # fold homeless containers, e.g.
+	//	                            # projects/ (default true)
+	//	expand      = ["marketplace"]  # group keys pinned open, never fold
+	//
+	// Attention and attendance ALWAYS pierce regardless of settings —
+	// there is deliberately no way to configure a group that hides a
+	// waiting or dead agent.
+	Collapse CollapseConfig `toml:"collapse"`
+
 	// ShowUnmanaged is set by ZDEV_SIDEBAR_UNMANAGED=show. When true, tmux
 	// sessions that have no corresponding projects-file entry are rendered
 	// below the managed block, dimmed. Default false (hide) preserves
@@ -124,6 +139,25 @@ func BuiltinAgents() []AgentSpec {
 		}
 	}
 	return out
+}
+
+// CollapseConfig tunes which groups fold under ZDEV_SIDEBAR_GROUP=collapse.
+// Pointer booleans distinguish "absent" (default true) from an explicit
+// false — a TOML bool cannot otherwise express unset.
+type CollapseConfig struct {
+	Initiatives *bool    `toml:"initiatives"`
+	Containers  *bool    `toml:"containers"`
+	Expand      []string `toml:"expand"`
+}
+
+// CollapseInitiatives resolves the initiatives fold setting (default true).
+func (c CollapseConfig) CollapseInitiatives() bool {
+	return c.Initiatives == nil || *c.Initiatives
+}
+
+// CollapseContainers resolves the containers fold setting (default true).
+func (c CollapseConfig) CollapseContainers() bool {
+	return c.Containers == nil || *c.Containers
 }
 
 // Defaults returns the code-defined fallback values used when no TOML file is

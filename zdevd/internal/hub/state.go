@@ -115,6 +115,14 @@ type state struct {
 	// read-only throughout.
 	collapseGroups bool
 
+	// collapseInitiatives / collapseContainers / collapseExpand mirror
+	// hub.Config's [collapse] settings (sidebar.toml). Which group kinds
+	// fold, and which named keys are pinned open. Set once by NewHub
+	// before Run; read-only throughout.
+	collapseInitiatives bool
+	collapseContainers  bool
+	collapseExpand      map[string]struct{}
+
 	// teamWindows mirrors hub.Config.TeamWindows (set from ZDEV_TEAM_WINDOWS
 	// in cmd/zdevd — the hub NEVER reads env itself). When true, panes
 	// claimed by an Agent Teams member are EXCLUDED from their session's
@@ -343,6 +351,11 @@ type prCount struct {
 
 func newState() *state {
 	s := &state{
+		// [collapse] kind-gates default OPEN-to-folding (true) so a state
+		// constructed without NewHub (tests) behaves like default config;
+		// NewHub overwrites from hub.Config.
+		collapseInitiatives: true,
+		collapseContainers:  true,
 		sessions:            make(map[string]*session),
 		panesByID:           make(map[string]*pane),
 		clientSessions:      make(map[string]string),

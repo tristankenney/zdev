@@ -77,3 +77,15 @@ launch           = "opencode"
 # waiting_markers  = ["● aider"]
 # finished_markers = ["◆ aider"]
 # launch           = ""
+
+# --- grouped sidebar collapse (ZDEV_SIDEBAR_GROUP=collapse) ---
+# The env knob is the master switch; this section tunes WHICH groups fold.
+# Attendance always holds a whole group open; per-row, members that are
+# working / waiting / finished / dead stay visible regardless — no setting
+# can hide activity or demand. Folded always means "nothing happening".
+#
+# [collapse]
+# initiatives = true            # fold initiative groups (default true)
+# containers  = true            # fold homeless containers like projects/
+#                               # (default true)
+# expand      = ["marketplace"] # group keys pinned open — never fold

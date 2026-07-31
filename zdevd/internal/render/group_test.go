@@ -112,7 +112,7 @@ func TestGroupedFrame(t *testing.T) {
 		t.Errorf("home row must render as the header, not as a plain row:\n%s", out)
 	}
 	// projects has no home: synthetic header.
-	if n := strings.Count(out, "─ projects"); n != 1 {
+	if n := strings.Count(out, "╭ projects"); n != 1 {
 		t.Errorf("projects header count = %d, want 1:\n%s", n, out)
 	}
 	// Members: leaf-only display, indented under their header.
@@ -125,7 +125,7 @@ func TestGroupedFrame(t *testing.T) {
 	// Order: groups first (alpha), then the bare separator, then singles.
 	iAI := strings.Index(out, "╭ ai-at-pay")
 	iMkt := strings.Index(out, "╭ marketplace")
-	iProj := strings.Index(out, "─ projects")
+	iProj := strings.Index(out, "╭ projects")
 	iSep := strings.Index(out, "\n  ──────\n")
 	iDot := strings.Index(out, "· dotfiles")
 	iZdev := strings.Index(out, "· zdev")
@@ -190,7 +190,7 @@ func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 		{Name: "projects/pay-id", Status: "alive", LastActivityTS: stale},
 	}}
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	if n := strings.Count(out, "─ projects"); n != 2 {
+	if n := strings.Count(out, "╭ projects"); n != 2 {
 		t.Errorf("straddling group must render its header in BOTH blocks, got %d:\n%s", n, out)
 	}
 }
@@ -203,7 +203,7 @@ func TestGroupedCollapse(t *testing.T) {
 	snap := &proto.Snapshot{Projects: []proto.Project{
 		{Name: "initiatives/alpha", Status: "alive"},
 		{Name: "initiatives/alpha/repo-a", Status: "alive", Collapsed: true},
-		{Name: "initiatives/alpha/repo-b", Status: "shell-running", Attention: proto.AttWorking, Collapsed: true},
+		{Name: "initiatives/alpha/repo-b", Status: "alive", Collapsed: true},
 		{Name: "initiatives/beta", Status: "alive"},
 		{Name: "initiatives/beta/repo-c", Status: "alive"},
 	}}
@@ -217,9 +217,8 @@ func TestGroupedCollapse(t *testing.T) {
 	if !strings.Contains(out, "repo-c") {
 		t.Errorf("expanded group's members must still render:\n%s", out)
 	}
-	// Footer still counts the hidden working member (fleet truth).
-	if !strings.Contains(out, "1 working") {
-		t.Errorf("footer must tally hidden members:\n%s", out)
+	if strings.Contains(out, "repo-b") {
+		t.Errorf("hidden member must not render:\n%s", out)
 	}
 }
 
@@ -237,7 +236,7 @@ func TestGroupedCollapseContainer(t *testing.T) {
 	if strings.Contains(out, "pay-app") || strings.Contains(out, "pay-id") {
 		t.Errorf("collapsed container members must not render:\n%s", out)
 	}
-	if !strings.Contains(out, "─ projects ·2") {
+	if !strings.Contains(out, "╭ projects ·2") {
 		t.Errorf("container header must carry the rollup:\n%s", out)
 	}
 	if !strings.Contains(out, "· zdev") {

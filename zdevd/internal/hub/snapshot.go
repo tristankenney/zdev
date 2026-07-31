@@ -233,6 +233,19 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		status := AttentionToStatus(displayAtt)
 		if absent {
 			status = tmuxctl.StatusAbsent
+			// Absent sessions are not re-derived, so pd.Attention freezes at
+			// its last value. Frozen WAITING/FINISHED stay — they carry user
+			// demand and holding their row visible is the safe direction.
+			// Frozen WORKING carries no demand at all: a session killed
+			// mid-work (no SessionEnd hook) would otherwise pin a dim
+			// absent row visible forever — across restarts, since the value
+			// persists (invariants review 2026-07-30, observation A).
+			// Demote it to idle and write back so the row can fold.
+			if pd.Attention == proto.AttWorking {
+				pd.Attention = proto.AttIdle
+				pd.AttentionDerived = proto.AttIdle
+				st.projectData[dataKey] = pd
+			}
 		}
 
 		// Dead rows reuse the wait wire fields (phase4-v11): the death
@@ -751,15 +764,17 @@ func orderedRowNames(st *state) []string {
 // because their group is collapsed (phase4-v22, ZDEV_SIDEBAR_GROUP=collapse).
 // The rule, per group (initiatives AND containers like projects/):
 //
-//   - expanded while ANY project in the group is client-attended (someone is
-//     in there — global attendance, not per-viewer: the cursor indexes ONE
-//     row list, so collapse must be viewer-independent);
-//   - expanded while ANY project in the group demands attention (waiting /
-//     dead / finished) — attention never collapses away, it auto-expands;
-//   - otherwise every MEMBER row collapses. Initiative groups keep their
-//     home row visible as the header carrying the rollup; homeless groups
-//     (projects/) hide every row — the renderer's synthetic header line
-//     carries their rollup instead.
+//   - the whole group stays expanded while ANY project in it is
+//     client-attended (someone is in there — global attendance, not
+//     per-viewer: the cursor indexes ONE row list, so collapse must be
+//     viewer-independent), or the group is pinned open / kind-gated off;
+//   - otherwise visibility is PER ROW: quiet members (idle/absent, no
+//     death) fold; members that are working, waiting, finished, or dead
+//     stay individually visible under the header — activity and attention
+//     never collapse away ("folded" always means "nothing happening
+//     there"). Homes never fold (they are the header); homeless groups
+//     (projects/) fold their quiet rows behind the renderer's synthetic
+//     header, which carries the rollup.
 //
 // Reads only state maps (projectData displayed Attention, clientSessions) —
 // no derivation side effects — so buildSnapshot and cursorFlatRows can both
@@ -771,7 +786,8 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 		return nil
 	}
 	type groupInfo struct {
-		hold    bool // attended or attention — group stays expanded
+		hold    bool // attended — the whole group stays expanded
+		hasHome bool // initiative (home row) vs homeless container
 		members []string
 	}
 	groups := make(map[string]*groupInfo)
@@ -785,43 +801,59 @@ func collapsedNames(st *state, names []string) map[string]struct{} {
 			g = &groupInfo{}
 			groups[key] = g
 		}
-		if !proto.IsInitiativeHome(n) {
+		if proto.IsInitiativeHome(n) {
+			g.hasHome = true
+		} else {
 			g.members = append(g.members, n)
 		}
-		dash := proto.SessionKey(n)
-		if isClientAttended(st, dash) {
-			g.hold = true
-		}
-		pd := st.projectData[dash]
-		// Death pierces via DeadSinceTS, NOT Attention: displayed Attention
-		// never holds AttDead — death is a display-only override applied at
-		// wire-assembly time (invariants review 2026-07-30 caught the dead
-		// arm being unreachable, which would have HIDDEN a dead agent in an
-		// unattended group). buildSnapshot's revival check clears
-		// DeadSinceTS before this runs, so the field tracks displayed death
-		// exactly; between publishes an event-set death holds the group
-		// open in the safe direction.
-		if pd.DeadSinceTS > 0 {
-			g.hold = true
-		}
-		// Known fail-open staleness: a member killed while displayed-waiting
-		// freezes Attention in projectData (absent sessions are not written
-		// back), holding its group expanded until eviction or recreation.
-		// Accepted: it can only ever keep a group OPEN, never hide demand.
-		switch pd.Attention {
-		case proto.AttWaiting, proto.AttFinished:
+		if isClientAttended(st, proto.SessionKey(n)) {
 			g.hold = true
 		}
 	}
-	var hidden map[string]struct{}
-	for _, g := range groups {
-		if g.hold || len(g.members) == 0 {
-			continue // held open, or nothing to hide
+	// rowQuiet reports whether a member row may fold: nothing running,
+	// nothing demanding. Death pierces via DeadSinceTS, NOT Attention —
+	// displayed Attention never holds AttDead (death is a display-only
+	// override; the 2026-07-30 invariants review caught the dead arm being
+	// unreachable, which would have HIDDEN a dead agent). Known fail-open
+	// staleness: an absent session frozen at displayed-waiting/finished
+	// keeps its row visible until eviction — it can only ever SHOW too
+	// much, never hide demand. (Frozen WORKING is demoted to idle in
+	// buildSnapshot's absent path — it carries no demand.)
+	rowQuiet := func(n string) bool {
+		pd := st.projectData[proto.SessionKey(n)]
+		if pd.DeadSinceTS > 0 {
+			return false
 		}
-		if hidden == nil {
-			hidden = make(map[string]struct{})
+		switch pd.Attention {
+		case proto.AttWorking, proto.AttWaiting, proto.AttFinished:
+			return false
+		}
+		return true
+	}
+	var hidden map[string]struct{}
+	for key, g := range groups {
+		if g.hold || len(g.members) == 0 {
+			continue // attended, or nothing to hide
+		}
+		// [collapse] settings (sidebar.toml): per-kind gates and pinned-open
+		// keys. These can only ever KEEP rows visible — the per-row pierce
+		// below is not configurable.
+		if _, pinned := st.collapseExpand[key]; pinned {
+			continue
+		}
+		if g.hasHome && !st.collapseInitiatives {
+			continue
+		}
+		if !g.hasHome && !st.collapseContainers {
+			continue
 		}
 		for _, m := range g.members {
+			if !rowQuiet(m) {
+				continue // working/waiting/finished/dead: stays visible
+			}
+			if hidden == nil {
+				hidden = make(map[string]struct{})
+			}
 			hidden[m] = struct{}{}
 		}
 	}

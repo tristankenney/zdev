@@ -202,9 +202,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// invariants review caught exactly that divergence.
 	var groupKeys []string
 	var isHome []bool
-	hasHome := map[string]bool{}          // group key → has an initiative home row
-	collapsedN := map[string]int{}        // group key → hidden member count
-	collapsedWorking := map[string]bool{} // group key → any hidden member working
+	hasHome := map[string]bool{}   // group key → has an initiative home row
+	collapsedN := map[string]int{} // group key → hidden member count
 	if GroupMode == "prefix" {
 		groupKeys = make([]string, len(snap.Projects))
 		isHome = make([]bool, len(snap.Projects))
@@ -217,9 +216,6 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			}
 			if p.Collapsed {
 				collapsedN[groupKeys[i]]++
-				if projectAttention(p) == proto.AttWorking {
-					collapsedWorking[groupKeys[i]] = true
-				}
 			}
 		}
 	}
@@ -271,7 +267,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			// session, the metadata row still follows — the current-project
 			// two-row contract (and projBase math) is glyph-agnostic.
 			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent,
-				collapsedN[groupKeys[i]], collapsedWorking[groupKeys[i]])
+				collapsedN[groupKeys[i]])
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent)
 			}
@@ -321,8 +317,7 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 		if GroupMode == "prefix" {
 			if g := groupKeys[i]; g != prevGroup {
 				if !isHome[i] {
-					writeGroupHeader(&buf, g, width, animator,
-						collapsedN[g], collapsedWorking[g])
+					writeGroupHeader(&buf, g, width, collapsedN[g])
 				}
 				prevGroup = g
 			}
@@ -493,27 +488,19 @@ func displayName(name string) string {
 // width, or a bare dim "  ──────" separator for the unprefixed block
 // (name == ""). Groups WITH a home row get renderHomeRow instead — the
 // home project row IS the header there.
-func writeGroupHeader(buf *bytes.Buffer, name string, width int, animator *Animator, collapsedN int, collapsedWorking bool) {
+func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int) {
 	buf.WriteString("  ")
 	if name == "" {
 		buf.WriteString(Dim)
 		buf.WriteString(strings.Repeat("─", 6))
 	} else {
-		// No trailing dash fill — live dogfood showed a pane that was
-		// half horizontal rules (mood divider + ragged header fills +
-		// the separator). "─ " plus a Bold name reads as a header on
-		// its own. A collapsed homeless group (projects/) shows its
-		// rollup here — this line is its only remaining trace.
-		if collapsedWorking {
-			buf.WriteString(Icy)
-			buf.WriteString(animator.WorkGlyph())
-			buf.WriteString(Reset)
-			buf.WriteString(Dim)
-			buf.WriteString(" ")
-		} else {
-			buf.WriteString(Dim)
-			buf.WriteString("─ ")
-		}
+		// Same ╭ corner as initiative headers (uniform group language;
+		// dim = container, hued = initiative), no trailing dash fill. A
+		// collapsed homeless group (projects/) shows its rollup here —
+		// this line is its only remaining trace. No spinner: working rows
+		// pierce per-row, so a folded row is by definition quiet.
+		buf.WriteString(Dim)
+		buf.WriteString("╭ ")
 		buf.WriteString(Reset)
 		buf.WriteString(Bold)
 		buf.WriteString(name)
@@ -536,7 +523,7 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, animator *Anima
 // replaces both the synthetic header and the home's compact row, so the
 // group costs no extra line and the home stays a real, navigable FlatRow
 // whose agent attention lights the header.
-func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool, collapsedN int, collapsedWorking bool) {
+func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool, collapsedN int) {
 	switch {
 	case isCurrent:
 		// Same breath-pulsing ▌ the current project row carries — without
@@ -558,16 +545,8 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// waiting pulse's off-phase frame is itself "·".
 	name := proto.GroupKey(p.Name)
 	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
-		// Collapsed group with a working member: the corner shows the work
-		// spinner so a collapsed initiative still reads as ALIVE — the only
-		// state a collapsed group can be, since attention auto-expands.
-		if collapsedWorking {
-			buf.WriteString(Icy)
-			buf.WriteString(animator.WorkGlyph())
-		} else {
-			buf.WriteString(PaletteFor(name))
-			buf.WriteString("╭")
-		}
+		buf.WriteString(PaletteFor(name))
+		buf.WriteString("╭")
 	} else {
 		glyph, color := MarkerFor(*p, animator, nowFn())
 		buf.WriteString(color)

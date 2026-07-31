@@ -94,11 +94,10 @@ func TestGroupSortUsesSharedKey(t *testing.T) {
 	}
 }
 
-// TestCollapsedNames pins the collapse rule: a group's member rows hide iff
-// no attached client attends any of its projects and none demands attention.
-// Homes never hide (they are the header); homeless containers (projects/)
-// hide every row; attention and attendance both pierce — death via
-// DeadSinceTS, the real representation.
+// TestCollapsedNames pins the collapse rule: attendance holds a whole group
+// open; otherwise visibility is PER ROW — quiet members fold, and rows that
+// are working, waiting, finished, or dead stay individually visible (death
+// via DeadSinceTS, the real representation). Homes never hide.
 func TestCollapsedNames(t *testing.T) {
 	names := []string{
 		"initiatives/alpha",
@@ -110,6 +109,9 @@ func TestCollapsedNames(t *testing.T) {
 		"initiatives/gamma/repo-d",
 		"initiatives/delta",
 		"initiatives/delta/repo-e",
+		"initiatives/epsilon",
+		"initiatives/epsilon/repo-w",
+		"initiatives/epsilon/repo-q",
 		"projects/pay-app",
 		"zdev",
 	}
@@ -125,12 +127,19 @@ func TestCollapsedNames(t *testing.T) {
 	// the 2026-07-30 invariants review caught).
 	s.projectData["initiatives-delta-repo-e"] = projectData{DeadSinceTS: 12345}
 
+	// epsilon has a working member and a quiet sibling: per-row, the
+	// worker stays visible and only the sibling folds.
+	s.projectData["initiatives-epsilon-repo-w"] = projectData{Attention: proto.AttWorking}
+
 	hidden := collapsedNames(s, names)
 	want := map[string]bool{
 		"initiatives/alpha/repo-a": true,
 		"initiatives/alpha/repo-b": true,
 		// homeless container: unattended, quiet → every row folds
 		"projects/pay-app": true,
+		// per-row: gamma's waiting and delta's dead members stay visible,
+		// epsilon's quiet sibling folds while its worker stays.
+		"initiatives/epsilon/repo-q": true,
 	}
 	for n := range want {
 		if _, ok := hidden[n]; !ok {
@@ -193,5 +202,50 @@ func TestCollapseParity(t *testing.T) {
 		if !rowNames[n] {
 			t.Errorf("wire-visible %q missing from cursor rows", n)
 		}
+	}
+}
+
+// TestCollapseSettings pins the [collapse] sidebar.toml gates: per-kind
+// booleans and pinned-open keys can only KEEP groups open — never fold an
+// attended or attention-holding group.
+func TestCollapseSettings(t *testing.T) {
+	names := []string{
+		"initiatives/alpha", "initiatives/alpha/repo-a",
+		"projects/pay-app",
+	}
+	base := func() *state {
+		s := newState()
+		s.collapseGroups = true
+		return s
+	}
+
+	s := base()
+	s.collapseInitiatives = false
+	h := collapsedNames(s, names)
+	if _, ok := h["initiatives/alpha/repo-a"]; ok {
+		t.Errorf("collapse.initiatives=false must keep initiative members visible")
+	}
+	if _, ok := h["projects/pay-app"]; !ok {
+		t.Errorf("containers still fold when only initiatives are gated off")
+	}
+
+	s = base()
+	s.collapseContainers = false
+	h = collapsedNames(s, names)
+	if _, ok := h["projects/pay-app"]; ok {
+		t.Errorf("collapse.containers=false must keep container members visible")
+	}
+	if _, ok := h["initiatives/alpha/repo-a"]; !ok {
+		t.Errorf("initiatives still fold when only containers are gated off")
+	}
+
+	s = base()
+	s.collapseExpand = map[string]struct{}{"alpha": {}}
+	h = collapsedNames(s, names)
+	if _, ok := h["initiatives/alpha/repo-a"]; ok {
+		t.Errorf("expand-pinned group must never fold")
+	}
+	if _, ok := h["projects/pay-app"]; !ok {
+		t.Errorf("unpinned groups still fold")
 	}
 }

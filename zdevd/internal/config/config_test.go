@@ -554,3 +554,34 @@ launch = "opencode"
 		t.Errorf("Agents[0].Launch = %q; want %q", cfg.Agents[0].Launch, "claude --custom-flag")
 	}
 }
+
+// TestCollapseConfig pins the [collapse] table: absent -> both kinds fold
+// (default true); explicit false and pinned keys decode.
+func TestCollapseConfig(t *testing.T) {
+	c, err := Load(filepath.Join(t.TempDir(), "absent.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Collapse.CollapseInitiatives() || !c.Collapse.CollapseContainers() {
+		t.Errorf("absent [collapse] must default both kinds to true")
+	}
+
+	p := filepath.Join(t.TempDir(), "sidebar.toml")
+	body := "[collapse]\ninitiatives = true\ncontainers = false\nexpand = [\"marketplace\"]\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c2.Collapse.CollapseInitiatives() {
+		t.Errorf("initiatives=true must resolve true")
+	}
+	if c2.Collapse.CollapseContainers() {
+		t.Errorf("containers=false must resolve false")
+	}
+	if len(c2.Collapse.Expand) != 1 || c2.Collapse.Expand[0] != "marketplace" {
+		t.Errorf("expand = %v", c2.Collapse.Expand)
+	}
+}
