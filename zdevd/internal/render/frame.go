@@ -219,6 +219,28 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			}
 		}
 	}
+	// lastInGroup[i]: row i is its group's last VISIBLE member — its gutter
+	// closes the frame (╰). Computed on snapshot order; the opt-in fold
+	// mode re-partitions rendering and may place the closer mid-block,
+	// which is accepted (fold already re-states headers loosely).
+	var lastInGroup []bool
+	if GroupMode == "prefix" {
+		lastInGroup = make([]bool, len(snap.Projects))
+		for i := range snap.Projects {
+			if snap.Projects[i].Collapsed || groupKeys[i] == "" || isHome[i] {
+				continue
+			}
+			last := true
+			for j := i + 1; j < len(snap.Projects); j++ {
+				if snap.Projects[j].Collapsed {
+					continue
+				}
+				last = groupKeys[j] != groupKeys[i]
+				break
+			}
+			lastInGroup[i] = last
+		}
+	}
 
 	// Per-project rows.
 	//
@@ -286,7 +308,12 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			} else {
 				buf.WriteString(Dim)
 			}
-			buf.WriteString("│")
+			// The last visible member closes the frame.
+			if lastInGroup[i] {
+				buf.WriteString("╰")
+			} else {
+				buf.WriteString("│")
+			}
 			buf.WriteString(Reset)
 			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
 		default:

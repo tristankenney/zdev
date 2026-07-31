@@ -119,8 +119,13 @@ func TestGroupedFrame(t *testing.T) {
 	if strings.Contains(out, "initiatives/ai-at-pay/pay-app") || strings.Contains(out, "projects/pay-app") {
 		t.Errorf("member rows must display leaf names only:\n%s", out)
 	}
-	if !strings.Contains(out, "  │  · pay-app") {
-		t.Errorf("member rows must carry the │ gutter under their header:\n%s", out)
+	// projects has two members: onboarding runs the gutter, pay-app (last)
+	// closes the frame; single-member initiative groups close immediately.
+	if !strings.Contains(out, "  │  · onboarding") {
+		t.Errorf("non-last member rows must carry the │ gutter:\n%s", out)
+	}
+	if !strings.Contains(out, "  ╰  · pay-app") {
+		t.Errorf("the last visible member must close the frame with ╰:\n%s", out)
 	}
 	// Order: groups first (alpha), then the bare separator, then singles.
 	iAI := strings.Index(out, "╭ ai-at-pay")
@@ -217,8 +222,8 @@ func TestGroupedCollapse(t *testing.T) {
 	if !strings.Contains(out, "alpha ·2") {
 		t.Errorf("collapsed home must carry the ·2 rollup:\n%s", out)
 	}
-	if !strings.Contains(out, "repo-c") {
-		t.Errorf("expanded group's members must still render:\n%s", out)
+	if !strings.Contains(out, "  ╰  · repo-c") {
+		t.Errorf("expanded group's sole member closes the frame:\n%s", out)
 	}
 	if strings.Contains(out, "repo-b") {
 		t.Errorf("hidden member must not render:\n%s", out)

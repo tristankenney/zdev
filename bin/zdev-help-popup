@@ -102,8 +102,8 @@ printf '  %s◆%s ready to land  %s⌁%s will rot  %s⊛%s agent team\n' \
     $'\033[32m' "$RESET" $'\033[33m' "$RESET" "$DIM" "$RESET"
 printf '  %s╭ name%s initiative header = its home (colored = its identity; marker replaces ╭ on attention)\n' \
     "$DIM" "$RESET"
-printf '  %s│%s member row  %s─ name%s container (projects/)  %s──────%s ungrouped below\n' \
-    "$DIM" "$RESET" "$DIM" "$RESET" "$DIM" "$RESET"
+printf '  %s│╰%s member rows (╰ closes the frame)  %s╭%s dim = container, colored = initiative\n' \
+    "$DIM" "$RESET" "$DIM" "$RESET"
 }
 
 # Interactive (popup or terminal): page so the content scrolls and the
