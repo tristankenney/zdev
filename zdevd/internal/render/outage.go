@@ -49,3 +49,29 @@ func PaintOutage(w io.Writer, lastFrame []byte, banner string) error {
 	_, err := w.Write(buf.Bytes())
 	return err
 }
+
+// OutageBody is PaintOutage's content for the Bubble Tea path: a banner row
+// above the dimmed last-known BODY (harness-free — see body.go), with no
+// CursorHome/ClearToEnd. Tea owns the terminal harness in that mode, so this
+// returns exactly what View() should hand back while an outage banner is
+// showing; the caller (the tea model) is responsible for what happens to
+// the cursor and screen clearing.
+//
+// lastBody must be harness-free (render.Body's return value, NOT
+// render.Render's) — passing a Render()-shaped frame here would embed a
+// second CursorHome mid-stream, exactly the bug Body exists to avoid.
+func OutageBody(lastBody []byte, banner string) []byte {
+	var buf bytes.Buffer
+
+	buf.WriteString(SGRDim)
+	buf.WriteString("  ")
+	buf.WriteString(banner)
+	buf.WriteString(SGRUndim)
+	buf.WriteByte('\n')
+
+	buf.WriteString(SGRDim)
+	buf.Write(lastBody)
+	buf.WriteString(SGRUndim)
+
+	return buf.Bytes()
+}
