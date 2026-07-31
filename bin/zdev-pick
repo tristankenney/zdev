@@ -181,8 +181,21 @@ build_list() {
     ' <(teams) <(projects_feed)
 }
 
+# Initiative metadata preview: hovering any initiative-related row (its
+# header, home, or a member clone) shows INITIATIVE.md — intent, tracker,
+# decisions — before you jump in. {3} is the switch target (fzf quotes
+# placeholder substitutions itself); non-initiative rows show nothing and
+# the pane collapses out of the way (hidden unless matched via the
+# preview-window ,<preview-fn> trick is overkill — a blank pane is fine,
+# and ctrl-/ toggles it off entirely).
+_preview='case {3} in initiatives/*)
+    d="${ZDEV_WORKSPACE:-$HOME/workspace}/initiatives/$(printf %s {3} | cut -d/ -f2)"
+    if [ -f "$d/INITIATIVE.md" ]; then head -40 "$d/INITIATIVE.md"; fi
+;; esac'
 SEL=$(build_list | fzf --prompt='go › ' --height=100% --reverse --ansi \
-        --delimiter="$TAB" --with-nth=1) || exit 0
+        --delimiter="$TAB" --with-nth=1 \
+        --preview="$_preview" --preview-window='right,45%,border-left,wrap' \
+        --bind='ctrl-/:toggle-preview') || exit 0
 [ -z "$SEL" ] && exit 0
 
 KIND=$(printf '%s' "$SEL" | cut -d"$TAB" -f2)
