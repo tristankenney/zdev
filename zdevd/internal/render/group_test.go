@@ -13,6 +13,18 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 func stripAnsi(b []byte) string { return ansiRE.ReplaceAllString(string(b), "") }
 
+// runeCol returns the rune (screen-column) index of r in s, or -1. Byte
+// offsets are useless for column assertions here — the frame glyphs, the
+// markers, and the status dots are all multibyte.
+func runeCol(s string, r rune) int {
+	for i, c := range []rune(s) {
+		if c == r {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestDisplayName(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 
@@ -127,7 +139,8 @@ func TestGroupedCollapseFlat(t *testing.T) {
 	}
 }
 
-// The current session inside a group keeps the frame.
+// The current session inside a group keeps the frame, with its ▌ marker in
+// the LEFT MARGIN ahead of the gutter — not fused to the frame glyph.
 func TestGroupedCurrentMemberGutter(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 	GroupMode = "prefix"
@@ -140,8 +153,86 @@ func TestGroupedCurrentMemberGutter(t *testing.T) {
 		},
 	}
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	if !strings.Contains(out, "  │▌") {
-		t.Errorf("current member row must keep the gutter before its ▌ marker:\n%s", out)
+	if !strings.Contains(out, "▌ │") {
+		t.Errorf("current member row must carry ▌ in the margin BEFORE the gutter:\n%s", out)
+	}
+	if strings.Contains(out, "│▌") {
+		t.Errorf("▌ must never sit after the frame glyph (reads as one fused glyph):\n%s", out)
+	}
+}
+
+// The selection/presence marker column must NOT depend on group membership:
+// ▌ and ▶ always start at column 0, whether the row is a group member, a
+// group home, or an ungrouped single. Before the flat-root marker fix the
+// marker sat after the frame glyph on member rows, so it jumped between
+// column 0 and column 3 as the cursor crossed a group boundary.
+func TestMarkerColumnIsStableAcrossGroups(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+
+	markedRow := func(out string) string {
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "▌") || strings.HasPrefix(l, "▶") {
+				return l
+			}
+			if i := strings.IndexAny(l, "▌▶"); i >= 0 {
+				t.Errorf("marker at column %d, want 0: %q", i, l)
+				return l
+			}
+		}
+		t.Errorf("no marked row rendered:\n%s", out)
+		return ""
+	}
+
+	// Current session (▌) at each structural position.
+	for _, cur := range []string{"alpha", "alpha/pay-app", "projects/onboarding", "zdev"} {
+		snap := flatSnapshot()
+		snap.CurrentSession = cur
+		markedRow(stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn)))
+	}
+
+	// Keyboard cursor (▶) at each structural position: flat rows are
+	// 0 alpha (home), 1 alpha/pay-app (marked member), 3 dotfiles (single),
+	// 4 projects/onboarding (unmarked member).
+	for _, row := range []int{0, 1, 3, 4} {
+		snap := flatSnapshot()
+		snap.CursorRow = row
+		snap.CursorActive = true
+		markedRow(stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn)))
+	}
+}
+
+// The marker never eats the frame or shifts the content column: a marked
+// member row must align its glyph with its unmarked siblings.
+func TestMarkerPreservesFrameAndContentColumn(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+
+	snap := flatSnapshot()
+	snap.CursorRow = 1 // alpha/pay-app — a marked group's member
+	snap.CursorActive = true
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+
+	var marked, plain string
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.Contains(l, "· pay-app") && strings.HasPrefix(l, "▶"):
+			marked = l
+		case strings.Contains(l, "· pay-id"):
+			plain = l
+		}
+	}
+	if marked == "" || plain == "" {
+		t.Fatalf("need both a marked and a plain member row:\n%s", out)
+	}
+	if !strings.Contains(marked, "▶ │") {
+		t.Errorf("cursor row lost its frame gutter: %q", marked)
+	}
+	// Compare RUNE columns — box-drawing glyphs and the marker are all
+	// multibyte, so byte offsets are not screen columns.
+	if got, want := runeCol(marked, '·'), runeCol(plain, '·'); got != want {
+		t.Errorf("marker shifted the content column:\n  marked %q (· at col %d)\n  plain  %q (· at col %d)",
+			marked, got, plain, want)
 	}
 }
 

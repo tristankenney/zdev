@@ -1099,14 +1099,15 @@ func TestRenderDomainRow(t *testing.T) {
 }
 
 // TestMetadataPrefix verifies the exact byte output of metadataPrefix for all
-// three branches: urgent, isCurrent (breathing bar), and default (defensive).
+// four branches: gutter-placed (grouped), urgent, isCurrent (breathing bar),
+// and default (defensive).
 func TestMetadataPrefix(t *testing.T) {
 	anim := NewAnimator()
 	// Use a fixed project so palette/breath are deterministic.
 	p := &proto.Project{Name: "alpha", Status: "alive"}
 
 	t.Run("Urgent", func(t *testing.T) {
-		prefix := metadataPrefix(p, "alpha", anim, true)
+		prefix := metadataPrefix(p, "alpha", anim, true, false)
 		want := RedBorder + "▌" + Reset + "     "
 		if prefix != want {
 			t.Errorf("urgent prefix:\n  got  %q\n  want %q", prefix, want)
@@ -1115,16 +1116,25 @@ func TestMetadataPrefix(t *testing.T) {
 
 	t.Run("Breath", func(t *testing.T) {
 		anim.breathState = 0 // deterministic frame
-		prefix := metadataPrefix(p, "alpha", anim, false)
+		prefix := metadataPrefix(p, "alpha", anim, false, false)
 		want := BreathColorForProject("alpha", anim.BreathFrame()) + "▌" + Reset + "     "
 		if prefix != want {
 			t.Errorf("breath prefix:\n  got  %q\n  want %q", prefix, want)
 		}
 	})
 
+	t.Run("GutterPlaced", func(t *testing.T) {
+		// Grouped current row: rowMargin already drew the ▌ at column 0
+		// ahead of the frame glyph, so the metadata row spends the full
+		// indent and never draws a second marker.
+		if prefix := metadataPrefix(p, "alpha", anim, true, true); prefix != "      " {
+			t.Errorf("gutter-placed prefix must be 6 blanks, got %q", prefix)
+		}
+	})
+
 	t.Run("Default", func(t *testing.T) {
 		// Non-urgent + non-current → defensive 6-space fallback.
-		prefix := metadataPrefix(p, "other", anim, false)
+		prefix := metadataPrefix(p, "other", anim, false, false)
 		want := "      "
 		if prefix != want {
 			t.Errorf("default prefix:\n  got  %q\n  want %q", prefix, want)

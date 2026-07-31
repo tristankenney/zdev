@@ -301,7 +301,8 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 				collapsedN[groupKeys[i]] > 0 && visibleMembers[groupKeys[i]] == 0)
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-					groupGutter(groupKeys[i], hasHome[groupKeys[i]], "│"))
+					groupGutter(groupKeys[i], hasHome[groupKeys[i]], "│",
+						rowMargin(&p, animator, urgent, true, false)))
 			}
 		case isCurrent && grouped:
 			// Current member row: keep the frame — gutter first, then the
@@ -314,9 +315,11 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 				g, mg = "╰", " "
 			}
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows,
-				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g))
+				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
+					rowMargin(&p, animator, urgent, true, false)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-				groupGutter(groupKeys[i], hasHome[groupKeys[i]], mg))
+				groupGutter(groupKeys[i], hasHome[groupKeys[i]], mg,
+					rowMargin(&p, animator, urgent, true, false)))
 		case isCurrent:
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows, "")
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent, "")
@@ -326,22 +329,16 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 			// groups, Dim for synthetic ones (projects/) — so belonging
 			// reads as a frame, not just an indent. Width shrinks with
 			// the gutter so truncation still respects the pane edge.
-			buf.WriteString("  ")
-			if hasHome[groupKeys[i]] {
-				buf.WriteString(PaletteFor(groupKeys[i]))
-			} else {
-				buf.WriteString(Dim)
-			}
 			// The last visible member closes the frame.
+			g := "│"
 			if lastInGroup[i] {
-				buf.WriteString("╰")
-			} else {
-				buf.WriteString("│")
+				g = "╰"
 			}
-			buf.WriteString(Reset)
-			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
+			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows,
+				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
+					rowMargin(&p, animator, urgent, false, isCursor)))
 		default:
-			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows)
+			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows, "")
 		}
 		// Nested member rows (Agent Teams slice B, ZDEV_TEAM_WINDOWS): each
 		// teammate of a team led by this project renders on its own indented
@@ -722,6 +719,7 @@ const domainSep = Dim + " │ " + Reset
 // metadata rows (marker row prefix + each populated domain row prefix
 // use this verbatim). Branches:
 //
+//	gutter != ""             → 6 spaces (rowMargin already placed the ▌)
 //	urgent=true              → RedBorder + ▌ + Reset + 5 spaces
 //	urgent=false + isCurrent → BreathColorForProject + ▌ + Reset + 5 spaces
 //	default (defensive)      → 6 spaces
@@ -729,10 +727,15 @@ const domainSep = Dim + " │ " + Reset
 // isCurrent will always be true at the renderMetadataRow call site under the
 // new dispatch (twoRows := isCurrent), so the default branch is dead in
 // production — kept defensively to match marker-row symmetry.
-func metadataPrefix(p *proto.Project, current string, animator *Animator, urgent bool) string {
+func metadataPrefix(p *proto.Project, current string, animator *Animator, urgent bool, gutterPlaced bool) string {
 	isCurrent := p.Name == current && current != ""
 	var b bytes.Buffer
 	switch {
+	case gutterPlaced:
+		// Grouped current row: the marker rides the gutter at column 0, so
+		// the metadata row spends the full indent to stay aligned with the
+		// project row above it.
+		b.WriteString("      ")
 	case urgent:
 		b.WriteString(RedBorder)
 		b.WriteString("▌")
@@ -817,6 +820,11 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	buf.WriteString(gutter)
 	isCurrent := p.Name == current && current != ""
 	switch {
+	case gutter != "":
+		// Grouped: the caller composed the gutter from rowMargin, so the
+		// marker already sits at column 0 ahead of the frame glyph. Spend
+		// the indent so the content column matches unmarked member rows.
+		buf.WriteString("  ")
 	case urgent:
 		// Urgent left-border accent. Replaces the breath bar when current
 		// (urgency wins over identity); replaces the "  " indent when non-current.
@@ -885,7 +893,7 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 //
 // Prefix dispatch via metadataPrefix: urgent ▌+5sp / breath ▌+5sp / 6 spaces.
 func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, width int, animator *Animator, nowFn func() int64, urgent bool, gutter string) {
-	prefix := gutter + metadataPrefix(p, current, animator, urgent)
+	prefix := gutter + metadataPrefix(p, current, animator, urgent, gutter != "")
 	now := nowFn()
 
 	// Git domain row: branch + dirty | PR-or-celebrate | CI
@@ -958,6 +966,7 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 //
 // Prefix dispatch (260511-ohu change A: urgent non-current now reaches here):
 //
+//	gutter != "" → the gutter itself (rowMargin + frame glyph) then "  "
 //	urgent=true  → {RedBorder}▌{Reset}" " (urgent accent preserved on single compact line)
 //	cursor=true  → "▶ " (cursor selection indicator; zd-e6e — replaces the 2-space indent)
 //	otherwise    → "  " (2-space indent)
@@ -965,8 +974,13 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 // No branch, ports, shell-cmd, agent chips, or celebrate chip — those are
 // scanning noise on a non-current row. Only attention-worthy signals surface.
 // Per planner decision PD-02: name soft-cap at max(width-14, 10) runes.
-func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool, teamGroups []*proto.TeamGroup, teamRows bool) {
+func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
+	buf.WriteString(gutter)
 	switch {
+	case gutter != "":
+		// Grouped: rowMargin already placed the marker at column 0 ahead of
+		// the frame glyph — spend the indent to hold the content column.
+		buf.WriteString("  ")
 	case urgent:
 		buf.WriteString(RedBorder)
 		buf.WriteString("▌")
@@ -1105,12 +1119,41 @@ func spaceIf(buf *bytes.Buffer) {
 }
 
 // groupGutter composes the 3-column frame prefix for rows inside a group:
-// two spaces then the frame glyph (│ run, ╰ closer, or a blank continuation
-// under a closed corner), hued for initiatives and Dim for containers.
-func groupGutter(key string, hued bool, glyph string) string {
+// the row's left margin then the frame glyph (│ run, ╰ closer, or a blank
+// continuation under a closed corner), hued for initiatives and Dim for
+// containers. margin is rowMargin's 2-column output — the marker sits
+// BEFORE the frame, never after it.
+func groupGutter(key string, hued bool, glyph, margin string) string {
 	color := Dim
 	if hued {
 		color = PaletteFor(key)
 	}
-	return "  " + color + glyph + Reset
+	return margin + color + glyph + Reset
+}
+
+// rowMargin composes the 2-column left margin every row opens with: the
+// presence/selection marker, or blanks.
+//
+//	urgent   → RedBorder ▌   (urgency outranks identity)
+//	current  → breath-pulsed ▌
+//	cursor   → ▶
+//	default  → two spaces
+//
+// It always lands at COLUMN 0, whether or not the row belongs to a group —
+// inside a group the frame gutter follows it. Before this the marker sat
+// after the gutter, so it read as one fused glyph pair ("│▌", "│▶") and
+// its column jumped between 0 and 3 as the cursor crossed a group boundary
+// (live review 2026-07-31). Content columns are unchanged: the gutter's
+// consumers spend a constant two spaces where they used to draw the marker.
+func rowMargin(p *proto.Project, animator *Animator, urgent, isCurrent, isCursor bool) string {
+	switch {
+	case urgent:
+		return RedBorder + "▌" + Reset + " "
+	case isCurrent:
+		return BreathColorForProject(p.Name, animator.BreathFrame()) + "▌" + Reset + " "
+	case isCursor:
+		return "▶ "
+	default:
+		return "  "
+	}
 }
