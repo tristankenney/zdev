@@ -228,23 +228,23 @@ else
     ok "projects file: $total project(s), all dirs exist"
   fi
 fi
-# Initiatives journal — only meaningful under discovery. The journal holds
-# INITIATIVE.md/notes for every initiative; without a remote, that history
-# is laptop-only, which is the silent-loss failure mode worth naming.
-if [[ "${ZDEV_PROJECTS_DISCOVER:-0}" == "1" && -d "$ws/initiatives" ]]; then
-  if [[ ! -d "$ws/initiatives/.git" ]]; then
-    warn "initiatives/ exists but is not a git repo — initiative metadata is unversioned"
-    fix "git -C $ws/initiatives init  (install.sh scaffolds this; re-run it)"
-  elif ! git -C "$ws/initiatives" remote get-url origin >/dev/null 2>&1; then
-    warn "initiatives journal has NO remote — every INITIATIVE.md/notes commit is laptop-only"
-    fix "gh repo create <you>/initiatives --private && git -C $ws/initiatives remote add origin git@github.com:<you>/initiatives.git && git -C $ws/initiatives push -u origin main"
+# Workspace journal — only meaningful under discovery. The workspace root
+# repo versions every group's INITIATIVE.md/notes/bd data; without a
+# remote, that history is laptop-only — the silent-loss failure mode.
+if [[ "${ZDEV_PROJECTS_DISCOVER:-0}" == "1" ]]; then
+  if [[ ! -d "$ws/.git" ]]; then
+    warn "workspace journal missing — group metadata is unversioned"
+    fix "re-run install.sh (scaffolds the whitelist journal at $ws)"
+  elif ! git -C "$ws" remote get-url origin >/dev/null 2>&1; then
+    warn "workspace journal has NO remote — every INITIATIVE.md/notes commit is laptop-only"
+    fix "gh repo create <you>/initiatives --private && git -C $ws remote add origin git@github.com:<you>/initiatives.git && git -C $ws push -u origin main"
   else
-    ahead=$(git -C "$ws/initiatives" rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo "?")
+    ahead=$(git -C "$ws" rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo "?")
     if [[ "$ahead" == "0" ]]; then
-      ok "initiatives journal: remote configured, pushed"
+      ok "workspace journal: remote configured, pushed"
     else
-      warn "initiatives journal: $ahead unpushed commit(s)"
-      fix "git -C $ws/initiatives push"
+      warn "workspace journal: $ahead unpushed commit(s)"
+      fix "git -C $ws push"
     fi
   fi
 fi

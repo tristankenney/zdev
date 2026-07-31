@@ -266,31 +266,29 @@ else
   ok_ "~/.config/zdev/projects exists — left alone"
 fi
 
-# ---------- initiative layout (only when discovery is on) ----------
-# ZDEV_PROJECTS_DISCOVER=1 makes the workspace layout the registry:
-# projects/ (canonical pool) + initiatives/ (one dir of clones + metadata
-# per initiative, versioned by ONE journal repo). Scaffold the containers
-# and the journal; the journal's REMOTE is the user's call (it will hold
-# their notes), so it is queued as a next step rather than created.
-# Knob off → this section is silent: no dirs conjured into workspaces
-# that don't use the convention.
+# ---------- group layout (only when discovery is on) ----------
+# ZDEV_PROJECTS_DISCOVER=1 makes the FLAT workspace layout the registry:
+# groups are root dirs (INITIATIVE.md marks an initiative; unmarked =
+# drawer), and the workspace root itself is the JOURNAL repo versioning
+# every group's metadata via a whitelist gitignore. The journal's REMOTE
+# is the user's call (it holds their notes) — queued as a next step.
+# Knob off → this section is silent.
 if grep -q '^ZDEV_PROJECTS_DISCOVER=1' "$HOME/.config/zdev/env" 2>/dev/null; then
-  head_ "Initiative layout (discovery is on)"
-  mkdir -p "$ws/projects" "$ws/initiatives"
-  if [[ ! -d "$ws/initiatives/.git" ]]; then
-    git -C "$ws/initiatives" init -q
-    # Track only initiative metadata; the clones inside are other repos'
-    # working trees. Same unignore trick bd's data rides on.
-    printf '/*/*\n!/*/INITIATIVE.md\n!/*/notes/\n!/*/notes/**\n!/*/AGENTS.md\n!/*/CLAUDE.md\n!/*/.beads/\n!/*/.beads/**\n' \
-      > "$ws/initiatives/.gitignore"
-    git -C "$ws/initiatives" add .gitignore
-    git -C "$ws/initiatives" commit -qm "initiatives journal: scaffold" || true
-    ok_ "initialized the initiatives journal repo at $ws/initiatives"
+  head_ "Group layout (discovery is on)"
+  mkdir -p "$ws/projects"
+  if [[ ! -d "$ws/.git" ]]; then
+    git -C "$ws" init -q
+    printf '/*\n!/.gitignore\n!*/\n/*/*\n!/*/INITIATIVE.md\n!/*/notes/\n!/*/notes/**\n!/*/AGENTS.md\n!/*/CLAUDE.md\n!/*/.beads/\n!/*/.beads/**\n' \
+      > "$ws/.gitignore"
+    git -C "$ws" add .gitignore
+    git -C "$ws" commit -qm "workspace journal: scaffold" || true
+    ok_ "initialized the workspace journal repo at $ws"
+    next_step "Root repos with a top-level CLAUDE.md/AGENTS.md/notes need an exclusion line in $ws/.gitignore (e.g. /myrepo/) so the journal's metadata whitelist doesn't pierce into them."
   else
-    ok_ "initiatives journal repo exists — left alone"
+    ok_ "workspace journal repo exists — left alone"
   fi
-  if ! git -C "$ws/initiatives" remote get-url origin >/dev/null 2>&1; then
-    next_step "Give the initiatives journal a private remote (it holds your notes; commits are laptop-only until then):  gh repo create <you>/initiatives --private && git -C $ws/initiatives remote add origin git@github.com:<you>/initiatives.git && git -C $ws/initiatives push -u origin main"
+  if ! git -C "$ws" remote get-url origin >/dev/null 2>&1; then
+    next_step "Give the workspace journal a private remote (it holds your notes; commits are laptop-only until then):  gh repo create <you>/initiatives --private && git -C $ws remote add origin git@github.com:<you>/initiatives.git && git -C $ws push -u origin main"
   fi
 fi
 
