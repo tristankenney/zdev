@@ -195,23 +195,27 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	// Group metadata (ZDEV_SIDEBAR_GROUP=prefix), computed before the row
 	// closures so renderProject can route home rows to the header renderer.
 	// groupKeys[i] is project i's effective group; isHome[i] marks the row
-	// that IS its group's header — an initiative home (initiatives/<name>).
-	// Bare names are always singles: proto.GroupSort (the daemon's order
-	// under the same knob) has no adjacency notion, so a renderer-side
-	// bare-root lookahead would disagree with the published order — the
-	// invariants review caught exactly that divergence.
+	// that IS its group's header — a MARKED group's own directory row.
+	// Home-ness is structural (proto.HomeSet over the snapshot's names), so
+	// the hub, this renderer, and the switcher derive the identical set and
+	// nothing rides the wire.
 	var groupKeys []string
 	var isHome []bool
-	hasHome := map[string]bool{}       // group key → has an initiative home row
+	hasHome := map[string]bool{}       // group key → has a home row (marked group)
 	collapsedN := map[string]int{}     // group key → hidden member count
 	visibleMembers := map[string]int{} // group key → shown (non-home) member count
 	if GroupMode == "prefix" {
+		names := make([]string, len(snap.Projects))
+		for i := range snap.Projects {
+			names[i] = snap.Projects[i].Name
+		}
+		homes := proto.HomeSet(names)
 		groupKeys = make([]string, len(snap.Projects))
 		isHome = make([]bool, len(snap.Projects))
 		for i := range snap.Projects {
 			p := &snap.Projects[i]
-			groupKeys[i] = groupKey(p.Name)
-			isHome[i] = proto.IsInitiativeHome(p.Name)
+			groupKeys[i] = proto.EffectiveGroupKey(p.Name, homes)
+			isHome[i] = homes[p.Name]
 			if isHome[i] {
 				hasHome[groupKeys[i]] = true
 			}
@@ -363,7 +367,11 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 	renderGrouped := func(i int) {
 		if GroupMode == "prefix" {
 			if g := groupKeys[i]; g != prevGroup {
-				if !isHome[i] {
+				// Synthetic header for unmarked groups only; a marked
+				// group's home row IS its header, and the transition to
+				// ungrouped singles gets nothing at all — alpha order
+				// interleaves them and the tree mirrors the disk.
+				if g != "" && !isHome[i] {
 					writeGroupHeader(&buf, g, width, collapsedN[g],
 						collapsedN[g] > 0 && visibleMembers[g] == 0)
 				}
@@ -497,9 +505,8 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // the knob is removed rather than nursed.
 var GroupMode = "off"
 
-// groupKey delegates to proto.GroupKey — the shared definition the hub's
-// group-aware ordering (proto.GroupSort) also uses, so header emission and
-// row order can never disagree about membership.
+// groupKey delegates to proto.GroupKey — uniform first-segment keying;
+// the tree mirrors the disk.
 func groupKey(name string) string { return proto.GroupKey(name) }
 
 // displayName returns the row text for a project name under
@@ -517,18 +524,10 @@ func displayName(name string) string {
 	if GroupMode != "prefix" {
 		return name
 	}
-	i := strings.IndexByte(name, '/')
-	if i <= 0 {
-		return name
-	}
-	if name[:i] != proto.InitiativesContainer {
+	if i := strings.IndexByte(name, '/'); i > 0 {
 		return name[i+1:]
 	}
-	rest := name[i+1:]
-	if j := strings.IndexByte(rest, '/'); j > 0 {
-		return rest[j+1:]
-	}
-	return rest
+	return name
 }
 
 // writeGroupHeader emits the one-line SYNTHETIC group header for groups
@@ -537,14 +536,6 @@ func displayName(name string) string {
 // (name == ""). Groups WITH a home row get renderHomeRow instead — the
 // home project row IS the header there.
 func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int, folded bool) {
-	if name == "" {
-		// The transition into the ungrouped block is a BLANK line, not a
-		// rule — after the dash-soup cull, whitespace separates better
-		// than another hyphen run ("kinda mid", live review 2026-07-30).
-		buf.WriteString(ClearLineEnd)
-		buf.WriteByte('\n')
-		return
-	}
 	buf.WriteString("  ")
 	{
 		// Same ╭ corner as initiative headers (uniform group language;
@@ -600,7 +591,7 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// replaces the corner with its marker — attention outranks
 	// decoration. The split keys on ATTENTION, not the glyph — the
 	// waiting pulse's off-phase frame is itself "·".
-	name := proto.GroupKey(p.Name)
+	name := p.Name
 	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
 		buf.WriteString(PaletteFor(name))
 		// ╭ promises a frame below it; a fully folded group has none, so
