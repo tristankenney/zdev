@@ -107,6 +107,11 @@ type teaModel struct {
 	streamFn  func(ctx context.Context, conn net.Conn) (<-chan *proto.Snapshot, error)
 	dialFn    func(ctx context.Context) (*proto.Snapshot, net.Conn, error)
 	sleepFn   func(ctx context.Context, d time.Duration) error
+	// tickCmdFn builds the Cmd scheduleTick returns. Production wraps
+	// tea.Tick (a real sleep); tests swap in a Cmd that fires immediately so
+	// a whole Update()-returned Cmd tree can be drained synchronously
+	// without waiting out the real animation cadence.
+	tickCmdFn func(seq int, cadence time.Duration) tea.Cmd
 }
 
 // newTeaModel constructs the model with its first frame already rendered —
@@ -139,6 +144,9 @@ func newTeaModel(ctx context.Context, snap *proto.Snapshot, conn net.Conn, width
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	m.tickCmdFn = func(seq int, cadence time.Duration) tea.Cmd {
+		return tea.Tick(cadence, func(time.Time) tea.Msg { return teaTickMsg{seq: seq} })
 	}
 	m.animator.OnSnapshot(snap)
 	m.lastSig = m.animator.FrameSigFor(snap, m.nowFn())
@@ -276,9 +284,7 @@ func (m *teaModel) repaintLive() bool {
 // visible — see Animator.CadenceFor), tagged with the CURRENT tickSeq so a
 // later cadence restart can identify and drop it.
 func (m *teaModel) scheduleTick() tea.Cmd {
-	seq := m.tickSeq
-	cadence := m.animator.CadenceFor(m.snap)
-	return tea.Tick(cadence, func(time.Time) tea.Msg { return teaTickMsg{seq: seq} })
+	return m.tickCmdFn(m.tickSeq, m.animator.CadenceFor(m.snap))
 }
 
 // paintSideEffectsCmd captures the values a painted frame publishes
