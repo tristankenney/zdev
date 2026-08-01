@@ -157,21 +157,22 @@ tmux_major=$(tmux -V 2>/dev/null | awk '{print $2}' | cut -d. -f1)
 if [[ -z "$tmux_major" || "$tmux_major" -lt 3 ]]; then
   warn_ "tmux $(tmux -V 2>/dev/null) detected — zdev requires 3.x with control mode"
 fi
-# Go version floor: 1.23 (driven by fsnotify v1.10 + log/slog + math/rand/v2).
-# Ubuntu apt's golang-go is 1.18–1.22 on every current LTS, which fails to
-# compile with a cryptic "package log/slog is not in GOROOT" error halfway
-# through `make install`. Detect early and point users at a working install.
+# Go version floor: 1.24 (bubbletea's floor; previously 1.23 for fsnotify
+# v1.10 + log/slog + math/rand/v2). Ubuntu apt's golang-go is years behind
+# on every current LTS, which fails to compile with a cryptic "package … is
+# not in GOROOT" error halfway through `make install`. Detect early and
+# point users at a working install.
 go_raw=$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//')
 go_major=${go_raw%%.*}
 go_minor=${go_raw#*.}
 go_minor=${go_minor%%.*}
 if [[ -z "$go_major" || "$go_major" -lt 1 ]] || \
-   { [[ "$go_major" -eq 1 ]] && [[ -z "$go_minor" || "$go_minor" -lt 23 ]]; }; then
-  err_ "Go ${go_raw:-<unknown>} detected — zdev requires Go 1.23+"
-  dim_ "(uses log/slog, math/rand/v2, and fsnotify v1.10 which need ≥1.23)"
+   { [[ "$go_major" -eq 1 ]] && [[ -z "$go_minor" || "$go_minor" -lt 24 ]]; }; then
+  err_ "Go ${go_raw:-<unknown>} detected — zdev requires Go 1.24+"
+  dim_ "(bubbletea needs ≥1.24; log/slog, math/rand/v2, fsnotify need ≥1.23)"
   case "$OS" in
     Darwin)
-      dim_ "macOS: brew install go    # currently ships 1.23+"
+      dim_ "macOS: brew install go    # currently ships 1.24+"
       ;;
     Linux)
       dim_ "Ubuntu apt's golang-go is too old on every current LTS. Pick one of:"
