@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/tristankenney/zdev/zdevd/internal/render"
 )
 
 // runTea wires rendererSetup's shared startup result into a Bubble Tea
@@ -32,6 +35,18 @@ import (
 func runTea(ctx context.Context, rs *rendererSetup) error {
 	model := newTeaModel(ctx, rs.snap, rs.conn, rs.width, rs.tmuxPane, rs.tmuxSession, rs.socketPath)
 
+	// Wipe the pane before handing the screen to tea. The shared startup
+	// path (setupRenderer → initialSubscribe) paints RenderUnreachable
+	// retry frames with the CLASSIC harness while the daemon comes up —
+	// launchd starts it lazily, so on a restart this is the common path,
+	// not an edge case. Classic self-heals because every Render() repaint
+	// starts with CursorHome and clears as it goes; tea's inline renderer
+	// starts at the CURRENT cursor position and manages only its own
+	// lines, so without this wipe the last retry frame stays stranded
+	// above the live frame forever (seen live on daemon restart,
+	// 2026-08-01: "zdevd unreachable: i/o timeout" ghost at the top).
+	fmt.Print(prepareScreenForTea())
+
 	p := tea.NewProgram(model,
 		tea.WithContext(ctx),
 		tea.WithInput(nil),
@@ -59,4 +74,14 @@ func runTea(ctx context.Context, rs *rendererSetup) error {
 		return runErr
 	}
 	return nil
+}
+
+// prepareScreenForTea is the one-shot pane wipe runTea prints before the
+// Program takes the screen: home the cursor, clear everything below. After
+// this, every cell in the pane is tea's to manage. Split out (and exact —
+// no extra escapes) so the regression test can pin it: the bytes must
+// leave the cursor at the top-left with an empty pane, nothing more, or
+// tea's own initialization fights it.
+func prepareScreenForTea() string {
+	return render.CursorHome + render.ClearToEnd
 }
