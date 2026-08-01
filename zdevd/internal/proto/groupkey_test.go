@@ -20,11 +20,11 @@ func TestGroupKeyUniform(t *testing.T) {
 
 func TestHomeSet(t *testing.T) {
 	names := []string{
-		"marketplace",         // home: bare + has members below
+		"marketplace", // home: bare + has members below
 		"marketplace/pay-app",
-		"projects/pay-app",    // unmarked group: members only, no bare row
+		"projects/pay-app", // unmarked group: members only, no bare row
 		"projects/onboarding",
-		"zdev",                // single: bare, no members
+		"zdev", // single: bare, no members
 		"dotfiles",
 	}
 	homes := HomeSet(names)
