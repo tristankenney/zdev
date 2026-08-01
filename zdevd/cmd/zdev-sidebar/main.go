@@ -453,6 +453,15 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 	// rows under the lead. Default off → bullets, no byte change.
 	render.TeamRows = os.Getenv("ZDEV_TEAM_WINDOWS") == "1"
 
+	// Visual system (ZDEV_SIDEBAR_THEME): "rose-pine" opts into the Rose
+	// Pine Moon look — semantic truecolor tokens, the right-aligned status
+	// column, the wait-age hue ramp, the divider gradient. Anything else
+	// (including unset) is classic, byte-for-byte. Set before the first
+	// frame; never mutated after.
+	if os.Getenv("ZDEV_SIDEBAR_THEME") == "rose-pine" {
+		render.ThemeMode = "rose-pine"
+	}
+
 	// Click-to-switch opt-in (ZDEV_SIDEBAR_MOUSE=1). When off, clear any
 	// map a previous enabled run left on this pane — respawn-pane reuses
 	// the pane, so a stale option would keep clicks live after the knob

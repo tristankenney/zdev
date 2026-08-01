@@ -289,6 +289,8 @@ per keypress.</p>
 <tr><td class="k">ZDEV_WORKSPACE</td><td>~/workspace</td><td>workspace root</td></tr>
 <tr><td class="k">ZDEV_PROJECTS_DISCOVER</td><td>0</td><td>1 = the layout is the registry; file becomes overrides</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_GROUP</td><td>off</td><td><code>prefix</code> = grouped sidebar/switcher + group-aware row order; <code>collapse</code> = also fold quiet rows of unattended groups (per-row: working/waiting/finished/dead members stay visible; tune per-kind and pin groups open via <code>[collapse]</code> in sidebar.toml)</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_THEME</td><td>classic</td><td><code>rose-pine</code> = the Rose Pine Moon visual system: semantic truecolor tokens, right-aligned status column, wait-age hue ramp (gold→rose→love on the notify tiers), mood-divider gradient. Requires an RGB-capable terminal (the bundled tmux conf sets <code>terminal-overrides ",*:RGB"</code>)</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_ENGINE</td><td>classic</td><td><code>tea</code> = Bubble Tea render loop (line-diffed writes; same pixels)</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_MOUSE</td><td>0</td><td>1 = click a sidebar row to switch to it (the renderer publishes a screen-line→target map as the <code>@zdev-rows</code> pane option; clicks resolve against what is actually drawn). Off = tmux's stock click behaviour</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_THRESHOLD</td><td>160</td><td>min client cols before the sidebar auto-opens</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_WIDTH</td><td>50</td><td>sidebar pane width</td></tr>
