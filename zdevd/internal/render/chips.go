@@ -90,7 +90,7 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 			att = proto.AttIdle
 		default:
 			// "absent" or unknown — dim dot.
-			return "·", Dim
+			return "·", thDim()
 		}
 	}
 	switch att {
@@ -101,26 +101,26 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 		if p.WaitStartedTS > 0 {
 			age = now - p.WaitStartedTS
 		}
-		return animator.PulseGlyphAt(age), RedPulse
+		return animator.PulseGlyphAt(age), thWaiting(age)
 	case proto.AttWorking:
 		// Animated spinner (dogfood 2026-06-06): running work is the
 		// convention for motion, not a static ring. The footer tally
 		// keeps the static ◎ as the bucket's label.
-		return animator.WorkGlyph(), Icy
+		return animator.WorkGlyph(), thWorking()
 	case proto.AttFinished:
-		return "◆", Yellow
+		return "◆", thDone()
 	case proto.AttDead:
 		// Hook-confirmed unclean exit (NOW#3) — static, no pulse: a dead
 		// agent isn't asking, it's gone. RedPulse color carries the
 		// urgency; the glyph carries the difference.
-		return "✗", RedPulse
+		return "✗", thDead()
 	case proto.AttIdle:
 		if p.Status == "absent" {
-			return "·", Dim
+			return "·", thDim()
 		}
-		return "·", PaletteFor(p.Name)
+		return "·", thPalette(p.Name)
 	default:
-		return "·", Dim
+		return "·", thDim()
 	}
 }
 
@@ -155,7 +155,7 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup, teamRows bool) {
 		return
 	}
 	buf.WriteString(" ")
-	buf.WriteString(Dim)
+	buf.WriteString(thDim())
 	buf.WriteString("⊛")
 	buf.WriteString(truncateRunes(g.Name, 10))
 	buf.WriteString(Reset)
@@ -267,7 +267,7 @@ func chipBranchWithCap(buf *bytes.Buffer, branch string, ahead, behind int, rune
 	if branch == "" || IsDefaultBranch(branch) {
 		return
 	}
-	buf.WriteString(Cyan)
+	buf.WriteString(thChipAccent(Cyan))
 	buf.WriteString(truncateRunes(branch, runeCap))
 	if ahead > 0 || behind > 0 {
 		buf.WriteByte(' ')
@@ -300,7 +300,7 @@ func chipDirty(buf *bytes.Buffer, count int) {
 	if count == 0 {
 		return
 	}
-	buf.WriteString(Orange)
+	buf.WriteString(thChipAccent(Orange))
 	buf.WriteByte('+')
 	buf.WriteString(strconv.Itoa(count))
 	buf.WriteString(Reset)
@@ -357,7 +357,7 @@ func chipCelebrate(buf *bytes.Buffer, celebrateUntil int64, now int64) bool {
 		return false
 	}
 	buf.WriteString(Bold)
-	buf.WriteString(Green)
+	buf.WriteString(thChipAccent(Green))
 	buf.WriteString("✨ merged")
 	buf.WriteString(Reset)
 	return true
@@ -375,7 +375,7 @@ func chipPorts(buf *bytes.Buffer, ports []int) {
 	if len(ports) < max {
 		max = len(ports)
 	}
-	buf.WriteString(Dim)
+	buf.WriteString(thDim())
 	for i := 0; i < max; i++ {
 		if i > 0 {
 			buf.WriteByte(' ')
@@ -402,6 +402,18 @@ func chipWaitAge(buf *bytes.Buffer, waitStartedTS int64, now int64) {
 	}
 	age := now - waitStartedTS
 	ageStr := formatAge(age)
+	if ThemeMode == "rose-pine" {
+		// One ramp for the marker and the age (thWaiting); the "! "
+		// urgency prefix survives the theme — it is information, not
+		// decoration.
+		buf.WriteString(thWaiting(age))
+		if age >= int64(WaitUrgentSec) {
+			buf.WriteString("! ")
+		}
+		buf.WriteString(ageStr)
+		buf.WriteString(Reset)
+		return
+	}
 	switch {
 	case age >= int64(WaitUrgentSec):
 		buf.WriteString(RedPulse)
@@ -409,11 +421,11 @@ func chipWaitAge(buf *bytes.Buffer, waitStartedTS int64, now int64) {
 		buf.WriteString(ageStr)
 		buf.WriteString(Reset)
 	case age >= int64(WaitWarnSec):
-		buf.WriteString(Orange)
+		buf.WriteString(thChipAccent(Orange))
 		buf.WriteString(ageStr)
 		buf.WriteString(Reset)
 	default:
-		buf.WriteString(Dim)
+		buf.WriteString(thDim())
 		buf.WriteString(ageStr)
 		buf.WriteString(Reset)
 	}
@@ -472,7 +484,7 @@ func chipInlineAlerts(buf *bytes.Buffer, p *proto.Project) {
 	// PR failure — highest visual priority, has a count.
 	if p.PRFail > 0 {
 		buf.WriteString(" ")
-		buf.WriteString("\x1b[31m")
+		buf.WriteString(thChipAccent("\x1b[31m"))
 		buf.WriteString("✗")
 		buf.WriteString(strconv.Itoa(p.PRFail))
 		buf.WriteString(Reset)
@@ -481,7 +493,7 @@ func chipInlineAlerts(buf *bytes.Buffer, p *proto.Project) {
 	// CI failure — separate token (no count; CI is binary failing/healthy).
 	if isCIFailure(p.CIStatus, p.CIConclusion) {
 		buf.WriteString(" ")
-		buf.WriteString("\x1b[31m")
+		buf.WriteString(thChipAccent("\x1b[31m"))
 		buf.WriteString("✗ CI")
 		buf.WriteString(Reset)
 	}
@@ -489,7 +501,7 @@ func chipInlineAlerts(buf *bytes.Buffer, p *proto.Project) {
 	// CI pending — Cyan (matches chipCI's queued/in_progress hue).
 	if isCIPending(p.CIStatus) {
 		buf.WriteString(" ")
-		buf.WriteString(Cyan)
+		buf.WriteString(thChipAccent(Cyan))
 		buf.WriteString("⚙ CI")
 		buf.WriteString(Reset)
 	}
@@ -497,7 +509,7 @@ func chipInlineAlerts(buf *bytes.Buffer, p *proto.Project) {
 	// PR pending — Orange.
 	if p.PRPend > 0 {
 		buf.WriteString(" ")
-		buf.WriteString(Orange)
+		buf.WriteString(thChipAccent(Orange))
 		buf.WriteString("⊙")
 		buf.WriteString(strconv.Itoa(p.PRPend))
 		buf.WriteString(Reset)
@@ -506,7 +518,7 @@ func chipInlineAlerts(buf *bytes.Buffer, p *proto.Project) {
 	// Dirty count — Orange.
 	if p.DirtyCount > 0 {
 		buf.WriteString(" ")
-		buf.WriteString(Orange)
+		buf.WriteString(thChipAccent(Orange))
 		buf.WriteString("+")
 		buf.WriteString(strconv.Itoa(p.DirtyCount))
 		buf.WriteString(Reset)
@@ -537,15 +549,15 @@ func chipInlineAlerts(buf *bytes.Buffer, p *proto.Project) {
 func chipCI(buf *bytes.Buffer, status, conclusion string) {
 	switch {
 	case isCIPending(status):
-		buf.WriteString(Cyan)
+		buf.WriteString(thChipAccent(Cyan))
 		buf.WriteString("⚙ CI")
 		buf.WriteString(Reset)
 	case status == "completed" && conclusion == "success":
-		buf.WriteString(Green)
+		buf.WriteString(thChipAccent(Green))
 		buf.WriteString("✓ CI")
 		buf.WriteString(Reset)
 	case isCIFailure(status, conclusion):
-		buf.WriteString("\x1b[31m") // match chipPRAggregate's failure literal
+		buf.WriteString(thChipAccent("\x1b[31m")) // match chipPRAggregate's failure literal
 		buf.WriteString("✗ CI")
 		buf.WriteString(Reset)
 	default:
@@ -611,7 +623,7 @@ func renderFailingChecksRow(buf *bytes.Buffer, names []string, width int, nowMs 
 	if window == "" {
 		return false
 	}
-	buf.WriteString("\x1b[31m") // match chipCI / chipPRAggregate's failure red
+	buf.WriteString(thChipAccent("\x1b[31m")) // match chipCI / chipPRAggregate's failure red
 	buf.WriteString(window)
 	buf.WriteString(Reset)
 	return true

@@ -1,6 +1,22 @@
 package render
 
-import "unicode/utf8"
+import (
+	"regexp"
+	"unicode/utf8"
+)
+
+// sgrRE matches ANSI escape sequences for visible-width measurement.
+// Production twin of the test helpers' ansiRE — needed by the rose-pine
+// right-aligned status column, which pads between the name and the chip
+// cluster and must measure COLUMNS, not bytes (every color token is
+// multibyte, every frame glyph is multibyte).
+var sgrRE = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// visWidth returns the on-screen column count of s: escapes stripped,
+// runes counted. All glyphs this renderer emits are single-width.
+func visWidth(s string) int {
+	return utf8.RuneCountInString(sgrRE.ReplaceAllString(s, ""))
+}
 
 // Truncate14 returns s truncated to 13 runes + Ellipsis ("…", U+2026)
 // when s exceeds 14 runes. Returns s unchanged at exactly 14 runes or

@@ -170,8 +170,7 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	// COLOR (grey idle / green active / orange waiting / red urgent),
 	// preserving the at-a-glance signal in zero extra rows.
 	buf.WriteString("  ")
-	buf.WriteString(MoodFor(snap, nowFn))
-	buf.WriteString(strings.Repeat("─", 17))
+	buf.WriteString(thDivider(MoodFor(snap, nowFn), 17))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
@@ -464,7 +463,7 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// Dim demote divider: same glyph family as the mood divider but
 			// Dim-colored to signal "below the fold". One row always.
 			buf.WriteString("  ")
-			buf.WriteString(Dim)
+			buf.WriteString(thDim())
 			buf.WriteString(strings.Repeat("─", 17))
 			buf.WriteString(Reset)
 			buf.WriteString(ClearLineEnd)
@@ -603,7 +602,7 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 		// collapsed homeless group (projects/) shows its rollup here —
 		// this line is its only remaining trace. No spinner: working rows
 		// pierce per-row, so a folded row is by definition quiet.
-		buf.WriteString(Dim)
+		buf.WriteString(thDim())
 		if folded {
 			buf.WriteString("▸ ")
 		} else {
@@ -615,7 +614,7 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 		buf.WriteString(Reset)
 		if collapsedN > 0 {
 			buf.WriteString(" ")
-			buf.WriteString(Dim)
+			buf.WriteString(thDim())
 			fmt.Fprintf(buf, "·%d", collapsedN)
 		}
 	}
@@ -637,7 +636,7 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 		// Same breath-pulsing ▌ the current project row carries — without
 		// it, switching INTO an initiative home left the sidebar's
 		// selection invisible (found live, 2026-07-30).
-		buf.WriteString(BreathColorForProject(p.Name, animator.BreathFrame()))
+		buf.WriteString(thBreath(p.Name, animator.BreathFrame()))
 		buf.WriteString("▌")
 		buf.WriteString(Reset)
 		buf.WriteString(" ")
@@ -653,7 +652,7 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// waiting pulse's off-phase frame is itself "·".
 	name := p.Name
 	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
-		buf.WriteString(PaletteFor(name))
+		buf.WriteString(thPalette(name))
 		// ╭ promises a frame below it; a fully folded group has none, so
 		// it opens with the disclosure triangle instead.
 		if folded {
@@ -675,14 +674,14 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// as clutter (a pane half-full of ragged rules; "◐─ name" noise) —
 	// the corner/marker, hue, and Bold carry "this is a header" alone.
 	buf.WriteString(Bold)
-	buf.WriteString(PaletteFor(name))
+	buf.WriteString(thPalette(name))
 	buf.WriteString(name)
 	buf.WriteString(Reset)
 	// Rollup (phase4-v22): a collapsed group folds its member rows into a
 	// dim count on the header — "·N" reads as "N rows live under here".
 	if collapsedN > 0 {
 		buf.WriteString(" ")
-		buf.WriteString(Dim)
+		buf.WriteString(thDim())
 		fmt.Fprintf(buf, "·%d", collapsedN)
 		buf.WriteString(Reset)
 	}
@@ -729,7 +728,7 @@ func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent 
 		return
 	case "compact":
 		buf.WriteString("  ")
-		buf.WriteString(Dim)
+		buf.WriteString(thDim())
 		// Dead folds into the waiting slot here — the compact form is
 		// the legacy 5-bucket shape, kept stable for muscle memory.
 		fmt.Fprintf(buf, "%d● %d◎ %d◆ %d· %d·", nWait+nDead, nRun, nDone, nAlive, nAbsent)
@@ -745,10 +744,10 @@ func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent 
 		color string
 	}
 	buckets := []bucket{
-		{nDead, "dead", RedPulse},
-		{nWait, "waiting", Orange},
-		{nRun, "working", Icy},
-		{nDone, "done", Yellow},
+		{nDead, "dead", thChipAccent(RedPulse)},
+		{nWait, "waiting", thChipAccent(Orange)},
+		{nRun, "working", thChipAccent(Icy)},
+		{nDone, "done", thChipAccent(Yellow)},
 	}
 	wrote := false
 	for _, b := range buckets {
@@ -758,7 +757,7 @@ func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent 
 		if !wrote {
 			buf.WriteString("  ")
 		} else {
-			buf.WriteString(Dim)
+			buf.WriteString(thDim())
 			buf.WriteString(" · ")
 			buf.WriteString(Reset)
 		}
@@ -800,12 +799,12 @@ func metadataPrefix(p *proto.Project, current string, animator *Animator, urgent
 		// project row above it.
 		b.WriteString("      ")
 	case urgent:
-		b.WriteString(RedBorder)
+		b.WriteString(thUrgentBar())
 		b.WriteString("▌")
 		b.WriteString(Reset)
 		b.WriteString("     ")
 	case isCurrent:
-		b.WriteString(BreathColorForProject(p.Name, animator.BreathFrame()))
+		b.WriteString(thBreath(p.Name, animator.BreathFrame()))
 		b.WriteString("▌")
 		b.WriteString(Reset)
 		b.WriteString("     ")
@@ -839,7 +838,7 @@ func renderDomainRow(buf *bytes.Buffer, prefix string, glyph string, write func(
 		body = body[1:]
 	}
 	buf.WriteString(prefix)
-	buf.WriteString(Dim)
+	buf.WriteString(thDim())
 	buf.WriteString(glyph)
 	buf.WriteString(" ")
 	buf.WriteString(Reset)
@@ -892,12 +891,12 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 		// Urgent left-border accent. Replaces the breath bar when current
 		// (urgency wins over identity); replaces the "  " indent when non-current.
 		// 260511-nxy: foreground-only red ▌ — no bg state to leak across rows.
-		buf.WriteString(RedBorder)
+		buf.WriteString(thUrgentBar())
 		buf.WriteString("▌")
 		buf.WriteString(Reset)
 		buf.WriteString(" ")
 	case isCurrent:
-		buf.WriteString(BreathColorForProject(p.Name, animator.BreathFrame()))
+		buf.WriteString(thBreath(p.Name, animator.BreathFrame()))
 		buf.WriteString("▌")
 		buf.WriteString(Reset)
 		buf.WriteString(" ")
@@ -917,7 +916,7 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	// Skipped in "off" mode where no special treatment applies.
 	// Unmanaged rows are always dim (no projects-file entry).
 	if (DemoteMode != "off" && isStaleRow(p, nowFn())) || p.Unmanaged {
-		color = Dim
+		color = thDim()
 	}
 	buf.WriteString(color)
 	buf.WriteString(glyph)
@@ -926,7 +925,7 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 
 	if isCurrent {
 		buf.WriteString(Bold)
-		buf.WriteString(PaletteFor(p.Name))
+		buf.WriteString(thPalette(p.Name))
 	}
 	buf.WriteString(displayName(p.Name))
 	if isCurrent {
@@ -1039,6 +1038,7 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 // Per planner decision PD-02: name soft-cap at max(width-14, 10) runes.
 func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
 	buf.WriteString(gutter)
+	rowStart := buf.Len()
 	switch {
 	case gutter != "":
 		// Grouped: rowMargin already placed the marker at column 0 ahead of
@@ -1061,7 +1061,7 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	glyph, color := MarkerFor(pForMarker, animator, nowFn())
 	stale := DemoteMode != "off" && isStaleRow(p, nowFn())
 	if stale || p.Unmanaged {
-		color = Dim
+		color = thDim()
 	}
 	buf.WriteString(color)
 	buf.WriteString(glyph)
@@ -1077,36 +1077,62 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 		nameCap = 10
 	}
 	if stale || p.Status == "absent" || p.Unmanaged {
-		buf.WriteString(Dim)
+		buf.WriteString(thDim())
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 		buf.WriteString(Reset)
 	} else {
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 	}
 
-	// Inline alerts: PR/CI fail, PR pend, dirty count.
-	chipInlineAlerts(buf, p)
+	// The status cluster: inline alerts (PR/CI fail, PR pend, dirty), the
+	// Agent Teams badge, and the wait-age. Composed into its own buffer so
+	// rose-pine can RIGHT-ALIGN it: classic appends it inline after the
+	// name exactly as before (byte-identical), rose-pine pads the gap so
+	// the cluster lands flush with the pane edge — names ragged-right,
+	// status in a scannable column.
+	var tail bytes.Buffer
+	chipInlineAlerts(&tail, p)
 
 	// Agent Teams badge (phase4-v16, slice 4): the lead's row carries
 	// "⊛name" + a colored bullet per teammate — for in-process teams
 	// this is the members' ONLY surface.
-	chipTeamBadge(buf, teamGroups, teamRows)
+	chipTeamBadge(&tail, teamGroups, teamRows)
 
 	// Wait-age (compact form: no "! " prefix; chipWaitAge with "! " is for
-	// current-session agent domain row only — compact rows use the tiered inline form).
+	// current-session agent domain row only — compact rows use the tiered
+	// inline form).
 	if projectAttention(p) == proto.AttWaiting && p.WaitStartedTS > 0 {
 		now := nowFn()
 		age := now - p.WaitStartedTS
-		buf.WriteString(" ")
-		if age >= int64(WaitUrgentSec) {
-			buf.WriteString(Orange)
+		tail.WriteString(" ")
+		if ThemeMode == "rose-pine" {
+			tail.WriteString(thWaiting(age))
 		} else if age >= int64(WaitWarnSec) {
-			buf.WriteString(Orange)
+			tail.WriteString(Orange)
 		} else {
-			buf.WriteString(Dim)
+			tail.WriteString(Dim)
 		}
-		buf.WriteString(formatAge(age))
-		buf.WriteString(Reset)
+		tail.WriteString(formatAge(age))
+		tail.WriteString(Reset)
+	}
+
+	if ThemeMode == "rose-pine" && tail.Len() > 0 {
+		// Right-align: pad between the name and the cluster. The chip
+		// writers each lead with " ", so trim ONE space (the pad supplies
+		// the gap) and measure what this row has consumed so far — the
+		// caller's gutter was written before rowStart, and width was
+		// already reduced for it, so rowStart-relative math is exact.
+		cluster := bytes.TrimPrefix(tail.Bytes(), []byte(" "))
+		pad := width - visWidth(buf.String()[rowStart:]) - visWidth(string(cluster))
+		if pad < 1 {
+			pad = 1 // never glue the cluster to a long name; overflow beats collision
+		}
+		for i := 0; i < pad; i++ {
+			buf.WriteByte(' ')
+		}
+		buf.Write(cluster)
+	} else {
+		buf.Write(tail.Bytes())
 	}
 
 	buf.WriteString(ClearLineEnd)
@@ -1187,9 +1213,9 @@ func spaceIf(buf *bytes.Buffer) {
 // containers. margin is rowMargin's 2-column output — the marker sits
 // BEFORE the frame, never after it.
 func groupGutter(key string, hued bool, glyph, margin string) string {
-	color := Dim
+	color := thDim()
 	if hued {
-		color = PaletteFor(key)
+		color = thPalette(key)
 	}
 	return margin + color + glyph + Reset
 }
@@ -1211,9 +1237,9 @@ func groupGutter(key string, hued bool, glyph, margin string) string {
 func rowMargin(p *proto.Project, animator *Animator, urgent, isCurrent, isCursor bool) string {
 	switch {
 	case urgent:
-		return RedBorder + "▌" + Reset + " "
+		return thUrgentBar() + "▌" + Reset + " "
 	case isCurrent:
-		return BreathColorForProject(p.Name, animator.BreathFrame()) + "▌" + Reset + " "
+		return thBreath(p.Name, animator.BreathFrame()) + "▌" + Reset + " "
 	case isCursor:
 		return "▶ "
 	default:
