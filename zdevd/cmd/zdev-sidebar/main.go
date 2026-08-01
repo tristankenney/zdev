@@ -345,8 +345,48 @@ func run() error {
 		os.Exit(0)
 	}()
 
-	// Width + session name: one-shot tmux queries at startup; SIGWINCH handling
-	// is Phase 3. Both share a single 1s deadline context.
+	rs, err := setupRenderer(ctx)
+	if err != nil {
+		return err // ctx cancelled during setup, or an unrecoverable schema mismatch
+	}
+	defer rs.conn.Close()
+
+	// ZDEV_SIDEBAR_ENGINE selects the render loop: unset or "classic" (the
+	// default) is runClassic below, byte-for-byte what shipped before this
+	// knob existed. "tea" switches to the Bubble Tea engine (tea_model.go /
+	// tea_run.go) — same daemon-owns-state / renderer-is-pure / input-never-
+	// goes-through-the-renderer invariants, a cheaper per-line-diffing
+	// terminal harness underneath (see internal/render/body.go for why the
+	// two engines need different framing around the same
+	// render.RenderWithRows).
+	if os.Getenv("ZDEV_SIDEBAR_ENGINE") == "tea" {
+		return runTea(ctx, rs)
+	}
+	return runClassic(ctx, rs)
+}
+
+// rendererSetup bundles everything both engines need before their
+// steady-state loop starts: the one-shot startup queries (pane width, tmux
+// session name), the env-var knob configuration internal/render reads via
+// its package vars, the click-to-switch pane-option bookkeeping, and the
+// initial Subscribe handshake (including its own retry-with-
+// RenderUnreachable behavior and the Phase 2 schema check) — all identical
+// regardless of which engine ends up running the loop, since neither engine
+// has started yet at this point.
+type rendererSetup struct {
+	width       int
+	tmuxPane    string
+	tmuxSession string
+	socketPath  string
+	snap        *proto.Snapshot
+	conn        net.Conn
+}
+
+func setupRenderer(ctx context.Context) (*rendererSetup, error) {
+	// Width + session name: one-shot tmux queries at startup; SIGWINCH
+	// handling is Phase 3 for the classic engine (the tea engine picks up
+	// resizes for free via tea.WindowSizeMsg — see tea_model.go). Both
+	// share a single 1s deadline context.
 	startCtx, startCancel := context.WithTimeout(ctx, 1*time.Second)
 	width, werr := tmuxq.PaneWidth(startCtx)
 	tmuxSession := tmuxq.SessionName(startCtx)
@@ -425,9 +465,8 @@ func run() error {
 		return socket.Subscribe(ctx, socketPath, tmuxPane, tmuxSession)
 	}, width)
 	if err != nil {
-		return err // ctx cancelled
+		return nil, err // ctx cancelled
 	}
-	defer conn.Close()
 
 	// Phase 2 schema validation (P2-F + D2-07): the daemon's schema must
 	// match what this renderer compiled against. A stale renderer connecting
@@ -441,8 +480,27 @@ func run() error {
 		)); werr != nil {
 			slog.Error("write schema-mismatch frame failed", "err", werr)
 		}
-		return fmt.Errorf("schema mismatch: got %q, want %q", snap.Schema, proto.SchemaVersion)
+		conn.Close()
+		return nil, fmt.Errorf("schema mismatch: got %q, want %q", snap.Schema, proto.SchemaVersion)
 	}
+
+	return &rendererSetup{
+		width:       width,
+		tmuxPane:    tmuxPane,
+		tmuxSession: tmuxSession,
+		socketPath:  socketPath,
+		snap:        snap,
+		conn:        conn,
+	}, nil
+}
+
+// runClassic is the pre-tea render loop (ZDEV_SIDEBAR_ENGINE unset or
+// "classic"): byte-for-byte what shipped before ZDEV_SIDEBAR_ENGINE existed,
+// only moved into its own function so run() could dispatch to it or to
+// runTea after the shared setupRenderer step. See tea_model.go/tea_run.go
+// for the alternative engine.
+func runClassic(ctx context.Context, rs *rendererSetup) error {
+	width, tmuxPane, tmuxSession, socketPath, snap, conn := rs.width, rs.tmuxPane, rs.tmuxSession, rs.socketPath, rs.snap, rs.conn
 
 	// Phase 3 — animation-aware render loop with Phase 4 outage handling.
 	//
