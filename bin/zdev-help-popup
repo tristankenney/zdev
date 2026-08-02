@@ -23,7 +23,13 @@ describe() {
     case "$1" in
         *zdev-pick*)             echo "switch project — or jump into an agent team (members nested below the lead)" ;;
         *zdev\ next*|*zdev-show\ next*) echo "jump to whatever needs you most" ;;
-        *zdev-triage-popup*)     echo "ranked attention queue (pick one to jump)" ;;
+        *zdev-triage-popup*)
+            if [[ "${ZDEV_TRIAGE_ROUND:-0}" == "1" ]] && command -v zdev-round >/dev/null 2>&1; then
+                echo "the Round — jump/defer/re-poll burn-down over the ranked queue"
+            else
+                echo "ranked attention queue (pick one to jump)"
+            fi
+            ;;
         *triage*)                echo "ranked attention queue" ;;
         *zdev\ ack*|*ack*)       echo "mark every status read (waiting/done/dead)" ;;
         *zdev-broadcast-claude*) echo "broadcast a prompt to every claude pane" ;;

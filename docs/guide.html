@@ -218,7 +218,7 @@ contract.</li>
 <tr><th>Key</th><th>Does</th></tr>
 <tr><td class="k">M-p</td><td>project switcher (fzf) — grouped like the sidebar, full paths; a home row heads its own group, INITIATIVE.md previews on hover (ctrl-/ toggles); team members nest under their lead</td></tr>
 <tr><td class="k">M-n</td><td><code>zdev next</code> — jump to what needs you most (skips the session you're in)</td></tr>
-<tr><td class="k">M-a</td><td>triage popup — the ranked queue with wait context; answer without switching</td></tr>
+<tr><td class="k">M-a</td><td>triage popup — the ranked queue with wait context; answer without switching. <code>ZDEV_TRIAGE_ROUND=1</code> swaps in the Round: a stateful jump→re-poll→advance loop (enter jumps + marks handled, <span class="k">d</span> defers, <span class="k">j</span>/<span class="k">k</span> move, <span class="k">r</span> re-polls, <span class="k">q</span>/esc ends with a one-line receipt)</td></tr>
 <tr><td class="k">M-r</td><td><code>zdev ack --all</code> — mark every status read</td></tr>
 <tr><td class="k">M-o</td><td>announcements menu — mute/unmute "X needs you"</td></tr>
 <tr><td class="k">M-Up / M-Down / M-Enter</td><td>sidebar row cursor / switch to it</td></tr>
@@ -297,6 +297,7 @@ per keypress.</p>
 <tr><td class="k">ZDEV_SIDEBAR_DEMOTE</td><td>dim</td><td><code>fold</code> sinks stale rows below a divider; <code>off</code> disables</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_FOOTER</td><td>full</td><td><code>compact</code> glyph tally · <code>off</code></td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_REVIEW</td><td>0</td><td>1 = landing-readiness gauge in the sidebar</td></tr>
+<tr><td class="k">ZDEV_TRIAGE_ROUND</td><td>0</td><td>1 = M-a opens the Round (Bubble Tea burn-down popup) instead of the classic fzf triage popup, when <code>zdev-round</code> is on PATH</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_UNMANAGED</td><td>hide-ish</td><td><code>show</code> = dim unmanaged sessions below the managed block</td></tr>
 <tr><td class="k">ZDEV_TEAM_WINDOWS</td><td>0</td><td>1 = Agent Teams member windows + nested rows</td></tr>
 <tr><td class="k">ZDEV_NOTIFY_CMD</td><td>—</td><td>your notification transport (env: ZDEV_NOTIFY_PROJECT/MSG/KIND/AGE)</td></tr>

@@ -12,6 +12,17 @@
 # questions can be triaged without entering the session at all.
 set -euo pipefail
 
+# ZDEV_TRIAGE_ROUND=1 (S4 Round burn-down popup, ROADMAP): opt into the
+# stateful Bubble Tea popup — jump/defer/re-poll/receipt over the same
+# ranked queue this script reads — instead of the classic one-shot fzf
+# list below. New surface behind a knob, current behavior unchanged by
+# default (ZDEV_SIDEBAR_*/ZDEVD_* precedent). Falls through to the classic
+# popup when zdev-round isn't on PATH yet (e.g. `make install` hasn't run
+# since it was added) so flipping the knob early never breaks M-a.
+if [[ "${ZDEV_TRIAGE_ROUND:-0}" == "1" ]] && command -v zdev-round >/dev/null 2>&1; then
+    exec zdev-round
+fi
+
 if ! command -v fzf >/dev/null 2>&1; then
     echo "fzf not installed. Run: brew install fzf"
     exit 1
