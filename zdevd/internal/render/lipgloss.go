@@ -114,3 +114,15 @@ func StyleOrange() lipgloss.Style {
 func StyleRedPulse() lipgloss.Style {
 	return lipgloss.NewStyle().Renderer(Renderer).Bold(true).Foreground(lipgloss.Color("9"))
 }
+
+// StyleGaugeName returns a fixed-width, left-aligned style for the review
+// gauge's (review_gauge.go, rose-pine mode) repo-name column: it right-pads
+// a truncated name to `width` columns so the bar that follows starts at the
+// SAME column on every row, regardless of how long each repo's name is.
+// Deliberately colorless — Width/Align is pure layout, so it composes with
+// the ANSI256-pinned Renderer at zero profile risk (unlike Foreground on a
+// truecolor hex, which the renderer WOULD downsample; see thBar* in
+// theme_rosepine.go for why bar-segment color stays off this path).
+func StyleGaugeName(width int) lipgloss.Style {
+	return lipgloss.NewStyle().Renderer(Renderer).Width(width)
+}
