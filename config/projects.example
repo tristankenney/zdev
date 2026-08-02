@@ -9,12 +9,15 @@
 # Discovery (ZDEV_PROJECTS_DISCOVER=1 in ~/.config/zdev/env): the workspace
 # layout is the registry and this file holds OVERRIDES only —
 #
-#   <workspace>/<dir> with .git           → project (root repo)
-#   <workspace>/<name>/ + INITIATIVE.md   → initiative: home row + one row
-#                                           per child dir with .git
-#                                           (notes/ never becomes a row)
-#   <workspace>/<name>/ (unmarked)        → drawer group: one row per
-#                                           child dir (e.g. projects/)
+#   Two questions decide everything, and neither is answered in config:
+#   1. root dir WITH .git      → a plain project row (zdev, dotfiles)
+#      root dir WITHOUT .git   → a GROUP
+#   2. group WITH INITIATIVE.md → an INITIATIVE: its own dir rows as the
+#                                 group home, plus one row per child that
+#                                 has .git (so notes/ never rows)
+#      group WITHOUT it         → a DRAWER: one row per child dir, any dir
+#                                 (e.g. projects/)
+#   `touch <group>/INITIATIVE.md` promotes a drawer; deleting it demotes.
 #
 # The daemon watches the workspace: `git clone` into a group IS add-repo,
 # `rm -rf` is remove — rows follow the disk in seconds.

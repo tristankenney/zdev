@@ -110,10 +110,56 @@ defines what zdev supervises — no list to maintain:</p>
   projects/&lt;repo&gt;              unmarked group — canonical checkouts, reviews
   &lt;name&gt;/INITIATIVE.md         marked group = an initiative (see below)
 </code></pre>
-<p>The tree mirrors the disk — no path is special. A root directory
-<em>without</em> <code>.git</code> is a <strong>group</strong>; the on-disk
-file <code>INITIATIVE.md</code> (never a config entry) marks it as an
-initiative:</p>
+<p>The tree mirrors the disk — no path is special. Everything follows from
+two questions asked about each directory at the workspace root:</p>
+
+<h3>1. Is it a repo, or a group?</h3>
+<p>A root directory <strong>with <code>.git</code></strong> is a
+<strong>project</strong> — one plain row (<code>zdev</code>,
+<code>dotfiles</code>). A root directory <strong>without <code>.git</code></strong>
+is a <strong>group</strong> — a folder of things, folded behind one header.
+That's the whole rule; there is no third kind and no way to declare either.</p>
+
+<h3>2. Is the group marked?</h3>
+<p>A group is an <strong>initiative</strong> if — and only if — it contains a
+file named <code>INITIATIVE.md</code>. Nothing else marks it: not config, not
+a naming convention, not its position. A group without that file is a
+<strong>drawer</strong>: a plain container of checkouts, of which
+<code>projects/</code> is the canonical example.</p>
+<p>So creating each is a one-liner, and both appear in the sidebar within
+seconds — the daemon watches the workspace:</p>
+<pre><code># a drawer — just make the directory and put repos in it
+mkdir -p ~/workspace/scratch &amp;&amp; git clone &lt;url&gt; ~/workspace/scratch/thing
+
+# an initiative — the same, plus the mark
+mkdir -p ~/workspace/marketplace/notes
+$EDITOR ~/workspace/marketplace/INITIATIVE.md   # intent, tracker links
+
+# promote a drawer to an initiative (or demote: delete the file)
+touch ~/workspace/scratch/INITIATIVE.md
+</code></pre>
+
+<h3>What the mark actually changes</h3>
+<p>Both kinds group and fold identically. The mark buys identity and
+memory — nothing about how members behave:</p>
+<table>
+<tr><th></th><th>Drawer (unmarked)</th><th>Initiative (<code>INITIATIVE.md</code>)</th></tr>
+<tr><td>Which children row</td><td><strong>every</strong> child directory</td><td>only children with <code>.git</code> (so <code>notes/</code> never rows)</td></tr>
+<tr><td>Header row</td><td>synthetic, <em>dim</em> — scaffolding, recedes</td><td>the group's own directory <strong>is</strong> a row, in its identity colour</td></tr>
+<tr><td>Is the header a session?</td><td>no — a label; clicking it jumps to the first member</td><td>yes — you can <code>zdev &lt;name&gt;</code> and work at the initiative level</td></tr>
+<tr><td>Journal tracking</td><td>ignored (contents are other repos' working trees)</td><td><code>INITIATIVE.md</code>, <code>notes/</code>, <code>AGENTS.md</code>, <code>.beads/</code> versioned by the workspace journal</td></tr>
+<tr><td>Collapse setting</td><td><code>containers</code> in <code>[collapse]</code></td><td><code>initiatives</code> in <code>[collapse]</code></td></tr>
+<tr><td>Tooling</td><td>none — it's a folder</td><td>the <code>/zdev:initiative</code> skill: start, add repo, status, wind down</td></tr>
+</table>
+<div class="callout">
+<strong>Rule of thumb.</strong> Mark a group when the work has an
+<em>identity</em> worth remembering — a unit of value with intent, decisions,
+and an outcome that should outlive the directory. Leave it unmarked when it's
+just somewhere to keep checkouts. A drawer costs nothing and can be promoted
+later with one <code>touch</code>.
+</div>
+
+<p>The rules in full, for reference:</p>
 <table>
 <tr><th>Rule</th><th>Becomes a row?</th></tr>
 <tr><td>root dir with <code>.git</code></td><td>yes — standalone project</td></tr>

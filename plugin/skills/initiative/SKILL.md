@@ -17,13 +17,26 @@ metadata:
 
 One structural concept exists: the **group** — a workspace-root directory of
 members that folds behind a sidebar header. The tree mirrors the disk;
-nothing about any path is special. Every group has initiative functionality
-available; an **initiative** is a group that utilises it, and the mark is an
-on-disk file — `INITIATIVE.md` in the group directory — never a config
-entry. (`projects/` is a group that doesn't — a drawer of standing
-checkouts, no metadata, no identity.) An initiative is the unit of value
-delivered: it spans repos, lives exactly as long as delivery requires, and
-its scope drifts as work reveals itself. Layout:
+nothing about any path is special. Two questions decide the whole model:
+a root dir **with `.git`** is a plain project, **without** it is a group;
+a group **containing `INITIATIVE.md`** is an initiative, one **without** it
+is a drawer. That file is the entire mark — `touch <group>/INITIATIVE.md`
+promotes a drawer, deleting it demotes — never a config entry.
+
+What the mark changes (grouping and folding work identically either way):
+in a drawer EVERY child directory rows; in an initiative only children with
+`.git` do, so `notes/` never becomes a row. A drawer's header is a dim
+label; an initiative's own directory **is** a row (its "home"), carries the
+initiative's identity colour, and can be entered with `zdev <name>` to work
+at the initiative level. Only an initiative's metadata (`INITIATIVE.md`,
+`notes/`, `AGENTS.md`, `.beads/`) is versioned by the workspace journal.
+
+Mark a group when the work has an identity worth remembering; leave it a
+drawer when it is just somewhere to keep checkouts (`projects/` is the
+canonical drawer — standing checkouts, no metadata, no identity). An
+initiative is the unit of value delivered: it spans repos, lives exactly as
+long as delivery requires, and its scope drifts as work reveals itself.
+Layout:
 
 ```
 ~/workspace/                   # ONE git repo (the journal) versioning all
