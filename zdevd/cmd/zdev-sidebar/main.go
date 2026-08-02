@@ -413,6 +413,13 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 	// readiness gauge in the freed strip slot. Off ⇒ byte-identical to today.
 	render.ReviewGaugeEnabled = os.Getenv("ZDEV_SIDEBAR_REVIEW") == "1"
 
+	// Initiative home metadata opt-in (default off, phase4-v23): the Intent
+	// sentence + member rollup rows shown when the current session IS an
+	// initiative home. Independent of ZDEV_SIDEBAR_GROUP — it applies
+	// whether or not the flat list is visually grouped. Off ⇒
+	// byte-identical to today.
+	render.InitiativeEnabled = os.Getenv("ZDEV_SIDEBAR_INITIATIVE") == "1"
+
 	// Footer style (dogfood #4): full (worded, default) | compact
 	// (legacy glyph tally) | off. Unknown values fall back to full.
 	switch os.Getenv("ZDEV_SIDEBAR_FOOTER") {
