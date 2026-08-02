@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	zone "github.com/lrstanley/bubblezone"
 
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
@@ -167,6 +168,9 @@ func (m *roundModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case roundTickMsg:
 		if msg.seq != m.tickSeq {
 			return m, nil // superseded chain (a manual `r` restarted it) — drop
@@ -230,6 +234,60 @@ func (m *roundModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// handleMouse gives the Round direct manipulation: hover moves the cursor
+// (motion events — the popup runs WithMouseAllMotion), left-click jumps the
+// row under the pointer, right-click defers it, and the wheel moves the
+// cursor. Hit-testing is bubblezone lookups against the zones View() marked
+// — no coordinate math, so layout changes can never desync it.
+func (m *roundModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if len(m.rows) == 0 {
+		if msg.Action == tea.MouseActionPress {
+			m.receipt = buildReceipt(m.handledN, m.deferredN, 0)
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	switch {
+	case msg.Button == tea.MouseButtonWheelDown && msg.Action == tea.MouseActionPress:
+		m.moveCursor(1)
+		return m, nil
+	case msg.Button == tea.MouseButtonWheelUp && msg.Action == tea.MouseActionPress:
+		m.moveCursor(-1)
+		return m, nil
+	}
+	i := m.rowIndexAt(msg)
+	if i < 0 {
+		return m, nil
+	}
+	switch {
+	case msg.Action == tea.MouseActionMotion:
+		m.cursor = i
+		return m, nil
+	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+		row := m.rows[i]
+		m.cursor = i
+		m.markHandled(row.Name)
+		return m, m.jumpCmd(row.Name)
+	case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight:
+		m.cursor = i
+		m.markDeferred(m.rows[i].Name)
+		return m, nil
+	}
+	return m, nil
+}
+
+// rowIndexAt resolves a mouse event to a queue row via the zones the last
+// View() registered, or -1 (header, footer, blank lines, or a row that
+// vanished since the last paint).
+func (m *roundModel) rowIndexAt(msg tea.MouseMsg) int {
+	for i, r := range m.rows {
+		if z := zone.Get(r.Name); z != nil && z.InBounds(msg) {
+			return i
+		}
+	}
+	return -1
 }
 
 // markHandled records a jump. Recomputing rows immediately after removes

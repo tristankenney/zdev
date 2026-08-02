@@ -4,9 +4,19 @@ import (
 	"fmt"
 	"strings"
 
+	zone "github.com/lrstanley/bubblezone"
+
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/render"
 )
+
+// The global bubblezone manager backs the popup's mouse support: each queue
+// row is Marked with its project name, Scan at the View root records where
+// every row actually landed and strips the zero-width markers, and Update's
+// MouseMsg handler asks "which row is under the pointer" instead of doing
+// coordinate math. init() rather than main() so tests that call View()
+// directly get a live manager too.
+func init() { zone.NewGlobal() }
 
 // gistMaxLen caps the gist column exactly like zdev-show's triage view, so
 // the Round's queue reads identically to `zdev-show triage` for the same
@@ -42,15 +52,21 @@ func (m *roundModel) View() string {
 		if i == m.cursor {
 			cursor = render.Bold + render.Cyan + "▶ " + render.Reset
 		}
-		fmt.Fprintf(&b, "%s%s %-*s %s%4s%s  %s%s%s\n",
+		line := fmt.Sprintf("%s%s %-*s %s%4s%s  %s%s%s",
 			cursor, glyphFor(r), nameColWidth, r.Name,
 			render.Dim, formatRoundAge(r.AgeSec), render.Reset,
 			render.Dim, truncateGist(r.Gist), render.Reset)
+		// Each row is a mouse zone keyed by its project name — hover moves
+		// the cursor, click jumps, right-click defers (see handleMouse).
+		b.WriteString(zone.Mark(r.Name, line))
+		b.WriteByte('\n')
 	}
 
 	b.WriteString("\n")
 	b.WriteString(m.viewFooter())
-	return b.String()
+	// Scan registers every marked zone's final position and strips the
+	// zero-width markers — MUST wrap the root view, nothing after it.
+	return zone.Scan(b.String())
 }
 
 // viewEmpty is the brief's "friendly 'fleet is quiet' state" — shown when
@@ -70,7 +86,7 @@ func (m *roundModel) viewFooter() string {
 		fmt.Fprintf(&b, "%s%s%s ", render.Icy, render.WorkFrames[0], render.Reset)
 	}
 	fmt.Fprintf(&b, "%d handled · %d deferred · %d left\n", m.handledN, m.deferredN, len(m.rows))
-	fmt.Fprintf(&b, "%senter jump · d defer · j/k move · r poll · q/esc end%s\n", render.Dim, render.Reset)
+	fmt.Fprintf(&b, "%senter/click jump · d/right-click defer · j/k move · r poll · q/esc end%s\n", render.Dim, render.Reset)
 	return b.String()
 }
 

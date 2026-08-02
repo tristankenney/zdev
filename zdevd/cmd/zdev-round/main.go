@@ -57,7 +57,11 @@ func run() int {
 	}
 
 	model := newRoundModel(ctx, socketPath, snap)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	// WithMouseAllMotion: hover moves the cursor, click jumps, right-click
+	// defers, wheel scrolls — bubblezone resolves which row (round_view.go
+	// Marks each one). AllMotion rather than CellMotion because hover needs
+	// motion WITHOUT a button held. tmux ≥3.3 forwards mouse into popups.
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseAllMotion(), tea.WithContext(ctx))
 	model.program = p
 
 	finalModel, runErr := p.Run()

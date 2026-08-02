@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"time"
+
 	"errors"
+	zone "github.com/lrstanley/bubblezone"
 	"strings"
 	"testing"
 
@@ -482,5 +485,100 @@ func TestView_NonEmptyQueueShowsRowsAndFooter(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("view missing expected content %q: %q", want, out)
 		}
+	}
+}
+
+// mouseTestModel builds a model whose queue is the given names in order,
+// recomputed and Viewed once so bubblezone has live zones for hit tests.
+func mouseTestModel(t *testing.T, names []string) *roundModel {
+	t.Helper()
+	snap := &proto.Snapshot{Schema: proto.SchemaVersion, Triage: names}
+	for _, n := range names {
+		snap.Projects = append(snap.Projects, proto.Project{
+			Name: n, Status: "waiting", Attention: proto.AttWaiting, WaitStartedTS: 1000,
+		})
+	}
+	m := newRoundModel(context.Background(), "/tmp/does-not-exist.sock", snap)
+	m.recomputeRows(2000)
+	if len(m.rows) != len(names) {
+		t.Fatalf("test model rows = %d, want %d", len(m.rows), len(names))
+	}
+	return m
+}
+
+// waitZones polls until bubblezone's worker has registered every named
+// zone from the last Scan — Scan hands zones to a goroutine, so Get
+// immediately after is a benign race in production (the next mouse event
+// is human-timescale away) but a flake in tests. Poll, never sleep (repo
+// convention: timing-sensitive tests must not assume an idle machine).
+func waitZones(t *testing.T, m *roundModel, names ...string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_ = m.View() // re-Scan; registration is idempotent per iteration
+		ok := true
+		for _, n := range names {
+			if zone.Get(n) == nil {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("zones %v never registered", names)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Mouse: hit-testing goes through the zones the last View registered, so a
+// synthetic click at a row's actual coordinates must resolve to it — and
+// clicks on the header/footer must not.
+func TestMouseResolvesRowsViaZones(t *testing.T) {
+	m := mouseTestModel(t, []string{"alpha", "beta", "gamma"})
+	waitZones(t, m, "alpha", "beta", "gamma")
+
+	// Rows render at Y=2,3,4 (header + blank line above them).
+	click := func(y int, btn tea.MouseButton) (tea.Model, tea.Cmd) {
+		return m.handleMouse(tea.MouseMsg{X: 4, Y: y, Button: btn, Action: tea.MouseActionPress})
+	}
+
+	if _, cmd := click(3, tea.MouseButtonLeft); cmd == nil {
+		t.Fatalf("left click on row 1 must jump (Cmd expected)")
+	}
+	if !m.handled["beta"] {
+		t.Errorf("clicked row must be marked handled; handled=%v", m.handled)
+	}
+
+	waitZones(t, m, "alpha", "gamma")
+	if _, _ = click(2, tea.MouseButtonRight); !m.deferred["alpha"] {
+		t.Errorf("right-click must defer the row under the pointer; deferred=%v", m.deferred)
+	}
+
+	// Header (y=0) resolves to nothing — no state change, no Cmd.
+	before := m.cursor
+	if _, cmd := click(0, tea.MouseButtonLeft); cmd != nil || m.cursor != before {
+		t.Errorf("header click must be inert")
+	}
+}
+
+// Hover (motion, no button) moves the cursor to the row under the pointer.
+func TestMouseHoverMovesCursor(t *testing.T) {
+	m := mouseTestModel(t, []string{"alpha", "beta", "gamma"})
+	waitZones(t, m, "alpha", "beta", "gamma")
+	m.handleMouse(tea.MouseMsg{X: 4, Y: 4, Action: tea.MouseActionMotion})
+	if m.cursor != 2 {
+		t.Errorf("hover over row 2 must move cursor there, got %d", m.cursor)
+	}
+}
+
+// Wheel moves the cursor without needing a zone hit.
+func TestMouseWheel(t *testing.T) {
+	m := mouseTestModel(t, []string{"alpha", "beta"})
+	m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if m.cursor != 1 {
+		t.Errorf("wheel down must advance cursor, got %d", m.cursor)
 	}
 }
