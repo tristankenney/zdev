@@ -59,3 +59,12 @@ func TestSocketPathFitsAFUnixLimit(t *testing.T) {
 		t.Errorf("SocketPath length %d > AF_UNIX limit %d: %q", len(got), limit, got)
 	}
 }
+
+// ZDEVD_SOCKET pins clients to an explicit socket — the demo/CI escape
+// hatch. It must win over both the computed path and daemon discovery.
+func TestResolveSocketPathEnvOverride(t *testing.T) {
+	t.Setenv("ZDEVD_SOCKET", "/tmp/zdev-test-demo.sock")
+	if got := ResolveSocketPath(); got != "/tmp/zdev-test-demo.sock" {
+		t.Errorf("ZDEVD_SOCKET must win, got %q", got)
+	}
+}

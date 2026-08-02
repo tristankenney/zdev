@@ -104,6 +104,14 @@ func RemoveDiscovery() error {
 // written by the daemon and return that path. Falls back to SocketPath() if
 // the discovery file is absent or empty.
 func ResolveSocketPath() string {
+	// ZDEVD_SOCKET pins clients to an explicit socket, bypassing both the
+	// computed path and daemon discovery. Exists for `zdevd demo` (the
+	// README GIF pipeline points a real renderer at the demo server while
+	// the production daemon keeps its socket) and for the same trick in
+	// CI. Absolute trust: whoever sets the env owns the consequence.
+	if v := os.Getenv("ZDEVD_SOCKET"); v != "" {
+		return v
+	}
 	computed := SocketPath()
 	if info, err := os.Stat(computed); err == nil && info.Mode()&os.ModeSocket != 0 {
 		return computed

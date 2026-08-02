@@ -9,12 +9,13 @@ tmux sidebar that surfaces which sessions need you (and what they're stuck
 on), plus a CLI that spins, kills, and auto-reaps one tmux session per
 project so the list stays tractable.
 
-![sidebar screenshot placeholder](docs/screenshot.png)
+![zdev sidebar demo — idle → working → waiting → dead](docs/demo.gif)
 
-> **To regenerate:** run `zdevd demo` (no agents or gh auth needed), connect
-> a sidebar pane, screen-record the 30-second animation, and save the GIF as
-> `docs/screenshot.png`. The demo animates idle → working → waiting →
-> escalation → agent death in sequence.
+> **To regenerate:** `make -C zdevd demo-gif` — starts `zdevd demo` (a
+> fake-fleet snapshot server; no agents, tmux sessions, or gh auth needed)
+> and records the real renderer with [vhs](https://github.com/charmbracelet/vhs)
+> via `docs/demo.tape`. The scenario: idle → working → waiting →
+> escalation → agent death.
 
 ## What you get
 

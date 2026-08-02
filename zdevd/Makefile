@@ -448,3 +448,18 @@ use-go:
 
 clean:
 	rm -rf "$(BIN_DIR)"
+
+# demo-gif — regenerate docs/demo.gif: the README's fake-fleet recording
+# (idle → working → waiting → dead) rendered by the REAL sidebar against
+# `zdevd demo`. Owns the demo-server lifecycle so docs/demo.tape stays a
+# pure recording script. Requires vhs (brew install vhs) and an installed
+# zdev. Not part of `test` — it is a docs artifact, regenerated on demand.
+.PHONY: demo-gif
+demo-gif:
+	@command -v vhs >/dev/null || { echo "demo-gif: vhs not installed (brew install vhs)" >&2; exit 1; }
+	@rm -f /tmp/zdev-demo.sock
+	@$(GO_DAEMON) demo --socket /tmp/zdev-demo.sock & \
+	  DEMO_PID=$$!; \
+	  trap 'kill $$DEMO_PID 2>/dev/null; rm -f /tmp/zdev-demo.sock' EXIT; \
+	  sleep 1; \
+	  cd $(REPO_ROOT) && vhs docs/demo.tape
