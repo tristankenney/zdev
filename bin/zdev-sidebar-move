@@ -30,8 +30,15 @@ ARG="${1:-}"
 switch_to() {
     local NAME="$1" WIN="${2:-}"
     [[ -z "$NAME" ]] && return 0
-    # Convert slash-form (e.g. "example/backend") to dash-form for tmux.
+    # Project name → tmux session name. BOTH substitutions matter and must
+    # match bin/zdev's session_name() and proto.SessionKey() exactly:
+    # "/" → "-" (path separator), and "." → "_" because tmux parses "." as
+    # the window.pane separator in EVERY target, session targets included —
+    # `has-session -t "=kickstart.nvim"` fails with "can't find pane: nvim"
+    # even though the session exists. Dropping the dot rule here made every
+    # jump to a dotted project miss (live report 2026-08-02).
     local SESSION="${NAME//\//-}"
+    SESSION="${SESSION//./_}"
 
     # Gas Town sessions live on a separate tmux socket; raw switch-client
     # targets the wrong server and silently fails.  When GT_TOWN_ROOT is

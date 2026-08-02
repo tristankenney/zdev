@@ -106,7 +106,9 @@ build_list() {
         NF>=2 {
             lead=$1; mem=$2; st=$3; wid=$4
             if (wid=="") next
-            lsess=lead; gsub(/\//,"-",lsess)
+            # Mirrors session_name()/proto.SessionKey: "/"→"-" AND "."→"_"
+            # (tmux parses "." as the window.pane separator in every target).
+            lsess=lead; gsub(/\//,"-",lsess); gsub(/\./,"_",lsess)
             nested[lead]=nested[lead] sprintf("  \xe2\x86\xb3 %s  %s%sW%s%s%s%s\n", \
                 mem, glyph(st), T, T, lsess, T, wid)
             hasteam[lead]=1
@@ -167,7 +169,7 @@ build_list() {
                 # header is selectable and targets the group'\''s first
                 # member.
                 if (k!="" && k!=prev && p!=k) \
-                    printf "%s\xe2\x94\x80 %s \xe2\x94\x80\xe2\x94\x80%s%sP%s%s\n", cIdle, k, cR, T, T, p
+                    printf "%s\xe2\x95\xad %s%s%sP%s%s\n", cIdle, k, cR, T, T, p
                 prev=k
                 emitproj(p, k)
             }
