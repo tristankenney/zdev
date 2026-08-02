@@ -455,8 +455,19 @@ func run() error {
 			// GroupKey (proto.HomeSet). INITIATIVE.md rarely changes, so
 			// this piggybacks on the SAME 5-minute cadence as gh/ci
 			// instead of inventing a faster schedule nobody needs.
-			if proto.HomeSet(lister.Names())[probeKey] {
-				sched.RefreshIfStale(ctx, initiativeProbe, probeKey, 5*time.Minute)
+			//
+			// Keyed on the session's HOME, not the session itself: the
+			// documented workflow is working in member clones
+			// ("marketplace/api"), often with no session at the home
+			// directory at all — gating on probeKey alone left such
+			// initiatives permanently unprobed (invariants review,
+			// 2026-08-02). Member activity now keeps the home's
+			// Intent/BdReady fresh; a session AT the home still resolves
+			// to itself via EffectiveGroupKey.
+			if homes := proto.HomeSet(lister.Names()); len(homes) > 0 {
+				if home := proto.EffectiveGroupKey(probeKey, homes); home != "" && homes[home] {
+					sched.RefreshIfStale(ctx, initiativeProbe, home, 5*time.Minute)
+				}
 			}
 			sched.RefreshIfStale(ctx, lsofProbe, "", 10*time.Second)
 		case tmuxctl.WindowPaneChanged:
