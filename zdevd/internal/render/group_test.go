@@ -281,3 +281,43 @@ func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 		t.Errorf("straddling group must re-state its header, got %d:\n%s", n, out)
 	}
 }
+
+// The dim/hued split is the ONLY thing distinguishing a marked initiative
+// from an unmarked drawer at a glance, so it has to hold in the bytes: a
+// drawer header recedes (dim, not bold), an initiative home asserts itself
+// (identity hue + bold). Goldens don't cover a drawer header, so this is
+// the pin — "projects" rendered bold-on-default once, making the least
+// important row the loudest in the pane.
+func TestDrawerHeaderRecedesInitiativeHomeAsserts(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "alpha", Status: "alive"},
+		{Name: "alpha/repo", Status: "alive"},
+		{Name: "projects/api", Status: "alive"},
+	}}
+	out := string(Render(snap, 50, NewAnimator(), fixedNowFn))
+
+	var drawer, home string
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.Contains(stripAnsi([]byte(l)), "projects"):
+			drawer = l
+		case strings.Contains(stripAnsi([]byte(l)), "alpha") && !strings.Contains(stripAnsi([]byte(l)), "repo"):
+			home = l
+		}
+	}
+	if drawer == "" || home == "" {
+		t.Fatalf("need both headers:\n%s", stripAnsi([]byte(out)))
+	}
+	if strings.Contains(drawer, Bold) {
+		t.Errorf("drawer header must not be bold — it is scaffolding, not identity: %q", drawer)
+	}
+	if !strings.Contains(drawer, Dim) {
+		t.Errorf("drawer header must be dim: %q", drawer)
+	}
+	if !strings.Contains(home, Bold) || !strings.Contains(home, PaletteFor("alpha")) {
+		t.Errorf("initiative home must be bold + its identity hue: %q", home)
+	}
+}

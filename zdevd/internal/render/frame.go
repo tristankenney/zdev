@@ -622,18 +622,24 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 	buf.WriteString("  ")
 	{
 		// Same ╭ corner as initiative headers (uniform group language;
-		// dim = container, hued = initiative), no trailing dash fill. A
-		// collapsed homeless group (projects/) shows its rollup here —
-		// this line is its only remaining trace. No spinner: working rows
-		// pierce per-row, so a folded row is by definition quiet.
+		// dim = unmarked drawer, hued = marked initiative), no trailing
+		// dash fill. A collapsed drawer (projects/) shows its rollup here
+		// — this line is its only remaining trace. No spinner: working
+		// rows pierce per-row, so a folded row is by definition quiet.
+		//
+		// The NAME is dim too, and deliberately not Bold. A drawer is
+		// scaffolding — it has no identity, and the whole point of the
+		// dim/hued split is that an unmarked group recedes. Bold + no
+		// color made "projects" the LOUDEST row in the pane, louder than
+		// the initiatives it sits between and than the plain project rows
+		// (which render at default foreground) — exactly backwards
+		// (spotted live, 2026-08-02).
 		buf.WriteString(thDim())
 		if folded {
 			buf.WriteString("▸ ")
 		} else {
 			buf.WriteString("╭ ")
 		}
-		buf.WriteString(Reset)
-		buf.WriteString(Bold)
 		buf.WriteString(name)
 		buf.WriteString(Reset)
 		if collapsedN > 0 {
