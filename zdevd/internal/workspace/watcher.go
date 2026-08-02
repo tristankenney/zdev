@@ -3,13 +3,24 @@
 //
 // D3-06: workspace is the source of truth for projects — literally, under
 // ZDEV_PROJECTS_DISCOVER=1, where the flat layout IS the registry. The
-// root watch is non-recursive (kqueue is shallow), so GROUP directories
-// (root dirs WITHOUT .git — marked initiatives and unmarked drawers alike)
-// are armed explicitly and dynamically as they appear; root REPO dirs are
-// deliberately NOT armed — their internal churn (builds, checkouts) would
-// storm the debounce for membership changes that cannot happen inside a
-// repo. Without the group watches, `git clone` into a group — the entire
-// add-repo gesture under discovery — was invisible until a daemon restart.
+// root watch is non-recursive (kqueue is shallow), so GROUP directories —
+// root dirs marked with INITIATIVE.md (initiatives) or .zdev (drawers) —
+// are armed explicitly and dynamically as they appear; root REPO dirs, and
+// root dirs carrying NEITHER marker (invisible to discovery — see bin/zdev),
+// are deliberately NOT armed. A repo's internal churn (builds, checkouts)
+// would storm the debounce for membership changes that cannot happen
+// inside a repo; an unmarked dir can never produce a row at all, so
+// watching it buys nothing. Without the group watches, `git clone` into a
+// marked group — the entire add-repo gesture under discovery — was
+// invisible until a daemon restart.
+//
+// A brand-new root dir is armed unconditionally at creation time (see
+// OnEvent below) regardless of whether a marker exists yet — the common
+// gesture is `mkdir group && touch group/.zdev && git clone …`, and the
+// marker file often lands a beat after the directory itself. An EXISTING
+// dir that gains a marker in place, without ever being armed, is only
+// picked up on the next addGroupWatches pass (daemon restart) — the
+// shallow watch has no way to see a write two levels below the root.
 package workspace
 
 import (
@@ -45,9 +56,28 @@ func NewWatcher(dir string, lister *projects.Lister) *Watcher {
 	return &Watcher{dir: dir, lister: lister, debounce: 500 * time.Millisecond}
 }
 
+// isMarkedGroupDir reports whether dir is an EXPLICIT group: a root
+// directory without .git that carries the INITIATIVE.md or .zdev marker.
+// An unmarked directory is invisible to discovery (bin/zdev) and so is
+// never armed — only the existence of .zdev is checked, never its
+// contents (reserved TOML, currently unread by anything).
+func isMarkedGroupDir(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		return false // a repo, not a group — never armed
+	}
+	if _, err := os.Stat(filepath.Join(dir, "INITIATIVE.md")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".zdev")); err == nil {
+		return true
+	}
+	return false
+}
+
 // addGroupWatches arms a watch on every existing root GROUP directory —
-// a non-dot root dir without .git — so members appearing inside are seen.
-// Called from OnStart; OnEvent arms brand-new groups as they appear.
+// one marked with INITIATIVE.md or .zdev — so members appearing inside are
+// seen. Called from OnStart; OnEvent arms brand-new root dirs as they
+// appear (see the package doc for why that arming is unconditional).
 func (w *Watcher) addGroupWatches(h *fswatch.Handle) {
 	entries, err := os.ReadDir(w.dir)
 	if err != nil {
@@ -57,10 +87,11 @@ func (w *Watcher) addGroupWatches(h *fswatch.Handle) {
 		if !e.IsDir() || e.Name()[0] == '.' {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(w.dir, e.Name(), ".git")); err == nil {
-			continue // a repo, not a group — never armed
+		dir := filepath.Join(w.dir, e.Name())
+		if !isMarkedGroupDir(dir) {
+			continue
 		}
-		h.Add(filepath.Join(w.dir, e.Name()))
+		h.Add(dir)
 	}
 }
 
@@ -86,11 +117,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 		},
 		OnEvent: func(h *fswatch.Handle, ev fsnotify.Event) {
 			// A Create directly under the root may be a brand-new group —
-			// arm it immediately so the first clone into it is covered.
-			// Repos self-identify later (a .git appears inside), but an
-			// extra watch on a repo dir only costs noise-triggered
-			// refreshes until the next restart re-evaluates; Add on a
-			// vanished path soft-fails in the engine.
+			// arm it immediately, unconditionally, so a marker file
+			// (.zdev/INITIATIVE.md) or first clone landing moments later
+			// is covered even though the dir has neither yet. Repos
+			// self-identify later (a .git appears inside), and an
+			// unmarked dir that never gains a marker just costs
+			// noise-triggered refreshes until the next restart
+			// re-evaluates via addGroupWatches; Add on a vanished path
+			// soft-fails in the engine.
 			if ev.Op&fsnotify.Create != 0 && filepath.Dir(ev.Name) == w.dir {
 				if _, err := os.Stat(filepath.Join(ev.Name, ".git")); err != nil {
 					h.Add(ev.Name)

@@ -118,14 +118,18 @@ func TestWorkspaceWatcher_MissingDirSurvives(t *testing.T) {
 	}
 }
 
-// TestWorkspaceWatcher_GroupMemberCreate pins the group coverage the flat
-// discovery convention depends on: a directory appearing INSIDE a root
-// group dir (a git clone — the entire add-repo gesture) must trigger a
-// refresh. The root watch is shallow, so groups are armed explicitly.
-func TestWorkspaceWatcher_GroupMemberCreate(t *testing.T) {
+// TestWorkspaceWatcher_InitiativeMemberCreate pins the group coverage the
+// flat discovery convention depends on: a directory appearing INSIDE a root
+// dir marked with INITIATIVE.md (a git clone — the entire add-repo gesture)
+// must trigger a refresh. The root watch is shallow, so marked groups are
+// armed explicitly by addGroupWatches at OnStart.
+func TestWorkspaceWatcher_InitiativeMemberCreate(t *testing.T) {
 	dir := t.TempDir()
 	initiative := filepath.Join(dir, "marketplace")
 	if err := os.MkdirAll(initiative, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(initiative, "INITIATIVE.md"), []byte("# marketplace\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var refreshes int64
@@ -136,6 +140,79 @@ func TestWorkspaceWatcher_GroupMemberCreate(t *testing.T) {
 	fswatchtest.EventuallyStim(t, "refresh after clone dir create inside initiative",
 		func() { _ = os.Mkdir(filepath.Join(initiative, fmt.Sprintf("repo%d", i)), 0o755); i++ },
 		func() bool { return atomic.LoadInt64(&refreshes) >= 1 })
+}
+
+// TestWorkspaceWatcher_DrawerMemberCreate is the .zdev-marked-drawer
+// counterpart to the initiative test above: a plain empty .zdev marker file
+// is enough to arm the group for member-create refreshes.
+func TestWorkspaceWatcher_DrawerMemberCreate(t *testing.T) {
+	dir := t.TempDir()
+	drawer := filepath.Join(dir, "projects")
+	if err := os.MkdirAll(drawer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(drawer, ".zdev"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var refreshes int64
+	lister := newCountingLister(&refreshes)
+	runWatcher(t, dir, lister)
+
+	i := 0
+	fswatchtest.EventuallyStim(t, "refresh after clone dir create inside drawer",
+		func() { _ = os.Mkdir(filepath.Join(drawer, fmt.Sprintf("repo%d", i)), 0o755); i++ },
+		func() bool { return atomic.LoadInt64(&refreshes) >= 1 })
+}
+
+// TestWorkspaceWatcher_DrawerMemberCreate_TOMLContent pins that .zdev's
+// CONTENTS never matter to discovery/watching — only its existence. A
+// .zdev holding real TOML (the format reserved for future group metadata)
+// must arm the group exactly like an empty one.
+func TestWorkspaceWatcher_DrawerMemberCreate_TOMLContent(t *testing.T) {
+	dir := t.TempDir()
+	drawer := filepath.Join(dir, "projects")
+	if err := os.MkdirAll(drawer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toml := "[group]\nname = \"Projects\"\ncolor = \"blue\"\n"
+	if err := os.WriteFile(filepath.Join(drawer, ".zdev"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var refreshes int64
+	lister := newCountingLister(&refreshes)
+	runWatcher(t, dir, lister)
+
+	i := 0
+	fswatchtest.EventuallyStim(t, "refresh after clone dir create inside TOML-marked drawer",
+		func() { _ = os.Mkdir(filepath.Join(drawer, fmt.Sprintf("repo%d", i)), 0o755); i++ },
+		func() bool { return atomic.LoadInt64(&refreshes) >= 1 })
+}
+
+// TestWorkspaceWatcher_UnmarkedDirNotArmed pins the correctness change this
+// package exists to enforce: a root dir with NEITHER .git, INITIATIVE.md,
+// nor .zdev is invisible to discovery (bin/zdev) and must not be armed by
+// addGroupWatches — internal churn inside it must never trigger a refresh.
+// The dir is created BEFORE the watcher starts so only OnStart's
+// addGroupWatches evaluates it (OnEvent's unconditional arm-on-create only
+// fires for dirs created while the watcher is already running).
+func TestWorkspaceWatcher_UnmarkedDirNotArmed(t *testing.T) {
+	dir := t.TempDir()
+	unmarked := filepath.Join(dir, "archive")
+	if err := os.MkdirAll(unmarked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var refreshes int64
+	lister := newCountingLister(&refreshes)
+	runWatcher(t, dir, lister)
+
+	_ = os.Mkdir(filepath.Join(unmarked, "stray"), 0o755)
+	// Negative assertion: there is no future event to poll for, so allow a
+	// generous settle window (same pattern as TestConfigWatcher_ProjectsFileEdit's
+	// unrelated-file-churn check) and assert the count never moved.
+	time.Sleep(300 * time.Millisecond)
+	if got := atomic.LoadInt64(&refreshes); got != 0 {
+		t.Errorf("unmarked dir churn refreshed: got %d refreshes; want 0", got)
+	}
 }
 
 // TestConfigWatcher_ProjectsFileEdit: editing the overrides file refreshes;
