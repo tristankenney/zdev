@@ -131,9 +131,11 @@ func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() in
 //
 // Only NAVIGABLE lines get an entry. A current project's metadata rows map
 // to their project (they read as one row on screen), so clicking a branch
-// or CI chip lands where the eye expects. Dividers, the footer, and
-// synthetic group headers are absent: a click there is a no-op rather than
-// a guess. Rows folded out of the frame own no line and so no entry.
+// or CI chip lands where the eye expects. Synthetic drawer headers map to
+// their group's first member (the M-p header contract — for a folded
+// drawer the header is the group's only line). Dividers and the footer
+// are absent: a click there is a no-op rather than a guess. Rows folded
+// out of the frame own no line and so no entry beyond their header.
 //
 // The renderer owns this map because it is the only component that knows
 // where a line actually landed: the triage strip, the review gauge, group
@@ -444,8 +446,17 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				// ungrouped singles gets nothing at all — alpha order
 				// interleaves them and the tree mirrors the disk.
 				if g != "" && !isHome[i] {
+					headerY := lineOf()
 					writeGroupHeader(&buf, g, width, collapsedN[g],
 						collapsedN[g] > 0 && visibleMembers[g] == 0)
+					// The synthetic header IS clickable: it targets the
+					// group's first project, mirroring the M-p header
+					// contract. Essential for a FOLDED drawer — the
+					// header is then the group's only line, and an inert
+					// one made every click on "▸ projects ·N" a silent
+					// no-op (live report 2026-08-02). Project i is by
+					// construction that first project.
+					rows = append(rows, RowRef{Y: headerY, Name: snap.Projects[i].Name})
 				}
 				prevGroup = g
 			}

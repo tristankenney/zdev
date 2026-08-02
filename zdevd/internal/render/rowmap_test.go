@@ -48,7 +48,15 @@ func assertRowMapMatchesFrame(t *testing.T, frame []byte, rows []RowRef) {
 		if i := strings.LastIndex(leaf, "/"); i >= 0 && GroupMode != "off" {
 			leaf = leaf[i+1:]
 		}
-		if !strings.Contains(lines[r.Y], leaf) {
+		// A run may open on the member's leaf OR on its GROUP's name — a
+		// synthetic drawer header ("╭ projects") is clickable and targets
+		// the group's first member, so the line displays the group, not
+		// the member.
+		group := ""
+		if i := strings.IndexByte(r.Name, '/'); i > 0 {
+			group = r.Name[:i]
+		}
+		if !strings.Contains(lines[r.Y], leaf) && (group == "" || !strings.Contains(lines[r.Y], group)) {
 			t.Errorf("line %d is %q, but the map opens that run with %q", r.Y, lines[r.Y], r.Name)
 		}
 	}
@@ -121,6 +129,29 @@ func TestRowMapSkipsCollapsedRows(t *testing.T) {
 	// The home row itself stays clickable — it is what's on screen.
 	if !hasTarget(rows, "alpha") || !hasTarget(rows, "zdev") {
 		t.Errorf("visible rows must stay clickable, got %+v", rows)
+	}
+}
+
+// A folded DRAWER (unmarked group) keeps its synthetic header clickable —
+// it is the group's only line, and an inert one made every click on
+// "▸ projects ·N" a silent no-op. The header targets the group's first
+// member, mirroring the M-p header contract.
+func TestRowMapDrawerHeaderClickable(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "projects/api", Status: "alive", Collapsed: true},
+		{Name: "projects/web", Status: "alive", Collapsed: true},
+		{Name: "zdev", Status: "alive"},
+	}}
+	frame, rows := RenderWithRows(snap, 50, NewAnimator(), fixedNowFn)
+	assertRowMapMatchesFrame(t, frame, rows)
+	if !hasTarget(rows, "projects/api") {
+		t.Errorf("folded drawer header must target the first member, got %+v", rows)
+	}
+	if hasTarget(rows, "projects/web") {
+		t.Errorf("only the header's target may be reachable while folded, got %+v", rows)
 	}
 }
 

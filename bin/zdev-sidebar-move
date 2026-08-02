@@ -62,7 +62,14 @@ switch_to() {
         fi
     fi
 
-    tmux switch-client -t "=$SESSION" 2>/dev/null || true
+    # Absent session: START it, exactly as picking the row in M-p would —
+    # `zdev <project>` creates the session and switches to it. Without this
+    # fallback, clicks and M-Enter on any not-yet-running project silently
+    # did nothing (live report 2026-08-02: "not working consistently" — most
+    # idle rows have no session).
+    if ! tmux switch-client -t "=$SESSION" 2>/dev/null; then
+        exec "$HOME/.local/bin/zdev" "$NAME"
+    fi
     # Member jump (slice C): the selected row was a team member whose pane was
     # relocated into its own window (team-sweep).  After landing in the lead's
     # session, select that window so the jump reaches the teammate.
