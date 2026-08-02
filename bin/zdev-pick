@@ -168,8 +168,12 @@ build_list() {
                 # "─ name ──" line above it would show the name twice. The
                 # header is selectable and targets the group'\''s first
                 # member.
+                # A drawer'\''s synthetic header renders EXACTLY like a
+                # marked group'\''s home row — plain, flush left — because a
+                # declared group (.zdev) has the same standing as an
+                # initiative. Only the members below it are indented.
                 if (k!="" && k!=prev && p!=k) \
-                    printf "%s\xe2\x95\xad %s%s%sP%s%s\n", cIdle, k, cR, T, T, p
+                    printf "%s%sP%s%s\n", k, T, T, p
                 prev=k
                 emitproj(p, k)
             }

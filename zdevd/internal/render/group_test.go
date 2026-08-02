@@ -282,13 +282,13 @@ func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 	}
 }
 
-// The dim/hued split is the ONLY thing distinguishing a marked initiative
-// from an unmarked drawer at a glance, so it has to hold in the bytes: a
-// drawer header recedes (dim, not bold), an initiative home asserts itself
-// (identity hue + bold). Goldens don't cover a drawer header, so this is
-// the pin — "projects" rendered bold-on-default once, making the least
-// important row the loudest in the pane.
-func TestDrawerHeaderRecedesInitiativeHomeAsserts(t *testing.T) {
+// A declared group is a group: the drawer header and the initiative home
+// render with the SAME weight — identity hue + bold — because the .zdev
+// marker made group-ness explicit. The difference between them is semantic
+// (metadata, journal, tooling), never a visual demotion. This replaces an
+// earlier test that asserted the opposite, from when group-ness was
+// inferred from the absence of .git and a drawer really was accidental.
+func TestDrawerHeaderMatchesInitiativeHome(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 	GroupMode = "prefix"
 
@@ -311,13 +311,17 @@ func TestDrawerHeaderRecedesInitiativeHomeAsserts(t *testing.T) {
 	if drawer == "" || home == "" {
 		t.Fatalf("need both headers:\n%s", stripAnsi([]byte(out)))
 	}
-	if strings.Contains(drawer, Bold) {
-		t.Errorf("drawer header must not be bold — it is scaffolding, not identity: %q", drawer)
-	}
-	if !strings.Contains(drawer, Dim) {
-		t.Errorf("drawer header must be dim: %q", drawer)
-	}
-	if !strings.Contains(home, Bold) || !strings.Contains(home, PaletteFor("alpha")) {
-		t.Errorf("initiative home must be bold + its identity hue: %q", home)
+	for _, c := range []struct {
+		label, row, hue string
+	}{{"drawer", drawer, PaletteFor("projects")}, {"home", home, PaletteFor("alpha")}} {
+		if !strings.Contains(c.row, Bold) {
+			t.Errorf("%s header must be bold: %q", c.label, c.row)
+		}
+		if !strings.Contains(c.row, c.hue) {
+			t.Errorf("%s header must carry its own identity hue: %q", c.label, c.row)
+		}
+		if strings.Contains(c.row, Dim) {
+			t.Errorf("%s header must not be dimmed — no group is scaffolding: %q", c.label, c.row)
+		}
 	}
 }

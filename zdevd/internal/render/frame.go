@@ -385,7 +385,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				collapsedN[groupKeys[i]] > 0 && visibleMembers[groupKeys[i]] == 0)
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-					groupGutter(groupKeys[i], hasHome[groupKeys[i]], "│",
+					groupGutter(groupKeys[i], true, "│",
 						rowMargin(&p, animator, urgent, true, false, hovered)),
 					snap, true)
 			}
@@ -400,10 +400,10 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				g, mg = "╰", " "
 			}
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
-				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
+				groupGutter(groupKeys[i], true, g,
 					rowMargin(&p, animator, urgent, true, false, hovered)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-				groupGutter(groupKeys[i], hasHome[groupKeys[i]], mg,
+				groupGutter(groupKeys[i], true, mg,
 					rowMargin(&p, animator, urgent, true, false, hovered)),
 				snap, false)
 		case isCurrent:
@@ -421,7 +421,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				g = "╰"
 			}
 			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
-				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
+				groupGutter(groupKeys[i], true, g,
 					rowMargin(&p, animator, urgent, false, isCursor, hovered)))
 		default:
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows, "")
@@ -647,25 +647,30 @@ func displayName(name string) string {
 func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int, folded bool) {
 	buf.WriteString("  ")
 	{
-		// Same ╭ corner as initiative headers (uniform group language;
-		// dim = unmarked drawer, hued = marked initiative), no trailing
-		// dash fill. A collapsed drawer (projects/) shows its rollup here
-		// — this line is its only remaining trace. No spinner: working
-		// rows pierce per-row, so a folded row is by definition quiet.
+		// A group is a group: this header renders exactly like an
+		// initiative's home row — same ╭/▸ glyph, same identity hue from
+		// PaletteFor, same Bold. No trailing dash fill.
 		//
-		// The NAME is dim too, and deliberately not Bold. A drawer is
-		// scaffolding — it has no identity, and the whole point of the
-		// dim/hued split is that an unmarked group recedes. Bold + no
-		// color made "projects" the LOUDEST row in the pane, louder than
-		// the initiatives it sits between and than the plain project rows
-		// (which render at default foreground) — exactly backwards
-		// (spotted live, 2026-08-02).
-		buf.WriteString(thDim())
+		// This deliberately REVERSES the earlier dim treatment. Dimming
+		// made sense while group-ness was INFERRED ("a root dir that
+		// happens to lack .git"), where a drawer really was accidental
+		// scaffolding. With the explicit .zdev marker a drawer is a
+		// declared thing, equal in standing to an initiative — the
+		// difference between them is semantic (metadata, journal, the
+		// initiative skill), not hierarchy, so it must not read as a
+		// visual demotion.
+		//
+		// A collapsed drawer shows its rollup here — this line is its only
+		// remaining trace. No spinner: working rows pierce per-row, so a
+		// folded row is by definition quiet.
+		buf.WriteString(thPalette(name))
 		if folded {
 			buf.WriteString("▸ ")
 		} else {
 			buf.WriteString("╭ ")
 		}
+		buf.WriteString(Bold)
+		buf.WriteString(thPalette(name))
 		buf.WriteString(name)
 		buf.WriteString(Reset)
 		if collapsedN > 0 {
@@ -1327,6 +1332,10 @@ func spaceIf(buf *bytes.Buffer) {
 // containers. margin is rowMargin's 2-column output — the marker sits
 // BEFORE the frame, never after it.
 func groupGutter(key string, hued bool, glyph, margin string) string {
+	// hued is now always true in practice: every group carries its identity
+	// hue since the .zdev marker made group-ness explicit (see
+	// writeGroupHeader). The parameter stays so a caller can still render a
+	// frame without identity — nothing does today.
 	color := thDim()
 	if hued {
 		color = thPalette(key)
