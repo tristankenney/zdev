@@ -198,16 +198,26 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.width = msg.Width
+		// A resize must CLEAR the pane, not just re-render into it. Tea's
+		// inline renderer (no alt-screen) tracks only the lines it wrote;
+		// when the width changes, previously-written lines re-wrap and its
+		// line accounting no longer describes the screen, so the old frame
+		// is orphaned ABOVE the managed region and stays there forever —
+		// visible live as stale rows stranded above the mood divider
+		// (2026-08-03). tea.ClearScreen wipes the pane and forces a full
+		// repaint, the same treatment prepareScreenForTea gives the
+		// startup handoff. Batched so it lands with this frame, not after.
 		if m.outage {
 			// Outage overlay wraps the frozen lastGoodBody — a resize during
 			// an outage has nothing live to re-render against; the next
-			// reconnect's snapshot repaints at the new width.
-			return m, nil
+			// reconnect's snapshot repaints at the new width. Still clear:
+			// the stale frame is orphaned either way.
+			return m, tea.ClearScreen
 		}
 		if m.repaintLive() {
-			return m, m.paintSideEffectsCmd()
+			return m, tea.Batch(tea.ClearScreen, m.paintSideEffectsCmd())
 		}
-		return m, nil
+		return m, tea.ClearScreen
 
 	case teaSnapshotMsg:
 		// A snapshot always ends any outage — this is the reconnect path as

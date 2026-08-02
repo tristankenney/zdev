@@ -172,3 +172,57 @@ func TestTeaUpdate_MouseMotion_IgnoredWhenHoverDisabled(t *testing.T) {
 		t.Errorf("expected a nil Cmd when hover is disabled, got non-nil")
 	}
 }
+
+// A resize must emit a screen clear, not just re-render. Tea's inline
+// renderer tracks only its own lines; a width change re-wraps what is
+// already on screen, orphaning the previous frame above the managed region
+// where it stays forever (seen live: stale rows stranded above the mood
+// divider). Every resize path — live, no-live-snapshot, and outage — must
+// clear.
+func TestResizeClearsTheScreen(t *testing.T) {
+	hasClear := func(t *testing.T, cmd tea.Cmd) bool {
+		t.Helper()
+		if cmd == nil {
+			return false
+		}
+		// clearScreenMsg is unexported, so compare against the value
+		// tea.ClearScreen produces — an empty struct, hence comparable.
+		want := tea.ClearScreen()
+		msg := cmd()
+		if msg == want {
+			return true
+		}
+		// tea.Batch collapses into a BatchMsg carrying the child Cmds.
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if c != nil && c() == want {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// Live snapshot present.
+	m := newTestModel(quietSnapshot(1), 50, 1_777_860_000)
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: m.width + 17})
+	if !hasClear(t, cmd) {
+		t.Errorf("resize with a live snapshot must clear the screen")
+	}
+
+	// During an outage.
+	m2 := newTestModel(quietSnapshot(1), 50, 1_777_860_000)
+	m2.outage = true
+	_, cmd2 := m2.Update(tea.WindowSizeMsg{Width: m2.width + 9})
+	if !hasClear(t, cmd2) {
+		t.Errorf("resize during an outage must clear the screen too")
+	}
+
+	// A no-op resize (same width) must NOT clear — clearing on every
+	// spurious WindowSizeMsg would flash the pane.
+	m3 := newTestModel(quietSnapshot(1), 50, 1_777_860_000)
+	_, cmd3 := m3.Update(tea.WindowSizeMsg{Width: m3.width})
+	if hasClear(t, cmd3) {
+		t.Errorf("same-width resize must not clear")
+	}
+}
