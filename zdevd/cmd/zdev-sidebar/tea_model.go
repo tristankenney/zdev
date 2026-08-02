@@ -94,6 +94,19 @@ type teaModel struct {
 	outage bool
 	banner string
 
+	// hoverEnabled is ZDEV_SIDEBAR_HOVER (rendererSetup.hoverEnabled),
+	// fixed for the model's lifetime. hovered is the currently-highlighted
+	// project name ("" = none), resolved from tea.MouseMsg against the
+	// RowRef map the LAST paint produced (cachedRows below — the same
+	// slice paintSideEffectsCmd already publishes as @zdev-rows, so no
+	// second copy of the frame's geometry is kept). Both are read by
+	// repaintLive via RenderOpts{Hover: hovered}; hoverEnabled gates
+	// whether Update() looks at tea.MouseMsg at all (defensive — with the
+	// knob off, tea_run.go's WithInput(nil) means a real mouse event can
+	// never arrive here anyway).
+	hoverEnabled bool
+	hovered      string
+
 	fatalErr error
 
 	tmuxPane    string
@@ -118,19 +131,20 @@ type teaModel struct {
 // bubbletea calls View() using the model exactly as returned here, before
 // any Cmd from Init() has had a chance to run, so the initial paint must not
 // depend on a message arriving first.
-func newTeaModel(ctx context.Context, snap *proto.Snapshot, conn net.Conn, width int, tmuxPane, tmuxSession, socketPath string) *teaModel {
+func newTeaModel(ctx context.Context, snap *proto.Snapshot, conn net.Conn, width int, tmuxPane, tmuxSession, socketPath string, hoverEnabled bool) *teaModel {
 	m := &teaModel{
-		ctx:         ctx,
-		width:       width,
-		animator:    render.NewAnimator(),
-		snap:        snap,
-		tmuxPane:    tmuxPane,
-		tmuxSession: tmuxSession,
-		socketPath:  socketPath,
-		initialConn: conn,
-		nowFn:       func() int64 { return time.Now().Unix() },
-		timeNowFn:   time.Now,
-		streamFn:    socket.Stream,
+		ctx:          ctx,
+		width:        width,
+		animator:     render.NewAnimator(),
+		snap:         snap,
+		tmuxPane:     tmuxPane,
+		tmuxSession:  tmuxSession,
+		socketPath:   socketPath,
+		initialConn:  conn,
+		hoverEnabled: hoverEnabled,
+		nowFn:        func() int64 { return time.Now().Unix() },
+		timeNowFn:    time.Now,
+		streamFn:     socket.Stream,
 	}
 	m.dialFn = func(ctx context.Context) (*proto.Snapshot, net.Conn, error) {
 		return socket.Subscribe(ctx, m.socketPath, m.tmuxPane, m.tmuxSession)
@@ -262,8 +276,76 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case teaFatalMsg:
 		m.fatalErr = msg.err
 		return m, tea.Quit
+
+	case tea.MouseMsg:
+		// hoverEnabled false ⇒ no-op. Defensive rather than load-bearing:
+		// with the knob off, tea_run.go builds the Program with
+		// tea.WithInput(nil), so no real MouseMsg can ever reach Update()
+		// in production; this only matters for a test that constructs a
+		// model directly and sends one anyway.
+		if !m.hoverEnabled {
+			return m, nil
+		}
+		return m.handleMouseMsg(msg)
+
+		// tea.KeyMsg (and anything else) falls through to the bare `return
+		// m, nil` below, unhandled — the daemon owns keys; this model
+		// never reads one, mouse-only per ZDEV_SIDEBAR_HOVER's contract.
 	}
 	return m, nil
+}
+
+// handleMouseMsg resolves a mouse event to the project row it landed on (or
+// "" for a divider/footer/out-of-frame line — see resolveHover) and repaints
+// ONLY when that resolution actually changes m.hovered. This is the guard
+// against a repaint storm: AllMotion delivers one event per pixel-row of
+// mouse travel, easily many per animation tick, and re-running render.Body
+// for every one of them when the hovered project hasn't changed would undo
+// the entire point of the tea engine's cheaper per-line diffing (see this
+// file's package doc).
+func (m *teaModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	next := m.resolveHover(msg.Y)
+	if next == m.hovered {
+		return m, nil
+	}
+	m.hovered = next
+	if m.outage {
+		// No live frame to highlight during an outage (cachedBody holds the
+		// frozen dim+banner overlay, not a real row map) — remember the
+		// new value silently so a reconnect's unconditional repaintLive
+		// picks it up, but fire no output or side effects now. Mirrors
+		// teaBannerMsg's own no-side-effect contract during an outage.
+		return m, nil
+	}
+	if m.repaintLive() {
+		return m, m.paintSideEffectsCmd()
+	}
+	return m, nil
+}
+
+// resolveHover maps a mouse event's Y coordinate to the project name whose
+// row it landed on, using m.cachedRows — the RowRef map the LAST paint
+// produced (the same slice paintSideEffectsCmd publishes as @zdev-rows, so
+// this is never a second source of truth about the frame's geometry).
+// Returns "" for:
+//
+//   - a line with no RowRef entry (a divider, the footer, or a header line
+//     without a click target) — motion there clears any current hover.
+//   - Y outside the frame's line count entirely (above/below the pane, or a
+//     stale coordinate from before a resize) — same clear behavior.
+func (m *teaModel) resolveHover(y int) string {
+	if y < 0 {
+		return ""
+	}
+	if height := bytes.Count(m.cachedBody, []byte("\n")); y >= height {
+		return ""
+	}
+	for _, r := range m.cachedRows {
+		if r.Y == y {
+			return r.Name
+		}
+	}
+	return ""
 }
 
 // repaintLive recomputes cachedBody/cachedRows/lastGoodBody from the live
@@ -271,7 +353,10 @@ func (m *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // the previous paint — the tea-mode analogue of FrameWriter.WroteLast(),
 // used to decide whether the stamp/publish side effects fire.
 func (m *teaModel) repaintLive() bool {
-	body, rows := render.Body(m.snap, m.width, m.animator, m.nowFn)
+	// m.hovered is "" whenever hoverEnabled is false (Update never sets it
+	// otherwise — see handleMouseMsg), so this is byte-for-byte
+	// render.Body's own output when hover is off or unused.
+	body, rows := render.BodyWithOpts(m.snap, m.width, m.animator, m.nowFn, render.RenderOpts{Hover: m.hovered})
 	changed := !bytes.Equal(body, m.cachedBody)
 	m.cachedBody = body
 	m.cachedRows = rows

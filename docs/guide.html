@@ -269,6 +269,7 @@ contract.</li>
 <tr><td class="k">M-o</td><td>announcements menu — mute/unmute "X needs you"</td></tr>
 <tr><td class="k">M-Up / M-Down / M-Enter</td><td>sidebar row cursor / switch to it</td></tr>
 <tr><td class="k">click</td><td>with <code>ZDEV_SIDEBAR_MOUSE=1</code>, clicking a sidebar row switches to it — starting the session if it isn't running (same as picking it in M-p). Metadata lines and Agent Teams member rows work too (members jump to the teammate's window), and a drawer group's header targets its first member. Dividers and the footer are deliberately inert</td></tr>
+<tr><td class="k">hover</td><td>with <code>ZDEV_SIDEBAR_HOVER=1</code>, the row under the pointer highlights so you can see what a click will hit before clicking — requires <code>ZDEV_SIDEBAR_ENGINE=tea</code> (classic has no input loop, so the knob is inert there)</td></tr>
 <tr><td class="k">M-t / M-b / M-/</td><td>timeline · broadcast to all claude panes · saved-prompt picker</td></tr>
 <tr><td class="k">M-?</td><td>help popup (live from what's actually bound)</td></tr>
 </table>
@@ -338,6 +339,7 @@ per keypress.</p>
 <tr><td class="k">ZDEV_SIDEBAR_THEME</td><td>classic</td><td><code>rose-pine</code> = the Rose Pine Moon visual system: semantic truecolor tokens, right-aligned status column, wait-age hue ramp (gold→rose→love on the notify tiers), mood-divider gradient. Requires an RGB-capable terminal (the bundled tmux conf sets <code>terminal-overrides ",*:RGB"</code>)</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_ENGINE</td><td>classic</td><td><code>tea</code> = Bubble Tea render loop (line-diffed writes; same pixels)</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_MOUSE</td><td>0</td><td>1 = click a sidebar row to switch to it (the renderer publishes a screen-line→target map as the <code>@zdev-rows</code> pane option; clicks resolve against what is actually drawn). Off = tmux's stock click behaviour</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_HOVER</td><td>0</td><td>1 = the row under the mouse pointer highlights (bold name, foreground-only — no background fill). Tea engine only (<code>ZDEV_SIDEBAR_ENGINE=tea</code>); inert under classic, which has no input loop to receive mouse motion. Clicks are unaffected — they still go through <code>ZDEV_SIDEBAR_MOUSE</code>'s tmux-level binding</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_THRESHOLD</td><td>160</td><td>min client cols before the sidebar auto-opens</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_WIDTH</td><td>50</td><td>sidebar pane width</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_DEMOTE</td><td>dim</td><td><code>fold</code> sinks stale rows below a divider; <code>off</code> disables</td></tr>
