@@ -179,7 +179,22 @@ import (
 // authority for the flag: navigation row order derives from it on both
 // sides, and a renderer deciding collapse locally would be the exact
 // cursor-drift class FlatRows exists to kill.
-const SchemaVersion = "phase4-v22"
+//
+// phase4-v23 (initiative home metadata, ZDEV_SIDEBAR_INITIATIVE=1): adds
+// Project.Intent (the initiative's one-line "**Intent:**" sentence parsed
+// from INITIATIVE.md) and Project.BdReady (the `bd ready` unblocked-work
+// count under <home>/.beads). Both are probe-sourced (internal/probes'
+// InitiativeProbe, gated to initiative-home projects via proto.HomeSet) so
+// the renderer stays I/O-free; the member rollup shown alongside them on
+// the sidebar is computed renderer-side from the snapshot and rides no wire
+// field. Empty/zero are valid values ("not a home", "no Intent line", "no
+// .beads dir or bd not installed") and omitempty keeps non-home fleets at
+// zero wire cost. A v22 renderer ignores the two new fields silently (no
+// new rows — the knob is also off by default), so this is forward-
+// compatible in practice, but bumped for strict-equality validation.
+// Restart all zdev-sidebar-render instances after deploying the new zdevd
+// binary.
+const SchemaVersion = "phase4-v23"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -521,6 +536,19 @@ type Project struct {
 	// header line. Set by the DAEMON only — collapse changes navigation row
 	// order, so it must have a single authority.
 	Collapsed bool `json:"collapsed,omitempty"`
+
+	// Intent (phase4-v23, ZDEV_SIDEBAR_INITIATIVE=1) is an initiative HOME
+	// project's one-line "**Intent:**" sentence, parsed from INITIATIVE.md
+	// by the daemon's InitiativeProbe. Empty when the project isn't an
+	// initiative home, the file has no Intent line, or the probe hasn't run
+	// yet. The renderer never reads INITIATIVE.md itself — this field is
+	// the only I/O-free path from disk to the sidebar's intent row.
+	Intent string `json:"intent,omitempty"`
+	// BdReady (phase4-v23) is the count of unblocked `bd ready` work items
+	// under <home>/.beads, or 0 when the project isn't a home, has no
+	// .beads directory, or the bd binary isn't on PATH. Probe-sourced,
+	// same lifecycle as Intent.
+	BdReady int `json:"bd_ready,omitempty"`
 }
 
 // ValidateHello returns nil when the hello frame is well-formed and the
