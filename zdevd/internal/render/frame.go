@@ -248,12 +248,23 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	hasHome := map[string]bool{}       // group key → has a home row (marked group)
 	collapsedN := map[string]int{}     // group key → hidden member count
 	visibleMembers := map[string]int{} // group key → shown (non-home) member count
-	if GroupMode == "prefix" {
+	// homes is computed whenever EITHER GroupMode=="prefix" needs it for
+	// group-header dispatch OR InitiativeEnabled needs it to detect a
+	// current-session home row even when GroupMode is "off" (initiative
+	// metadata is deliberately independent of the visual grouping knob —
+	// the brief's "operator is AT the initiative level" case is exactly
+	// today's ungrouped isCurrent row on a bare initiative dir). nil in the
+	// common case (both knobs off), which is safe: a nil map read always
+	// returns false.
+	var homes map[string]bool
+	if GroupMode == "prefix" || InitiativeEnabled {
 		names := make([]string, len(snap.Projects))
 		for i := range snap.Projects {
 			names[i] = snap.Projects[i].Name
 		}
-		homes := proto.HomeSet(names)
+		homes = proto.HomeSet(names)
+	}
+	if GroupMode == "prefix" {
 		groupKeys = make([]string, len(snap.Projects))
 		isHome = make([]bool, len(snap.Projects))
 		for i := range snap.Projects {
@@ -347,7 +358,8 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
 					groupGutter(groupKeys[i], hasHome[groupKeys[i]], "│",
-						rowMargin(&p, animator, urgent, true, false)))
+						rowMargin(&p, animator, urgent, true, false)),
+					snap, true)
 			}
 		case isCurrent && grouped:
 			// Current member row: keep the frame — gutter first, then the
@@ -364,10 +376,11 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 					rowMargin(&p, animator, urgent, true, false)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
 				groupGutter(groupKeys[i], hasHome[groupKeys[i]], mg,
-					rowMargin(&p, animator, urgent, true, false)))
+					rowMargin(&p, animator, urgent, true, false)),
+				snap, false)
 		case isCurrent:
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows, "")
-			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent, "")
+			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent, "", snap, homes[p.Name])
 		case grouped:
 			// Member row: a │ gutter hangs under the group's header —
 			// hued (PaletteFor, matching the header name) for initiative
@@ -958,7 +971,14 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 // (no double-separator artifacts).
 //
 // Prefix dispatch via metadataPrefix: urgent ▌+5sp / breath ▌+5sp / 6 spaces.
-func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, width int, animator *Animator, nowFn func() int64, urgent bool, gutter string) {
+//
+// snap + isHome (ZDEV_SIDEBAR_INITIATIVE, phase4-v23): when isHome is true
+// (this row IS its group's initiative home — proto.HomeSet), two more domain
+// rows follow the usual three: the Intent sentence and a member rollup +
+// bd-ready count. isHome is always false for a grouped MEMBER's current row
+// (renderProject's `home` case already claims any row where isHome is true,
+// so control never reaches the isCurrent-member branch with isHome set).
+func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, width int, animator *Animator, nowFn func() int64, urgent bool, gutter string, snap *proto.Snapshot, isHome bool) {
 	prefix := gutter + metadataPrefix(p, current, animator, urgent, gutter != "")
 	now := nowFn()
 
@@ -1024,6 +1044,13 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 	renderDomainRow(buf, prefix, "✻", func(inner *bytes.Buffer) {
 		chipWaitAge(inner, p.WaitStartedTS, now)
 	})
+
+	// Initiative metadata (ZDEV_SIDEBAR_INITIATIVE=1): see renderInitiativeRows.
+	// Knob off or not-a-home ⇒ no rows, no bytes — byte-identical to the
+	// pre-feature frame.
+	if InitiativeEnabled && isHome {
+		renderInitiativeRows(buf, snap, p, prefix, width)
+	}
 }
 
 // renderCompactRow composes the SINGLE-line non-current layout:
