@@ -269,17 +269,27 @@ fi
 
 # ---------- group layout (only when discovery is on) ----------
 # ZDEV_PROJECTS_DISCOVER=1 makes the FLAT workspace layout the registry:
-# groups are root dirs (INITIATIVE.md marks an initiative; unmarked =
-# drawer), and the workspace root itself is the JOURNAL repo versioning
-# every group's metadata via a whitelist gitignore. The journal's REMOTE
-# is the user's call (it holds their notes) — queued as a next step.
-# Knob off → this section is silent.
+# group-ness is an EXPLICIT on-disk marker (INITIATIVE.md = initiative,
+# .zdev = drawer; neither = invisible, never a group), and the workspace
+# root itself is the JOURNAL repo versioning every group's metadata via a
+# whitelist gitignore. The journal's REMOTE is the user's call (it holds
+# their notes) — queued as a next step. Knob off → this section is silent.
 if grep -q '^ZDEV_PROJECTS_DISCOVER=1' "$HOME/.config/zdev/env" 2>/dev/null; then
   head_ "Group layout (discovery is on)"
+  # Only a FRESH projects/ gets marked — an existing one is left exactly as
+  # found. Auto-marking arbitrary pre-existing directories would defeat the
+  # explicitness this whole change exists to buy; `zdev doctor` is the
+  # discovery path for directories the operator marks by hand.
+  _projects_was_new=0
+  [[ -d "$ws/projects" ]] || _projects_was_new=1
   mkdir -p "$ws/projects"
+  if [[ "$_projects_was_new" -eq 1 ]]; then
+    touch "$ws/projects/.zdev"
+    ok_ "created $ws/projects (marked as a drawer with .zdev)"
+  fi
   if [[ ! -d "$ws/.git" ]]; then
     git -C "$ws" init -q
-    printf '/*\n!/.gitignore\n!*/\n/*/*\n!/*/INITIATIVE.md\n!/*/notes/\n!/*/notes/**\n!/*/AGENTS.md\n!/*/CLAUDE.md\n!/*/.beads/\n!/*/.beads/**\n' \
+    printf '/*\n!/.gitignore\n!*/\n/*/*\n!/*/INITIATIVE.md\n!/*/.zdev\n!/*/notes/\n!/*/notes/**\n!/*/AGENTS.md\n!/*/CLAUDE.md\n!/*/.beads/\n!/*/.beads/**\n' \
       > "$ws/.gitignore"
     git -C "$ws" add .gitignore
     git -C "$ws" commit -qm "workspace journal: scaffold" || true
