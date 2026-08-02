@@ -20,15 +20,23 @@ REAP_LOG="${ZDEV_REAP_LOG:-$HOME/Library/Logs/zdev/reaper.log}"
 # The project list has two sources:
 #
 #   1. DISCOVERY (ZDEV_PROJECTS_DISCOVER=1): the FLAT workspace layout IS
-#      the registry — no path is special:
+#      the registry — group-ness is EXPLICIT, marked on disk, never
+#      inferred from directory shape:
 #        <root>/<dir> with .git          → project      (zdev, dotfiles, …)
 #        <root>/<name>/ + INITIATIVE.md  → marked group (initiative): home
 #                                          row + one row per child with .git
 #                                          (notes/ has no .git, never rows)
-#        <root>/<name>/ unmarked         → drawer group: one row per child
-#                                          dir (projects/ — non-git dirs
-#                                          like onboarding count)
-#      Membership is derived: git clone into a group IS add-repo.
+#        <root>/<name>/ + .zdev          → marked group (drawer): one row
+#                                          per child dir (projects/ — the
+#                                          .zdev marker's contents are never
+#                                          read by discovery, only its
+#                                          existence)
+#        <root>/<name>/ neither marker   → INVISIBLE — no rows at all. A
+#                                          stray non-git dir (archive/, a
+#                                          Downloads-ish folder) must not
+#                                          silently become sidebar rows;
+#                                          `zdev doctor` flags candidates.
+#      Membership is derived: git clone into a marked group IS add-repo.
 #   2. The projects FILE: overrides only under discovery — favorites (' *')
 #      and off-convention extras. Without the knob it remains the sole
 #      registry, exactly as before.
@@ -102,10 +110,12 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
                 [[ "$_rb" == .* ]] && continue
                 [[ -e "$_r/.git" ]] && _add_project "$_b/$_rb" "initiative-member"
             done
-        else
-            # UNMARKED group (a drawer): every child dir rows; the group
-            # dir itself does not (no home — nothing claimed). A root dir
-            # with no subdirs at all is junk and rows nothing.
+        elif [[ -f "$_d/.zdev" ]]; then
+            # MARKED group (drawer): the .zdev marker is an empty (or
+            # TOML-formatted, reserved for future group metadata) file —
+            # discovery only checks its EXISTENCE, never its contents.
+            # Every child dir rows; the group dir itself does not (no
+            # home — nothing claimed).
             for _r in "$_d"*/; do
                 [[ -d "$_r" ]] || continue
                 _rb="${_r%/}"; _rb="${_rb##*/}"
@@ -113,6 +123,10 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
                 _add_project "$_b/$_rb" "group-member"
             done
         fi
+        # else: neither .git, INITIATIVE.md, nor .zdev — unmarked, and
+        # therefore INVISIBLE. zdev no longer infers group-ness from
+        # directory shape; `zdev doctor` surfaces candidates that would
+        # have rowed under the old implicit rule.
     done
 fi
 
@@ -263,13 +277,15 @@ Usage:
 
 Projects — two sources:
   ZDEV_PROJECTS_DISCOVER=1 derives the list from the workspace layout
-  (flat — no path is special; INITIATIVE.md marks a group as initiative):
+  (flat — no path is special; group-ness is an explicit on-disk marker,
+  never inferred):
       <root>/<dir> with .git          root repos
       <name>/ + INITIATIVE.md         initiative: home row + members
                                       with .git (notes/ never rows)
-      <name>/ unmarked                drawer: every child dir rows
-  The daemon watches the workspace: git clone into a group IS add-repo;
-  rm -rf is remove. The projects file then holds OVERRIDES only.
+      <name>/ + .zdev                 drawer: every child dir rows
+      <name>/ neither marker          invisible — no rows at all
+  The daemon watches the workspace: git clone into a marked group IS
+  add-repo; rm -rf is remove. The projects file then holds OVERRIDES only.
   Without the knob, the file is the whole registry (classic).
 
 Favorites:
