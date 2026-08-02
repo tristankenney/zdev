@@ -11,6 +11,17 @@
     Runs `zdev reap` hourly. Kills tmux sessions that have not been
     attached for ZDEV_REAP_AFTER_HOURS hours (default 8). Skips
     favorites and the currently-attached session. See ~/.local/bin/zdev.
+
+  ProcessType is deliberately NOT "Background": that class is subject to
+  aggressive power-management deferral, and a StartInterval job in it can
+  simply stop firing across sleep/battery for days. Observed 2026-08-03 —
+  the reaper's last run was ~40h earlier while ten sessions sat 15h idle,
+  with correct PATH, a reachable tmux server, and working reap logic. The
+  timer was the only thing missing.
+
+  RunAtLoad is true for the same reason: a login or a reinstall is a
+  guaranteed reap, so a missed interval self-heals at the next boot
+  instead of accumulating stale sessions indefinitely.
 -->
 <plist version="1.0">
 <dict>
@@ -27,10 +38,7 @@
   <integer>3600</integer>
 
   <key>RunAtLoad</key>
-  <false/>
-
-  <key>ProcessType</key>
-  <string>Background</string>
+  <true/>
 
   <key>StandardOutPath</key>
   <string>@HOME@/Library/Logs/zdev/reaper.out.log</string>
