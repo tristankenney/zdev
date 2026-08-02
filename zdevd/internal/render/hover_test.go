@@ -6,6 +6,7 @@ package render
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
@@ -158,5 +159,58 @@ func TestBodyWithOpts_ZeroValueMatchesBody(t *testing.T) {
 	}
 	if len(gotRows) != len(wantRows) {
 		t.Fatalf("row count = %d, want %d", len(gotRows), len(wantRows))
+	}
+}
+
+// The hover marker must be EXPLICIT — a brightened name alone did not
+// answer "what will this click hit?". It occupies the margin at column 0
+// like the other markers, and sits LAST in precedence: a hovered row that
+// is also current or cursor keeps that stronger marker.
+func TestHoverMarkerGlyphAndPrecedence(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+
+	rowFor := func(out, leaf string) string {
+		for _, l := range strings.Split(stripAnsi([]byte(out)), "\n") {
+			if strings.Contains(l, leaf) {
+				return l
+			}
+		}
+		return ""
+	}
+
+	// Grouped member, ungrouped single, and group home all get the glyph.
+	for _, target := range []string{"alpha/pay-app", "zdev", "alpha"} {
+		snap := flatSnapshot()
+		out, _ := RenderWithOpts(snap, 50, NewAnimator(), fixedNowFn, RenderOpts{Hover: target})
+		leaf := target
+		if i := strings.LastIndex(leaf, "/"); i >= 0 {
+			leaf = leaf[i+1:]
+		}
+		row := rowFor(string(out), leaf)
+		if !strings.HasPrefix(row, "›") {
+			t.Errorf("hovered %q must open with the › marker at column 0, got %q", target, row)
+		}
+	}
+
+	// Precedence: current session keeps ▌, cursor keeps ▶.
+	snap := flatSnapshot()
+	snap.CurrentSession = "zdev"
+	out, _ := RenderWithOpts(snap, 50, NewAnimator(), fixedNowFn, RenderOpts{Hover: "zdev"})
+	if row := rowFor(string(out), "zdev"); !strings.HasPrefix(row, "▌") {
+		t.Errorf("hovered current row must keep ▌, got %q", row)
+	}
+
+	snap = flatSnapshot()
+	snap.CursorActive, snap.CursorRow = true, 3 // dotfiles
+	out, _ = RenderWithOpts(snap, 50, NewAnimator(), fixedNowFn, RenderOpts{Hover: "dotfiles"})
+	if row := rowFor(string(out), "dotfiles"); !strings.HasPrefix(row, "▶") {
+		t.Errorf("hovered cursor row must keep ▶, got %q", row)
+	}
+
+	// No hover ⇒ no marker anywhere.
+	out, _ = RenderWithOpts(flatSnapshot(), 50, NewAnimator(), fixedNowFn, RenderOpts{})
+	if strings.Contains(stripAnsi([]byte(out)), "›") {
+		t.Errorf("no › may appear without a hover:\n%s", stripAnsi([]byte(out)))
 	}
 }

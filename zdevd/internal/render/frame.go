@@ -386,7 +386,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
 					groupGutter(groupKeys[i], hasHome[groupKeys[i]], "│",
-						rowMargin(&p, animator, urgent, true, false)),
+						rowMargin(&p, animator, urgent, true, false, hovered)),
 					snap, true)
 			}
 		case isCurrent && grouped:
@@ -401,10 +401,10 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			}
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
 				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
-					rowMargin(&p, animator, urgent, true, false)))
+					rowMargin(&p, animator, urgent, true, false, hovered)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
 				groupGutter(groupKeys[i], hasHome[groupKeys[i]], mg,
-					rowMargin(&p, animator, urgent, true, false)),
+					rowMargin(&p, animator, urgent, true, false, hovered)),
 				snap, false)
 		case isCurrent:
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows, "")
@@ -422,7 +422,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			}
 			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
 				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
-					rowMargin(&p, animator, urgent, false, isCursor)))
+					rowMargin(&p, animator, urgent, false, isCursor, hovered)))
 		default:
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows, "")
 		}
@@ -703,6 +703,12 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 		buf.WriteString(" ")
 	case isCursor:
 		buf.WriteString("▶ ")
+	case hovered:
+		// Same precedence and rationale as rowMargin's hover case.
+		buf.WriteString(thHover())
+		buf.WriteString("›")
+		buf.WriteString(Reset)
+		buf.WriteString(" ")
 	default:
 		buf.WriteString("  ")
 	}
@@ -1148,6 +1154,12 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 		buf.WriteString(" ")
 	case isCursor:
 		buf.WriteString("▶ ")
+	case hovered:
+		// Same precedence and rationale as rowMargin's hover case.
+		buf.WriteString(thHover())
+		buf.WriteString("›")
+		buf.WriteString(Reset)
+		buf.WriteString(" ")
 	default:
 		buf.WriteString("  ")
 	}
@@ -1336,7 +1348,7 @@ func groupGutter(key string, hued bool, glyph, margin string) string {
 // its column jumped between 0 and 3 as the cursor crossed a group boundary
 // (live review 2026-07-31). Content columns are unchanged: the gutter's
 // consumers spend a constant two spaces where they used to draw the marker.
-func rowMargin(p *proto.Project, animator *Animator, urgent, isCurrent, isCursor bool) string {
+func rowMargin(p *proto.Project, animator *Animator, urgent, isCurrent, isCursor, hovered bool) string {
 	switch {
 	case urgent:
 		return thUrgentBar() + "▌" + Reset + " "
@@ -1344,6 +1356,15 @@ func rowMargin(p *proto.Project, animator *Animator, urgent, isCurrent, isCursor
 		return thBreath(p.Name, animator.BreathFrame()) + "▌" + Reset + " "
 	case isCursor:
 		return "▶ "
+	case hovered:
+		// LAST in precedence, and its own glyph: a brightened name alone
+		// was too subtle to answer "what will this click hit?" (live
+		// review, 2026-08-02). "›" is deliberately lighter than the
+		// cursor's "▶" — the pointer is transient, the cursor and the
+		// current session are state. A hovered row that is ALSO current
+		// or cursor keeps that stronger marker; the name treatment still
+		// tells you the pointer is there.
+		return thHover() + "›" + Reset + " "
 	default:
 		return "  "
 	}
