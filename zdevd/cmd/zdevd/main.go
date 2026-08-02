@@ -335,12 +335,15 @@ func run() error {
 	// Concrete probes.
 	// GHProbe, LsofProbe, BranchProbe: Phase 3 originals.
 	// CIProbe (260509-gfz): per-project CI status via gh run list.
+	// InitiativeProbe (phase4-v23): INITIATIVE.md Intent + bd ready count,
+	// dispatched only for initiative-HOME projects (see rawDefaultSubmit).
 	ghProbe := probes.NewGHProbe(submitEvent, lister, workspaceDir)
 	ciProbe := probes.NewCIProbe(submitEvent, workspaceDir, lister)
 	lsofProbe := probes.NewLsofProbe(submitEvent, workspaceDir, lister.Names)
 	branchProbe := probes.NewBranchProbe(submitEvent, workspaceDir)
+	initiativeProbe := probes.NewInitiativeProbe(submitEvent, workspaceDir)
 
-	// Share ONE probe runtime across all four probes so the global subprocess
+	// Share ONE probe runtime across all five probes so the global subprocess
 	// concurrency cap (ZDEVD_PROBE_MAX_CONCURRENT, default 2) and per-key
 	// failure backoff are fleet-wide. Without this each probe would enforce
 	// the cap independently — the pre-consolidation bug where branch+gh+ci
@@ -350,6 +353,7 @@ func run() error {
 	ciProbe.SetRuntime(probeRuntime)
 	lsofProbe.SetRuntime(probeRuntime)
 	branchProbe.SetRuntime(probeRuntime)
+	initiativeProbe.SetRuntime(probeRuntime)
 
 	// fsnotify watchers (D3-05 + D3-06).
 	//
@@ -446,6 +450,14 @@ func run() error {
 			sched.RefreshIfStale(ctx, branchProbe, probeKey, 180*time.Second)
 			sched.RefreshIfStale(ctx, ghProbe, probeKey, 5*time.Minute)
 			sched.RefreshIfStale(ctx, ciProbe, probeKey, 5*time.Minute)
+			// InitiativeProbe (phase4-v23): only for initiative-HOME
+			// projects — a bare name that is also another project's
+			// GroupKey (proto.HomeSet). INITIATIVE.md rarely changes, so
+			// this piggybacks on the SAME 5-minute cadence as gh/ci
+			// instead of inventing a faster schedule nobody needs.
+			if proto.HomeSet(lister.Names())[probeKey] {
+				sched.RefreshIfStale(ctx, initiativeProbe, probeKey, 5*time.Minute)
+			}
 			sched.RefreshIfStale(ctx, lsofProbe, "", 10*time.Second)
 		case tmuxctl.WindowPaneChanged:
 			// Pane churn — refresh lsof for any session that owns the

@@ -539,3 +539,28 @@ func TestHubSnapshotEqualsCoreIgnoresMeta(t *testing.T) {
 		t.Error("nil-vs-nil should be core-equal")
 	}
 }
+
+// TestProjectEqualsIntentAndBdReady (phase4-v23) verifies projectEquals
+// detects a difference in either new field — without this, a changed
+// Intent or BdReady would silently fail to trigger a snapshot publish and
+// the sidebar's initiative rows would go stale forever.
+func TestProjectEqualsIntentAndBdReady(t *testing.T) {
+	base := proto.Project{Name: "marketplace", Status: "alive", Intent: "ship the MVP.", BdReady: 3}
+
+	same := base
+	if !projectEquals(base, same) {
+		t.Error("identical projects (including Intent/BdReady) should be equal")
+	}
+
+	intentDiff := base
+	intentDiff.Intent = "ship something else."
+	if projectEquals(base, intentDiff) {
+		t.Error("projects differing in Intent should be unequal")
+	}
+
+	bdDiff := base
+	bdDiff.BdReady = 7
+	if projectEquals(base, bdDiff) {
+		t.Error("projects differing in BdReady should be unequal")
+	}
+}

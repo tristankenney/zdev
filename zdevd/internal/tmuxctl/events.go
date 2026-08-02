@@ -125,6 +125,19 @@ type DataRefresh struct {
 	ShellCmd   string
 }
 
+// IntentRefresh carries an initiative HOME project's one-line Intent
+// sentence (parsed from INITIATIVE.md's "**Intent:**" line) and its bd
+// ready-work count (phase4-v23, ZDEV_SIDEBAR_INITIATIVE). Emitted only for
+// projects the daemon resolves as initiative homes via proto.HomeSet — see
+// probes.InitiativeProbe. Empty Intent / zero BdReady are valid results ("no
+// Intent line", "no .beads dir or bd not installed") and clear any
+// previously-observed value the same way DataRefresh's empty Branch does.
+type IntentRefresh struct {
+	Project string
+	Intent  string
+	BdReady int
+}
+
 // PRRefresh carries gh pr list aggregate counts (D3-02). Hub's applyEvent
 // must edge-detect Open count drops vs the previous PRRefresh for this
 // project and set CelebrateUntil — see hub/hub.go line 152 SAFETY NOTE.
@@ -189,6 +202,7 @@ type ProjectListChanged struct {
 }
 
 func (DataRefresh) isEvent()        {}
+func (IntentRefresh) isEvent()      {}
 func (PRRefresh) isEvent()          {}
 func (PortsRefresh) isEvent()       {}
 func (NotifSeen) isEvent()          {}
