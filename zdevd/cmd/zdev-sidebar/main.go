@@ -362,6 +362,14 @@ func run() error {
 	if os.Getenv("ZDEV_SIDEBAR_ENGINE") == "tea" {
 		return runTea(ctx, rs)
 	}
+	// ZDEV_SIDEBAR_HOVER is tea-only (classic has no input loop at all —
+	// see runClassic's socket.Stream select, which never reads stdin).
+	// Logged once at debug (not warn): setting the knob under classic isn't
+	// a mistake worth surfacing loudly, e.g. a shared dotfile enabling
+	// hover globally while a pane happens to run classic.
+	if rs.hoverEnabled {
+		slog.Debug("ZDEV_SIDEBAR_HOVER set but engine is not tea; hover is inert under classic")
+	}
 	return runClassic(ctx, rs)
 }
 
@@ -374,12 +382,13 @@ func run() error {
 // regardless of which engine ends up running the loop, since neither engine
 // has started yet at this point.
 type rendererSetup struct {
-	width       int
-	tmuxPane    string
-	tmuxSession string
-	socketPath  string
-	snap        *proto.Snapshot
-	conn        net.Conn
+	width        int
+	tmuxPane     string
+	tmuxSession  string
+	socketPath   string
+	snap         *proto.Snapshot
+	conn         net.Conn
+	hoverEnabled bool
 }
 
 func setupRenderer(ctx context.Context) (*rendererSetup, error) {
@@ -469,6 +478,14 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 		render.ThemeMode = "rose-pine"
 	}
 
+	// Mouse hover feedback (ZDEV_SIDEBAR_HOVER=1, tea engine only): the row
+	// under the pointer highlights so the operator can see what a click
+	// will hit before clicking. Off by default — no mouse reporting is
+	// enabled, no highlight is ever computed, frames are byte-identical to
+	// today. Whether the engine is actually tea is checked in run(), since
+	// that env var isn't visible from here; this just records intent.
+	hoverEnabled := os.Getenv("ZDEV_SIDEBAR_HOVER") == "1"
+
 	// Click-to-switch opt-in (ZDEV_SIDEBAR_MOUSE=1). When off, clear any
 	// map a previous enabled run left on this pane — respawn-pane reuses
 	// the pane, so a stale option would keep clicks live after the knob
@@ -501,12 +518,13 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 	}
 
 	return &rendererSetup{
-		width:       width,
-		tmuxPane:    tmuxPane,
-		tmuxSession: tmuxSession,
-		socketPath:  socketPath,
-		snap:        snap,
-		conn:        conn,
+		width:        width,
+		tmuxPane:     tmuxPane,
+		tmuxSession:  tmuxSession,
+		socketPath:   socketPath,
+		snap:         snap,
+		conn:         conn,
+		hoverEnabled: hoverEnabled,
 	}, nil
 }
 

@@ -55,8 +55,21 @@ func instantTickCmdFn(seq int, _ time.Duration) tea.Cmd {
 // newTestModel builds a teaModel for Update()/View() unit tests: no real
 // terminal, socket, or tmux involved — conn is nil because connectionLoopCmd
 // is never exercised by these tests (it needs a live Program to Send to).
+// hoverEnabled is always false here; hover-specific tests use
+// newHoverTestModel instead so the majority of tests (which don't care about
+// hover) stay unaffected by its existence.
 func newTestModel(snap *proto.Snapshot, width int, fixedNow int64) *teaModel {
-	m := newTeaModel(context.Background(), snap, nil, width, "%1", "test-session", "/tmp/does-not-exist.sock")
+	m := newTeaModel(context.Background(), snap, nil, width, "%1", "test-session", "/tmp/does-not-exist.sock", false)
+	m.nowFn = func() int64 { return fixedNow }
+	m.tickCmdFn = instantTickCmdFn
+	m.repaintLive() // nowFn changed after construction; recompute for determinism
+	return m
+}
+
+// newHoverTestModel is newTestModel with ZDEV_SIDEBAR_HOVER on, for tests
+// that exercise tea.MouseMsg handling.
+func newHoverTestModel(snap *proto.Snapshot, width int, fixedNow int64) *teaModel {
+	m := newTeaModel(context.Background(), snap, nil, width, "%1", "test-session", "/tmp/does-not-exist.sock", true)
 	m.nowFn = func() int64 { return fixedNow }
 	m.tickCmdFn = instantTickCmdFn
 	m.repaintLive() // nowFn changed after construction; recompute for determinism
