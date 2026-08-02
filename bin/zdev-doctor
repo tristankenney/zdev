@@ -247,6 +247,33 @@ if [[ "${ZDEV_PROJECTS_DISCOVER:-0}" == "1" ]]; then
       fix "git -C $ws push"
     fi
   fi
+  # Migration check: group-ness used to be inferred (any non-git root dir
+  # WAS a drawer); now it must be marked explicitly (.zdev or
+  # INITIATIVE.md), and an unmarked dir is invisible — no rows at all. A
+  # dir that has children but neither marker is exactly the directory that
+  # silently lost its rows when this change shipped; surface it loudly with
+  # the one-liner that restores it, rather than let it vanish quietly.
+  invisible_found=0
+  if [[ -d "$ws" ]]; then
+    for d in "$ws"/*/; do
+      [[ -d "$d" ]] || continue
+      b="${d%/}"; b="${b##*/}"
+      [[ "$b" == .* ]] && continue
+      [[ -e "$d/.git" ]] && continue
+      [[ -f "$d/INITIATIVE.md" ]] && continue
+      [[ -f "$d/.zdev" ]] && continue
+      has_child=0
+      for c in "$d"*/; do
+        [[ -d "$c" ]] && { has_child=1; break; }
+      done
+      if [[ "$has_child" -eq 1 ]]; then
+        invisible_found=$((invisible_found+1))
+        warn "$ws/$b is invisible to zdev — no .git, INITIATIVE.md, or .zdev marker, but has child dirs (would have been a drawer under the old implicit rule)"
+        fix "touch $ws/$b/.zdev to make it a drawer, or add $ws/$b/INITIATIVE.md to make it an initiative"
+      fi
+    done
+  fi
+  [[ "$invisible_found" -eq 0 ]] && ok "no unmarked root dirs with children — nothing invisible to discovery"
 fi
 # gh powers the sidebar's PR/CI chips (zdev-sidebar-pr-refresh). Warn,
 # not fail: zdev works without it, the chips just stay blank — but that
