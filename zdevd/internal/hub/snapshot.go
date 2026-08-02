@@ -286,6 +286,8 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			WaitContext:      pd.WaitContext,
 			CIStatus:         pd.CIStatus,
 			CIConclusion:     pd.CIConclusion,
+			Intent:           pd.Intent,
+			BdReady:          pd.BdReady,
 			Unmanaged:        isUnmanaged,
 		}
 		projects = append(projects, proj)

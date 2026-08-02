@@ -93,6 +93,40 @@ func TestApplyDataRefresh(t *testing.T) {
 	}
 }
 
+// TestApplyIntentRefresh verifies that IntentRefresh (phase4-v23) populates
+// Intent/BdReady on the matching project in the snapshot, mirroring
+// TestApplyDataRefresh's event→snapshot pattern.
+func TestApplyIntentRefresh(t *testing.T) {
+	h, cleanup := startHub(t)
+	defer cleanup()
+
+	sub, unsub := mustSubscribe(t, h, "%intent-refresh")
+	defer unsub()
+
+	// Create a session named "marketplace" so buildSnapshot includes it.
+	mustSubmit(t, h, tmuxctl.SessionChanged{ID: "$1", Name: "marketplace"})
+	mustSubmit(t, h, tmuxctl.IntentRefresh{
+		Project: "marketplace",
+		Intent:  "ship the marketplace MVP.",
+		BdReady: 4,
+	})
+
+	snap := drainUntil(t, sub, 200*time.Millisecond, func(s *proto.Snapshot) bool {
+		p := findProject(s.Projects, "marketplace")
+		return p != nil && p.Intent == "ship the marketplace MVP."
+	})
+	proj := findProject(snap.Projects, "marketplace")
+	if proj == nil {
+		t.Fatal("project 'marketplace' not found in snapshot")
+	}
+	if proj.Intent != "ship the marketplace MVP." {
+		t.Errorf("Intent = %q; want %q", proj.Intent, "ship the marketplace MVP.")
+	}
+	if proj.BdReady != 4 {
+		t.Errorf("BdReady = %d; want 4", proj.BdReady)
+	}
+}
+
 // TestApplyPRRefresh_NoCelebration verifies no celebration when Open count
 // increases (no drop detected).
 func TestApplyPRRefresh_NoCelebration(t *testing.T) {
@@ -1112,11 +1146,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v22 (Snapshot.ReviewGauge
-	// added for the S3 landing-readiness gauge, roadmap NOW#4).
-	t.Run("H_schema_version_is_phase4_v22", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v22" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v22")
+	// Test H: proto.SchemaVersion must be phase4-v23 (initiative home
+	// metadata — Project.Intent/BdReady, ZDEV_SIDEBAR_INITIATIVE).
+	t.Run("H_schema_version_is_phase4_v23", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v23" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v23")
 		}
 	})
 }

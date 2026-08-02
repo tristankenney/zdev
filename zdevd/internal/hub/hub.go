@@ -1092,7 +1092,12 @@ func projectEquals(a, b proto.Project) bool {
 		a.CIConclusion != b.CIConclusion ||
 		// Collapse transitions change navigation row order — they MUST
 		// publish so cursor and rows move together (phase4-v22).
-		a.Collapsed != b.Collapsed {
+		a.Collapsed != b.Collapsed ||
+		// Intent/BdReady (phase4-v23): an initiative home's probe-derived
+		// metadata must publish or the sidebar's intent/rollup rows go
+		// stale with no snapshot ever telling the renderer they changed.
+		a.Intent != b.Intent ||
+		a.BdReady != b.BdReady {
 		return false
 	}
 	if len(a.ListeningPorts) != len(b.ListeningPorts) {

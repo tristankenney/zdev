@@ -327,6 +327,17 @@ type projectData struct {
 	// authority). Never persisted — a working turn does not survive a daemon
 	// restart; it re-derives from the title or the next hook.
 	HookWorkTS int64
+
+	// Intent (phase4-v23, ZDEV_SIDEBAR_INITIATIVE) is the last IntentRefresh's
+	// INITIATIVE.md "**Intent:**" sentence for an initiative-home project.
+	// NOT persisted — same rationale as Branch/DirtyCount: cheap to re-probe,
+	// so a daemon restart just re-reads it on the next cycle instead of
+	// carrying stale disk content across a restart.
+	Intent string
+	// BdReady (phase4-v23) is the last IntentRefresh's `bd ready` unblocked-
+	// work count for an initiative-home project. Same NOT-persisted
+	// rationale as Intent.
+	BdReady int
 }
 
 // prCount holds the last-known PR aggregate counts for a project.
@@ -765,6 +776,15 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		pd.Behind = e.Behind
 		pd.DirtyCount = e.DirtyCount
 		pd.ShellCmd = e.ShellCmd
+		s.projectData[key] = pd
+
+	case tmuxctl.IntentRefresh:
+		// Same key normalization as DataRefresh above — the probe supplies
+		// slash-form; recomputeAgents/buildSnapshot key on dash-form.
+		key := proto.SessionKey(e.Project)
+		pd := s.projectData[key]
+		pd.Intent = e.Intent
+		pd.BdReady = e.BdReady
 		s.projectData[key] = pd
 
 	case tmuxctl.PRRefresh:
