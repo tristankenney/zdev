@@ -41,7 +41,15 @@ import (
 // model uses this as the tea.Model's View() body; the harness is Bubble
 // Tea's job, not this package's.
 func Body(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64) ([]byte, []RowRef) {
-	frame, rows := RenderWithRows(snap, width, animator, nowFn)
+	return BodyWithOpts(snap, width, animator, nowFn, RenderOpts{})
+}
+
+// BodyWithOpts is Body plus RenderOpts (see RenderWithOpts) — the tea
+// model's hover-aware repaint uses this to fold the hovered row's
+// highlight into the SAME frame composer Body always has, rather than
+// forking a second rendering path for the hover case.
+func BodyWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64, opts RenderOpts) ([]byte, []RowRef) {
+	frame, rows := RenderWithOpts(snap, width, animator, nowFn, opts)
 	return stripHarness(frame), rows
 }
 

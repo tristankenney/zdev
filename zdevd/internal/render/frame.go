@@ -116,8 +116,20 @@ func RenderStub(snap *proto.Snapshot, width int) []byte {
 //
 // Source-of-truth: ~/.local/bin/zdev-sidebar-render lines 622-661.
 func Render(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64) []byte {
-	frame, _ := RenderWithRows(snap, width, animator, nowFn)
+	frame, _ := RenderWithOpts(snap, width, animator, nowFn, RenderOpts{})
 	return frame
+}
+
+// RenderOpts carries optional per-frame render behavior that must NOT
+// perturb Render/RenderWithRows' pinned byte-for-byte contract (goldens
+// exercise those two entry points at the zero value and must never move).
+// Zero value is exactly today's behavior.
+type RenderOpts struct {
+	// Hover names the project whose row currently sits under the mouse
+	// pointer (ZDEV_SIDEBAR_HOVER, tea engine only — classic never sets
+	// this). Empty when no row is hovered, which is the default and the
+	// only value classic or a hover-off tea sidebar ever passes.
+	Hover string
 }
 
 // RowRef maps ONE rendered screen line to the switch target it displays.
@@ -151,6 +163,14 @@ type RowRef struct {
 // RenderWithRows composes the frame and, alongside it, the screen-line →
 // switch-target map (see RowRef). Callers that only paint use Render.
 func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64) ([]byte, []RowRef) {
+	return RenderWithOpts(snap, width, animator, nowFn, RenderOpts{})
+}
+
+// RenderWithOpts is RenderWithRows plus optional per-frame behavior that
+// must never move the goldens (see RenderOpts). RenderWithRows and Render
+// are zero-opt wrappers around this — there is exactly one frame composer,
+// same invariant Body's package doc already relies on.
+func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64, opts RenderOpts) ([]byte, []RowRef) {
 	var buf bytes.Buffer
 	var rows []RowRef
 	// lineOf reports the 0-based index of the line the NEXT write lands on:
@@ -343,6 +363,12 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
 		isCursor := cursorFlatRow == projBase[i] && !isCurrent
+		// Hover highlight (ZDEV_SIDEBAR_HOVER, tea engine only): opts.Hover
+		// is always "" outside a hover-enabled tea sidebar, so this is a
+		// no-op everywhere else. A stale name (hovering something no longer
+		// in the snapshot) simply never matches any p.Name — no special
+		// case needed.
+		hovered := opts.Hover != "" && p.Name == opts.Hover
 		grouped := GroupMode == "prefix" && groupKeys[i] != ""
 		home := grouped && isHome[i]
 		// 260511-ohu change A: twoRows := isCurrent only (urgent dropped).
@@ -354,7 +380,7 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// session, the metadata row still follows — the current-project
 			// two-row contract (and projBase math) is glyph-agnostic. The
 			// metadata rows hang inside the frame on the group's gutter.
-			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent,
+			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent, hovered,
 				collapsedN[groupKeys[i]],
 				collapsedN[groupKeys[i]] > 0 && visibleMembers[groupKeys[i]] == 0)
 			if isCurrent {
@@ -373,7 +399,7 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if lastInGroup[i] {
 				g, mg = "╰", " "
 			}
-			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows,
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
 				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
 					rowMargin(&p, animator, urgent, true, false)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
@@ -381,7 +407,7 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 					rowMargin(&p, animator, urgent, true, false)),
 				snap, false)
 		case isCurrent:
-			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, teamsByLead[p.Name], teamRows, "")
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows, "")
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent, "", snap, homes[p.Name])
 		case grouped:
 			// Member row: a │ gutter hangs under the group's header —
@@ -394,11 +420,11 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if lastInGroup[i] {
 				g = "╰"
 			}
-			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows,
+			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
 				groupGutter(groupKeys[i], hasHome[groupKeys[i]], g,
 					rowMargin(&p, animator, urgent, false, isCursor)))
 		default:
-			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, teamsByLead[p.Name], teamRows, "")
+			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows, "")
 		}
 		// Every line just written belongs to this project — the compact or
 		// project row plus, for the current session, its metadata rows.
@@ -654,7 +680,12 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 // replaces both the synthetic header and the home's compact row, so the
 // group costs no extra line and the home stays a real, navigable FlatRow
 // whose agent attention lights the header.
-func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent bool, collapsedN int, folded bool) {
+//
+// hovered (ZDEV_SIDEBAR_HOVER, tea engine only) overrides the name's
+// identity-hue coloring with thHover() — foreground-only, so it layers
+// safely regardless of isCurrent/isCursor, which own the MARGIN column
+// (▌/▶) and are untouched here.
+func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent, hovered bool, collapsedN int, folded bool) {
 	switch {
 	case isCurrent:
 		// Same breath-pulsing ▌ the current project row carries — without
@@ -697,8 +728,12 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// dash fill and no glyph+dash combo: live dogfood showed both read
 	// as clutter (a pane half-full of ragged rules; "◐─ name" noise) —
 	// the corner/marker, hue, and Bold carry "this is a header" alone.
-	buf.WriteString(Bold)
-	buf.WriteString(thPalette(name))
+	if hovered {
+		buf.WriteString(thHover())
+	} else {
+		buf.WriteString(Bold)
+		buf.WriteString(thPalette(name))
+	}
 	buf.WriteString(name)
 	buf.WriteString(Reset)
 	// Rollup (phase4-v22): a collapsed group folds its member rows into a
@@ -901,7 +936,12 @@ func joinNonEmpty(dst *bytes.Buffer, subs []*bytes.Buffer, sep string) {
 //	urgent=true          → {RedBorder}▌{Reset}" " (foreground-only red; no bg state to leak)
 //	urgent=false+current → {BreathColorForProject}▌{Reset}" " (per-project breath bar, VIS-03)
 //	otherwise            → "  " (2-space indent)
-func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
+//
+// hovered (ZDEV_SIDEBAR_HOVER, tea engine only) overrides the NAME's
+// coloring with thHover() — the margin/prefix dispatch above (urgent/
+// current/gutter) is untouched, so a hovered row that is also current or
+// urgent keeps its ▌ and just gains the name treatment.
+func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent, hovered bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
 	// gutter: the grouped sidebar's frame prefix ("  │" in the group's
 	// color) so a current row no longer punches a hole through its frame
 	// ("the indentation is kinda off" — live review 2026-07-30). Empty
@@ -951,12 +991,15 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
 
-	if isCurrent {
+	switch {
+	case hovered:
+		buf.WriteString(thHover())
+	case isCurrent:
 		buf.WriteString(Bold)
 		buf.WriteString(thPalette(p.Name))
 	}
 	buf.WriteString(displayName(p.Name))
-	if isCurrent {
+	if hovered || isCurrent {
 		buf.WriteString(Reset)
 	}
 	// Agent Teams badge (phase4-v16, slice 4) — same placement as the
@@ -1078,7 +1121,13 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 // No branch, ports, shell-cmd, agent chips, or celebrate chip — those are
 // scanning noise on a non-current row. Only attention-worthy signals surface.
 // Per planner decision PD-02: name soft-cap at max(width-14, 10) runes.
-func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent bool, isCursor bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
+//
+// hovered (ZDEV_SIDEBAR_HOVER, tea engine only) overrides the NAME's
+// coloring with thHover(), taking priority over the stale/absent/unmanaged
+// dim treatment — the live pointer signal wins. The prefix dispatch above
+// (gutter/urgent/cursor) is untouched, so the ▶ cursor marker survives a
+// hover exactly as the spec requires.
+func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent, isCursor, hovered bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
 	buf.WriteString(gutter)
 	rowStart := buf.Len()
 	switch {
@@ -1118,11 +1167,16 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	if nameCap < 10 {
 		nameCap = 10
 	}
-	if stale || p.Status == "absent" || p.Unmanaged {
+	switch {
+	case hovered:
+		buf.WriteString(thHover())
+		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
+		buf.WriteString(Reset)
+	case stale || p.Status == "absent" || p.Unmanaged:
 		buf.WriteString(thDim())
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 		buf.WriteString(Reset)
-	} else {
+	default:
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 	}
 

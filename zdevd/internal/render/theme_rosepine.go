@@ -145,6 +145,24 @@ func thDead() string {
 	return RedPulse
 }
 
+// thHover is the hover-highlight token for a row's NAME under the mouse
+// pointer (ZDEV_SIDEBAR_HOVER, tea engine only). FOREGROUND-ONLY by the
+// same hard-won precedent as thUrgentBar's 260511-nxy comment — a bg fill
+// bleeds across rows and corrupts the frame, so this spends text weight,
+// never a background. It must read as distinct from both ▌ (current
+// session) and ▶ (keyboard cursor), which live in the margin column this
+// function never touches — callers apply it to the NAME only. Classic has
+// no extra hue to spend without inventing an unpaletted 16th xterm slot,
+// so Bold alone carries "this is different"; rose-pine spends its
+// brightest neutral text token instead, which reads as "lit" without
+// stealing an identity hue from PaletteFor/rpIdentityFor.
+func thHover() string {
+	if ThemeMode == "rose-pine" {
+		return rpText.fg()
+	}
+	return Bold
+}
+
 // thUrgentBar is the urgent row's left-border ▌ accent.
 func thUrgentBar() string {
 	if ThemeMode == "rose-pine" {
