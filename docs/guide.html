@@ -107,56 +107,92 @@ listener, or builds a web UI. Three layers, three jobs:</p>
 defines what zdev supervises — no list to maintain:</p>
 <pre><code>~/workspace/                   the workspace root is ALSO the journal repo
   &lt;dir with .git&gt;              root repos (zdev, dotfiles, …) — plain rows
-  projects/&lt;repo&gt;              unmarked group — canonical checkouts, reviews
+  projects/.zdev               marked group (drawer) — the marker itself
+  projects/&lt;repo&gt;              …every child dir rows — canonical checkouts
   &lt;name&gt;/INITIATIVE.md         marked group = an initiative (see below)
 </code></pre>
-<p>The tree mirrors the disk — no path is special. Everything follows from
-two questions asked about each directory at the workspace root:</p>
+<p>The tree mirrors the disk — no path is special. But group-ness is never
+<em>inferred</em> from shape: every directory at the workspace root is
+resolved by asking what marker file it contains, and there are exactly three
+outcomes.</p>
 
-<h3>1. Is it a repo, or a group?</h3>
-<p>A root directory <strong>with <code>.git</code></strong> is a
-<strong>project</strong> — one plain row (<code>zdev</code>,
-<code>dotfiles</code>). A root directory <strong>without <code>.git</code></strong>
-is a <strong>group</strong> — a folder of things, folded behind one header.
-That's the whole rule; there is no third kind and no way to declare either.</p>
+<h3>The three outcomes</h3>
+<table>
+<tr><th>Marker present</th><th>What it becomes</th></tr>
+<tr><td><code>.git</code></td><td>a <strong>project</strong> — one plain row (<code>zdev</code>, <code>dotfiles</code>)</td></tr>
+<tr><td><code>INITIATIVE.md</code></td><td>a <strong>group</strong>, and specifically an <strong>initiative</strong>: the directory itself rows as the group's home, plus one row per child that has <code>.git</code> (so <code>notes/</code> never rows)</td></tr>
+<tr><td><code>.zdev</code></td><td>a <strong>group</strong>, and specifically a <strong>drawer</strong>: every child directory rows; the group directory itself does not (no home — nothing claimed)</td></tr>
+<tr><td>none of the above</td><td><strong>invisible</strong> — no rows at all, even if it has children. This is deliberate: a stray non-git directory (<code>archive/</code>, a Downloads-ish folder) must never silently become sidebar rows</td></tr>
+</table>
+<p><code>INITIATIVE.md</code> alone is sufficient to make a directory a group
+— it does not also need <code>.zdev</code>. The two group markers are
+mutually exclusive in practice (a directory is either an initiative or a
+drawer), and a directory with neither is simply not part of the registry.
+<code>zdev doctor</code> scans for directories that would have produced rows
+under the old implicit rule but are now invisible, and prints the exact
+one-liner to fix each.</p>
 
-<h3>2. Is the group marked?</h3>
-<p>A group is an <strong>initiative</strong> if — and only if — it contains a
-file named <code>INITIATIVE.md</code>. Nothing else marks it: not config, not
-a naming convention, not its position. A group without that file is a
-<strong>drawer</strong>: a plain container of checkouts, of which
-<code>projects/</code> is the canonical example.</p>
-<p>So creating each is a one-liner, and both appear in the sidebar within
-seconds — the daemon watches the workspace:</p>
-<pre><code># a drawer — just make the directory and put repos in it
-mkdir -p ~/workspace/scratch &amp;&amp; git clone &lt;url&gt; ~/workspace/scratch/thing
+<h3>What <code>.zdev</code> is</h3>
+<p><code>.zdev</code> is a <strong>TOML</strong> file, and today an
+<strong>empty file is completely normal</strong> — its mere existence is the
+marker. Discovery (the bash layer in <code>bin/zdev</code>) only checks
+whether it exists; it never parses or reads its contents, so any TOML you
+put in it today is inert. It's reserved for group metadata in a future
+release — display name, colour, per-group collapse behaviour — and unknown
+keys will always be ignored. Until then, <code>touch &lt;dir&gt;/.zdev</code>
+is the entire operation.</p>
+<p>The two group markers answer different questions, and both can eventually
+carry metadata:</p>
+<ul>
+<li><code>.zdev</code> answers <strong>"is this directory a group?"</strong>
+— machine-oriented, currently existence-only, future home for group display
+metadata.</li>
+<li><code>INITIATIVE.md</code> answers <strong>"is this group an
+initiative?"</strong> — human-oriented markdown: intent, tracker links,
+dated decisions, and an outcome at wind-down. This one is read today, by
+you and by <code>/zdev:initiative</code>.</li>
+</ul>
+<p>Creating each outcome is a one-liner, and all three appear (or
+disappear) in the sidebar within seconds — the daemon watches the
+workspace:</p>
+<pre><code># a drawer — mark it, then put repos in it
+mkdir -p ~/workspace/scratch &amp;&amp; touch ~/workspace/scratch/.zdev
+git clone &lt;url&gt; ~/workspace/scratch/thing
 
-# an initiative — the same, plus the mark
+# an initiative — the same, but INITIATIVE.md is the mark instead
 mkdir -p ~/workspace/marketplace/notes
 $EDITOR ~/workspace/marketplace/INITIATIVE.md   # intent, tracker links
 
 # promote a drawer to an initiative (or demote: delete the file)
 touch ~/workspace/scratch/INITIATIVE.md
+
+# a directory with no marker at all is invisible — no rows, no watching
+mkdir -p ~/workspace/archive   # zdev never sees this
 </code></pre>
 
 <h3>What the mark actually changes</h3>
-<p>Both kinds group and fold identically. The mark buys identity and
-memory — nothing about how members behave:</p>
+<p>Both are equally <strong>declared</strong> groups now — a drawer is no
+longer accidental scaffolding, so it does not render as one. In the sidebar
+and the M-p switcher a drawer's header looks exactly like an initiative's
+home row: same <code>╭</code>/<code>▸</code> glyph, its own stable
+<code>PaletteFor</code> identity hue, same bold, members hanging off a hued
+gutter. What differs between them is semantic, not visual:</p>
 <table>
-<tr><th></th><th>Drawer (unmarked)</th><th>Initiative (<code>INITIATIVE.md</code>)</th></tr>
+<tr><th></th><th>Drawer (<code>.zdev</code>)</th><th>Initiative (<code>INITIATIVE.md</code>)</th></tr>
 <tr><td>Which children row</td><td><strong>every</strong> child directory</td><td>only children with <code>.git</code> (so <code>notes/</code> never rows)</td></tr>
-<tr><td>Header row</td><td>synthetic, <em>dim</em> — scaffolding, recedes</td><td>the group's own directory <strong>is</strong> a row, in its identity colour</td></tr>
-<tr><td>Is the header a session?</td><td>no — a label; clicking it jumps to the first member</td><td>yes — you can <code>zdev &lt;name&gt;</code> and work at the initiative level</td></tr>
+<tr><td>Is the header's directory itself a real row?</td><td>no — a label only; clicking it jumps to the first member</td><td>yes — its own directory <strong>is</strong> a row (the "home"), and you can <code>zdev &lt;name&gt;</code> to work at the initiative level</td></tr>
 <tr><td>Journal tracking</td><td>ignored (contents are other repos' working trees)</td><td><code>INITIATIVE.md</code>, <code>notes/</code>, <code>AGENTS.md</code>, <code>.beads/</code> versioned by the workspace journal</td></tr>
 <tr><td>Collapse setting</td><td><code>containers</code> in <code>[collapse]</code></td><td><code>initiatives</code> in <code>[collapse]</code></td></tr>
 <tr><td>Tooling</td><td>none — it's a folder</td><td>the <code>/zdev:initiative</code> skill: start, add repo, status, wind down</td></tr>
 </table>
 <div class="callout">
-<strong>Rule of thumb.</strong> Mark a group when the work has an
-<em>identity</em> worth remembering — a unit of value with intent, decisions,
-and an outcome that should outlive the directory. Leave it unmarked when it's
-just somewhere to keep checkouts. A drawer costs nothing and can be promoted
-later with one <code>touch</code>.
+<strong>Rule of thumb.</strong> Mark a group as an initiative when the work
+has an <em>identity</em> worth remembering — a unit of value with intent,
+decisions, and an outcome that should outlive the directory. Mark it a plain
+drawer (<code>.zdev</code>) when it's just somewhere to keep checkouts. Leave
+it unmarked — invisible — when it isn't a zdev concern at all. A drawer
+costs nothing and can be promoted to an initiative later with one
+<code>touch</code>.
 </div>
 
 <p>The rules in full, for reference:</p>
@@ -164,12 +200,15 @@ later with one <code>touch</code>.
 <tr><th>Rule</th><th>Becomes a row?</th></tr>
 <tr><td>root dir with <code>.git</code></td><td>yes — standalone project</td></tr>
 <tr><td>marked group <code>&lt;name&gt;/</code> (has INITIATIVE.md)</td><td>yes — the initiative's home row</td></tr>
-<tr><td><code>&lt;name&gt;/&lt;dir&gt;</code> with <code>.git</code> (marked group)</td><td>yes — member clone</td></tr>
-<tr><td><code>&lt;name&gt;/notes</code> (no .git, marked group)</td><td><strong>no</strong> — knowledge, not work</td></tr>
-<tr><td>unmarked group member (e.g. <code>projects/&lt;dir&gt;</code>, any dir)</td><td>yes — drawer row</td></tr>
+<tr><td><code>&lt;name&gt;/&lt;dir&gt;</code> with <code>.git</code> (marked initiative)</td><td>yes — member clone</td></tr>
+<tr><td><code>&lt;name&gt;/notes</code> (no .git, marked initiative)</td><td><strong>no</strong> — knowledge, not work</td></tr>
+<tr><td>marked drawer member (e.g. <code>projects/&lt;dir&gt;</code>, any dir, group has <code>.zdev</code>)</td><td>yes — drawer row</td></tr>
+<tr><td>root dir with <strong>no</strong> marker (no .git, INITIATIVE.md, or .zdev)</td><td><strong>no</strong> — invisible, regardless of what's inside it</td></tr>
 </table>
-<p>The daemon <em>watches</em> the workspace: create or delete a directory and
-the corresponding row follows within seconds. No config edit, no restart.</p>
+<p>The daemon <em>watches</em> the workspace: create or delete a directory
+inside a <em>marked</em> group and the corresponding row follows within
+seconds. No config edit, no restart. (An unmarked directory isn't watched at
+all — see below.)</p>
 <div class="callout">
 <strong>Why is this row here?</strong> <code>zdev --list-projects -v</code>
 prints <code>name&nbsp;→&nbsp;origin</code> for every row — <code>declared</code>,
@@ -179,14 +218,26 @@ keeps the implicit convention honest.
 <p><code>~/.config/zdev/projects</code> holds <strong>overrides only</strong>:
 favorites (append <code>&nbsp;*</code> — started by <code>zdev up</code>, never
 reaped) and off-convention paths.</p>
+<div class="callout">
+<strong>Migrating from an older zdev.</strong> Before this marker existed,
+<em>any</em> non-git root directory was a drawer. If you're upgrading,
+<code>zdev doctor</code> scans the workspace root and warns about every
+directory that has child directories but neither <code>.git</code>,
+<code>INITIATIVE.md</code>, nor <code>.zdev</code> — those rows just went
+invisible. The fix it prints is <code>touch &lt;dir&gt;/.zdev</code> (drawer)
+or adding <code>INITIATIVE.md</code> (initiative), whichever fits.
+</div>
 
 <h2 id="initiatives">Initiatives</h2>
 <p><strong>The ontology, settled:</strong> there is ONE structural concept —
-the <em>group</em> (a directory of members that folds behind a header). Every
-group has initiative functionality available; utilisation is optional.
-<code>projects/</code> is a group that doesn't utilise it — no INITIATIVE.md,
-no identity, dim. An <strong>initiative</strong> is a group that does: the
-unit of value delivered, spanning repos, living exactly as long as delivery
+the <em>group</em> (a directory of members that folds behind a header),
+declared explicitly via <code>.zdev</code> or <code>INITIATIVE.md</code>.
+Every group has initiative functionality available; utilisation is optional.
+<code>projects/</code> is a group that doesn't utilise it — marked with
+<code>.zdev</code>, not <code>INITIATIVE.md</code>, so it has no identity of
+its own, but it renders with the same visual standing as any initiative. An
+<strong>initiative</strong> is a group that does utilise it: the unit of
+value delivered, spanning repos, living exactly as long as delivery
 requires, its scope drifting as work reveals itself. The mark is the
 on-disk <code>INITIATIVE.md</code> — the workspace root is the journal repo,
 versioning every group's metadata via a whitelist gitignore. Mechanically:</p>
@@ -239,14 +290,15 @@ merged &gt;2 weeks ago is rot — delete it, don't nurse it. The
 ▌ · dotfiles                 ▌ = your current session
 <span class="g-wait">●</span> <span class="g-init">marketplace</span>                attention on a home replaces the ╭
 <span class="g-init">▸ marketplace ·11</span>            …or, quiet + unattended: folded, ·N rollup
-<span class="g-dim">╭ projects</span>                   unmarked group header (a drawer, dim)
-<span class="g-dim">│</span>  <span class="g-wait">●</span> pay-app 2m             waiting 2 minutes (pulses faster with age)
+<span class="g-init">╭ projects</span>                   drawer header (.zdev-marked) — same standing as a home row
+<span class="g-init">│</span>  <span class="g-wait">●</span> pay-app 2m             waiting 2 minutes (pulses faster with age)
   <span class="g-work">◐</span> zdev                     working (spinner)
   2 waiting · 1 working      footer tally
 </code></pre>
 <ul>
-<li>Each initiative's name renders in its <strong>own stable color</strong> —
-recognizable before it's read. The gutter matches.</li>
+<li>Each group's name — drawer or initiative alike — renders in its
+<strong>own stable color</strong> — recognizable before it's read. The
+gutter matches.</li>
 <li>Grouped rows show the <strong>leaf</strong> (<code>pay-app</code>); the
 switcher keeps full paths for targeting.</li>
 <li>Markers: <span class="glyph g-wait">●</span> waiting ·

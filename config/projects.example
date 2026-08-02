@@ -9,18 +9,30 @@
 # Discovery (ZDEV_PROJECTS_DISCOVER=1 in ~/.config/zdev/env): the workspace
 # layout is the registry and this file holds OVERRIDES only —
 #
-#   Two questions decide everything, and neither is answered in config:
-#   1. root dir WITH .git      → a plain project row (zdev, dotfiles)
-#      root dir WITHOUT .git   → a GROUP
-#   2. group WITH INITIATIVE.md → an INITIATIVE: its own dir rows as the
-#                                 group home, plus one row per child that
-#                                 has .git (so notes/ never rows)
-#      group WITHOUT it         → a DRAWER: one row per child dir, any dir
-#                                 (e.g. projects/)
-#   `touch <group>/INITIATIVE.md` promotes a drawer; deleting it demotes.
+#   Group-ness is an EXPLICIT on-disk marker, never inferred from
+#   directory shape, and never answered in config:
+#   - root dir WITH .git          → a plain project row (zdev, dotfiles)
+#   - root dir + INITIATIVE.md    → an INITIATIVE: its own dir rows as the
+#                                    group home, plus one row per child that
+#                                    has .git (so notes/ never rows)
+#   - root dir + .zdev            → a DRAWER: one row per child dir, any dir
+#                                    (e.g. projects/). .zdev is an empty
+#                                    marker file (TOML format reserved for
+#                                    future group metadata — display name,
+#                                    colour, per-group collapse — none of
+#                                    which exists yet; only its EXISTENCE is
+#                                    checked today, never its contents)
+#   - root dir with NEITHER       → INVISIBLE — no rows at all. A stray
+#                                    non-git dir with no marker (archive/,
+#                                    a Downloads-ish folder) never pollutes
+#                                    the fleet. `zdev doctor` flags any
+#                                    directory that would have rowed under
+#                                    the old implicit rule.
+#   `touch <group>/.zdev` makes a drawer; `touch <group>/INITIATIVE.md`
+#   makes an initiative (deleting either demotes/hides it again).
 #
-# The daemon watches the workspace: `git clone` into a group IS add-repo,
-# `rm -rf` is remove — rows follow the disk in seconds.
+# The daemon watches the workspace: `git clone` into a marked group IS
+# add-repo, `rm -rf` is remove — rows follow the disk in seconds.
 # `zdev --list-projects -v` shows why every row exists.
 #
 # Either mode: append ' *' to mark a favorite — started by `zdev up`,
