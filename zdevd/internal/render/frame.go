@@ -775,7 +775,11 @@ func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent 
 
 // domainSep is the separator between sub-groups within a domain row.
 // Dim " │ " keeps the bar visually subordinate to the chip colors it separates.
-const domainSep = Dim + " │ " + Reset
+// domainSep is a function, not a const: the separator's hue must follow
+// ThemeMode, which is set at startup AFTER package init would have frozen
+// a const/var into classic Dim (the theme-on-expanded-project bug,
+// 2026-08-02 — every other row themed, the metadata row's │ stayed grey).
+func domainSep() string { return thDim() + " │ " + Reset }
 
 // metadataPrefix returns the left-side prefix bytes for current-session
 // metadata rows (marker row prefix + each populated domain row prefix
@@ -977,7 +981,7 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 		// dedicated scrolling row (renderFailingChecksRow) below.
 		chipCI(&subCI, p.CIStatus, p.CIConclusion)
 
-		joinNonEmpty(inner, []*bytes.Buffer{&subBranch, &subPR, &subCI}, domainSep)
+		joinNonEmpty(inner, []*bytes.Buffer{&subBranch, &subPR, &subCI}, domainSep())
 	})
 
 	// CI-fails marquee row (260512-cgw, retimed in 260512-cmx): shows the
@@ -1009,7 +1013,7 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 		// Sub-group 2: ports
 		chipPorts(&subPorts, p.ListeningPorts)
 
-		joinNonEmpty(inner, []*bytes.Buffer{&subShell, &subPorts}, domainSep)
+		joinNonEmpty(inner, []*bytes.Buffer{&subShell, &subPorts}, domainSep())
 	})
 
 	// Agent domain row: wait-age only.

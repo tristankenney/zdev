@@ -314,7 +314,7 @@ func chipShellCmd(buf *bytes.Buffer, cmd string) {
 	if cmd == "" {
 		return
 	}
-	buf.WriteString(Icy)
+	buf.WriteString(thChipAccent(Icy))
 	buf.WriteString("▶ ")
 	buf.WriteString(Truncate14(cmd))
 	buf.WriteString(Reset)
@@ -338,11 +338,11 @@ func chipPRAggregate(buf *bytes.Buffer, open, fail, pend int, celebrating bool) 
 		return
 	}
 	if fail > 0 {
-		fmt.Fprintf(buf, "%s✗ %d%s", "\x1b[31m", fail, Reset)
+		fmt.Fprintf(buf, "%s✗ %d%s", thChipAccent("\x1b[31m"), fail, Reset)
 	} else if pend > 0 {
-		fmt.Fprintf(buf, "%s⊙ %d%s", Orange, pend, Reset)
+		fmt.Fprintf(buf, "%s⊙ %d%s", thChipAccent(Orange), pend, Reset)
 	} else {
-		fmt.Fprintf(buf, "%s✓ %d%s", Green, open, Reset)
+		fmt.Fprintf(buf, "%s✓ %d%s", thChipAccent(Green), open, Reset)
 	}
 }
 
