@@ -1,6 +1,9 @@
 package tmuxctl
 
-import "github.com/tristankenney/zdev/zdevd/internal/teams"
+import (
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/teams"
+)
 
 // Event is the closed interface for parsed control-mode notifications.
 // Concrete types satisfy it via an unexported isEvent() method, which
@@ -341,3 +344,25 @@ type TeamsChanged struct {
 }
 
 func (TeamsChanged) isEvent() {}
+
+// --- Phase 2 focus-loop time spine (docs/design/command-centre.md) ---
+
+// CommitmentsRefresh carries the calendar probe's result for a source's
+// TODAY window (probes.CalendarProbe for the "ics" source; future MCP/exec
+// sources emit the same event). Commitments is the FULL replacement set for
+// the source — the hub does not merge, it replaces wholesale (Commitment is
+// keyed (source, id) per the design note).
+//
+// FetchErr is the load-bearing field: when non-empty, Commitments MUST be
+// nil and applyEvent must KEEP the previously-stored set rather than
+// blanking it. A silently-broken calendar that reports "you are free" is
+// worse than no calendar at all (command-centre.md, "Sources") — the
+// alternative (clearing Commitments on error) would make InFocus/FreeUntil
+// lie the instant a feed hiccups. The hub also records FetchErr + its
+// timestamp as source health, surfaced by `zdev-show time`.
+type CommitmentsRefresh struct {
+	Commitments []proto.Commitment
+	FetchErr    string
+}
+
+func (CommitmentsRefresh) isEvent() {}
