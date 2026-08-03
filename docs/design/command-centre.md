@@ -1,163 +1,158 @@
-# Command centre: the day strip and the provider protocol
+# Command centre: the time model
 
-*Design note, 2026-08-03. Status: agreed, unbuilt. Roadmap entry: "Command
-centre — day strip + provider protocol".*
+*Design note, 2026-08-03. Status: agreed, unbuilt. Supersedes the first
+draft of this file, which was organised around a day strip — the wrong
+spine (see "Why not a strip").*
 
-zdev answers "who needs me next?" over a fleet of agents. This extends it to
-carry the operator's day — calendar, run sheet, due work — without
-compromising what the sidebar is for, and without teaching the daemon to
-speak to any network service.
+zdev answers *"who needs me next?"* over a fleet of agents. This extends it
+with the operator's **time**, so it can answer the questions that only exist
+where those two domains meet.
 
-## The constraint that shapes the architecture
+## Why not a strip
 
-The operator's planning signal lives in Outlook, Motion, Granola, Slack and
-GitHub. Those are reached through **interactively-authenticated MCP servers**:
-Claude holds those connections; a Go daemon does not, and cannot without
-becoming an OAuth client and opening the network — which zdev has refused
-since day one (see "It never wraps an agent, opens a network listener, or
-builds a web UI").
+The obvious build is a calendar section in the sidebar. It is the wrong
+first move: a strip of today's meetings is a worse calendar app, competing
+with Outlook on Outlook's turf and adding rows to the one surface whose
+value is that it stays scannable.
 
-So the split is forced, and it is the right one anyway:
+Everything genuinely worth building here is a case of **zdev behaving
+differently because it knows your time**:
 
-- **Claude fetches and decides.** The `plan` skill already gathers the signal,
-  runs the planning conversation, and writes agreed tasks back to Motion. It
-  keeps doing exactly that. zdev does not re-plan, re-fetch, or re-rank the
-  operator's day.
-- **zdev displays.** It reads an already-decided run sheet and makes it
-  ambient, alongside the fleet, in the surface the operator already watches.
+- *The gap* — "25 minutes until Sprint planning; here is the fleet work that
+  actually fits in 25 minutes."
+- *The shield* — announcements suppress themselves while you are in a
+  meeting, and a digest of what happened waits for you on the way out.
+- *Shutdown* — what landed against what you planned; what carries.
 
-The boundary between them is a **file**, and the mechanism for reading it is
-a **provider** — deliberately general, so the day plan is the first provider
-rather than a special case.
+None of those are a view of a calendar. All three are **the same
+capability**: knowing when you are free, when you are not, and for how long.
+So that capability is the spine, and any display is a consumer of it.
 
-## Data flow
+## The spine: a time model on the snapshot
 
-```
-  Outlook / Motion / Granola / Slack        (MCP — Claude only)
-                  │
-                  ▼
-         the `plan` skill  ── writes ──▶  ~/workspace/.zdev/day.json
-                  │                              │
-          (also writes Motion)                   │  read on a cadence
-                                                 ▼
-                                        provider: `day` (exec)
-                                                 │  NDJSON on stdout
-                                                 ▼
-                                       zdevd  ─ items in state
-                                                 │
-                                                 ▼
-                                        snapshot.Items → surfaces
+Three derived fields, computed by the hub like every other derivation
+(pure, `now` threaded in, never `time.Now()` inside):
+
+```go
+// proto.Snapshot
+Commitments []Commitment  // upcoming, chronological, today only
+InMeeting   bool          // now falls inside a commitment
+FreeUntil   int64         // unix: start of the next commitment; 0 = clear
 ```
 
-The file lives in the workspace journal, which means: versioned, portable to
-another machine, greppable, hand-editable when the plan changes mid-morning,
-and it survives a daemon restart without any persistence work in the hub.
-
-## The item
-
-One shape, whatever the source:
-
-```json
-{
-  "id":      "mtg-a1b2",           // stable per source; dedup + ack key
-  "source":  "day",                // which provider emitted it
-  "kind":    "meeting",            // meeting | task | review | note | …
-  "title":   "Sprint planning",
-  "at":      1785567600,           // unix: when it STARTS (optional)
-  "until":   1785571200,           // unix: when it ends (optional)
-  "due":     1785600000,           // unix: when it is DUE (optional)
-  "url":     "https://…",          // optional: open target
-  "action":  "zdev marketplace"    // optional: shell command to act on it
+```go
+type Commitment struct {
+    ID     string  // stable per source — the ack/dedup key
+    Source string  // which provider emitted it
+    Title  string
+    At     int64   // unix start
+    Until  int64   // unix end (0 = unknown; treat as At + default)
+    URL    string  // optional: join link
+    Kind   string  // "meeting" | "focus" | "task" — open string, not an enum
 }
 ```
 
-`kind` is an open string, not an enum — an unknown kind renders with a
-neutral glyph rather than being dropped. That is what makes a new provider a
+That is the whole wire change. `FreeUntil` is the field the moments actually
+consume; `Commitments` exists so a surface can say *what* you are free until.
+
+**Why `Kind` is an open string**: an unknown kind renders with a neutral
+glyph rather than being dropped, which is what lets a new provider be a
 zero-change addition.
 
-## The provider protocol
+## The moments (consumers of the spine)
 
-Modelled directly on the existing `probes.Probe` contract (`Class()` +
-`Refresh(ctx, key)`, driven by the scheduler that already handles cadence,
-max-staleness gating, timeouts, and subprocess back-pressure).
+### 1. The gap — "what fits before I go?"
 
-- A provider is an **executable**: `~/.config/zdev/providers/<name>`, or a
-  command declared in config.
-- zdevd runs it on its own cadence (per-provider; the day file is cheap, so
-  ~60s; a network-touching one would be minutes), bounded by a timeout.
-- It writes **NDJSON items to stdout** and exits 0. stderr is logged.
-- **Failure is non-fatal and visible**: the last-known items are retained
-  rather than blanking the strip, and the provider's health is surfaced
-  (the daemon-health row precedent) so a silently-broken provider cannot
-  masquerade as an empty day.
-- Items are keyed by `(source, id)`. A provider's emission **replaces** its
-  own items wholesale — no delta protocol, no orphan reconciliation.
+The strongest of the three, and the one nothing else can compute: it needs
+the calendar *and* per-agent attention state *and* review readiness, and zdev
+is the only place all three exist.
 
-Everything else is a provider too, eventually: an `.ics` reader, a `gh`
-review queue, a standup nudge. None of them require touching zdev.
+Given `FreeUntil`, rank fleet work by **whether it fits**, not by age:
 
-## Ranking: why the strip is separate
+- a blocked agent — clearing it is a keystroke, always fits
+- a PR that is green and clean — a small, bounded landing
+- uncommitted work — does not fit in ten minutes; say so rather than offer it
 
-Day items get **their own sidebar section and their own popup**; agents keep
-`rankTriage` to themselves.
+The estimates must be honest and coarse. A wrong "~2m" that eats fifteen
+minutes and makes you late is worse than no estimate at all, so the ranking
+is ordinal ("fits / tight / won't fit"), never a promised duration.
 
-This is the load-bearing decision. The alternative — one unified queue —
-reads elegantly but corrupts the signal zdev exists for: a 10:00 meeting
-outranking an agent that has been blocked on the operator for twelve minutes
-makes "the queue" mean something weaker than it does today. It would also
-require a cross-domain pressure function reconciling *age* (older wait = more
-urgent), *start* (nearer = more urgent, worthless once passed), and *due*.
+### 2. The shield + digest
 
-Keeping them separate dissolves that problem entirely: **within the strip,
-items sort chronologically.** No new ranking theory, and `rankTriage` is
-untouched.
+zdev already suppresses notifications while you are attached to a session,
+and already has a manual mute (`M-o`). The calendar supplies the missing
+reason: `InMeeting` gates the notifier the same way attendance does — no new
+notification path, one new predicate.
 
-If the split proves annoying in daily use, unifying later is strictly easier
-than un-unifying.
+The digest is the other half and the more valuable one. zdev knows what
+changed while you were away because it already tracks per-project
+transitions. On the way out of a commitment, "while you were out" is
+assembled from state it holds: finished, died, went green, started waiting.
 
-## Surfaces
+### 3. Shutdown
 
-Each renders **zero rows when there are no items**, exactly like the triage
-strip and review gauge — so with no provider configured, every frame is
-byte-identical to today.
+At end of day, join what zdev computed (landable, rotting, still waiting)
+with what the `plan` skill decided this morning. zdev supplies the fleet
+half; the skill runs the conversation and owns the write-back. zdev does not
+re-plan.
 
-1. **The day strip** — a section above the projects:
-   ```
-     ─────────────────
-     ◷ 10:00 Sprint planning   in 25m
-     ◷ IMP-97 validate deploy    due
-     ─────────────────
-     ▸ marketplace ·11
-   ```
-   Imminence is the signal: a meeting inside its warning window escalates in
-   colour on the theme's ramp, and drops off once it has started.
-2. **`zdev day`** — the full list as a Bubble Tea popup, in the Round's
-   idiom: navigate, open (`url`), act (`action`), dismiss.
-3. **`zdev next`** stays agent-only, by the same argument as the queue split.
+## Sources
+
+The daemon's rule is that it never opens a network **listener** — outbound
+is already normal (the `gh` and CI probes shell out and hit the network on a
+five-minute cadence). So fetching is allowed; the constraint is auth.
+
+**Primary: zdevd as an MCP client.** zdev already *serves* MCP (`zdevd mcp`
+exposes fleet state to Claude); consuming MCP `resources` closes the circle
+and matches the ecosystem the operator already lives in. Configured servers
+are spawned over stdio and polled on a cadence by the existing scheduler,
+which already handles staleness gating, timeouts and back-pressure.
+
+**Fallback: iCalendar (RFC 5545).** Interactively-authenticated servers —
+notably the operator's Outlook connector, which is authorised through
+Claude's own OAuth flow — are *not* reachable by a daemon, and no amount of
+MCP client work changes that. A subscribed `.ics` URL is the universal
+escape hatch: every calendar provider publishes one, it needs no auth dance,
+and `VEVENT`/`VTODO` parse in a few lines (`arran4/golang-ical`).
+
+**Escape hatch: an exec provider.** Any executable emitting the same
+`Commitment` records as NDJSON, for anything with neither an MCP server nor
+an ICS feed.
+
+Sources are keyed by `(source, id)`; a source's emission replaces its own
+records wholesale. No delta protocol, no orphan reconciliation.
+
+**Failure is non-fatal and visible.** Last-known commitments are retained
+rather than blanked, and a source's health surfaces (the daemon-health row
+precedent) — because a silently-broken calendar that reports "you are free"
+is worse than no calendar at all. This is the single most important failure
+requirement in this note.
 
 ## Phases, each independently killable
 
-1. **Wire + protocol + strip.** `Item` on the snapshot, the provider runner,
-   one file provider, the sidebar section, all behind `ZDEV_SIDEBAR_DAY=1`.
-   *Kill: if a static strip of what you already decided this morning adds
-   nothing to the sidebar, delete it — the file remains useful on its own.*
-2. **Close the loop.** The `plan` skill writes `day.json` as part of its
-   normal run. *Kill: if maintaining the file diverges from what the operator
-   actually does, the strip has no trustworthy input and phase 1 dies with
-   it.*
-3. **Act on items.** `zdev day` popup; open/act/dismiss.
-   *Kill: if items are only ever read and never acted on from zdev, the
-   strip is enough and the popup is ceremony.*
-4. **More providers.** Calendar `.ics`, `gh` review queue, whatever earns
-   its row. *No kill criterion — this phase is the point of the protocol.*
+1. **The spine.** `Commitments`/`InMeeting`/`FreeUntil` on the wire, one
+   source (whichever is cheapest to prove — likely ICS), no UI beyond a
+   debug surface in `zdev-show`. *Kill: if the time data cannot be kept
+   accurate enough to trust, everything downstream is unsafe — stop here.*
+2. **The shield.** `InMeeting` gates the notifier; the digest on the way
+   out. Smallest surface, highest daily value, and it exercises the spine
+   without any new visual language. *Kill: if suppression ever hides
+   something the operator needed during a meeting, revert to manual mute.*
+3. **The gap.** The fits/tight/won't-fit ranking, surfaced where the
+   operator already looks. *Kill: if the estimates mislead even once in a
+   way that costs a meeting, drop to showing the raw countdown only.*
+4. **Shutdown**, and whatever display the preceding phases prove is
+   actually wanted — deliberately last, because by then there is evidence.
 
 ## Explicitly not building
 
-- **No fetching in the daemon.** No OAuth, no HTTP, no MCP client in zdevd.
-  If a provider needs the network, the provider does it.
-- **No planning in zdev.** No prioritisation, no scheduling, no "what should
-  I do next" judgment. That is the `plan` skill's job and Motion's job.
+- **No planning in zdev.** No prioritisation, no scheduling, no judgment
+  about what matters. That is the `plan` skill's job and Motion's job.
 - **No write-back.** zdev does not update Motion or the calendar. Acting on
-  an item runs a command or opens a URL; the source of truth stays upstream.
-- **No day history.** The journal versions `day.json` already; zdev holds
-  only today.
+  something runs a command or opens a URL; the source of truth stays
+  upstream.
+- **No network listener, no OAuth in the daemon.** If a source needs
+  interactive auth, it is unreachable by zdevd by definition — use ICS or an
+  exec provider.
+- **No day history.** zdev holds today. The journal already versions
+  whatever the `plan` skill writes.
