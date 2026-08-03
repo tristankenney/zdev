@@ -16,6 +16,8 @@
 //	zdev-show triage --json    # structured queue (phone Shortcuts, widgets)
 //	zdev-show list --json      # every project row as structured JSON
 //	zdev-show teams            # live team members as TSV for the M-p switcher
+//	zdev-show held             # the focus loop's held set (M-. parks land here)
+//	zdev-show held --json      # structured held set
 //
 // zdev-show dials the daemon's unix socket, reads one snapshot, and exits.
 // It never subscribes to the stream — the connection is closed immediately
@@ -169,6 +171,27 @@ func run() int {
 			fmt.Println(out)
 		default:
 			fmt.Print(formatReview(snap))
+		}
+		return 0
+	}
+
+	// `held` (phase 1 focus loop, docs/design/command-centre.md) is the
+	// debug surface over the airlock's held set: one line per item in
+	// chronological order (id, kind, age, title). `held --json` is the
+	// structured variant — the array is Snapshot.Held verbatim, `[]` for an
+	// empty held set (the parseable "nothing parked" observable, same
+	// convention as `review --json`'s empty gauge).
+	if os.Args[1] == "held" {
+		switch {
+		case len(os.Args) >= 3 && os.Args[2] == "--json":
+			out, err := formatHeldJSON(snap)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+				return 1
+			}
+			fmt.Println(out)
+		default:
+			fmt.Print(formatHeld(snap, time.Now().Unix()))
 		}
 		return 0
 	}
@@ -630,6 +653,37 @@ func formatReviewJSON(snap *proto.Snapshot) (string, error) {
 		repos = snap.ReviewGauge.Repos
 	}
 	b, err := json.Marshal(repos)
+	return string(b), err
+}
+
+// formatHeld renders the held set behind `zdev-show held`: one line per item
+// in chronological order (id, kind, age, title). Nothing renders in the
+// sidebar for phase 1 (docs/design/command-centre.md) — this IS the only
+// way to inspect the airlock's catch until a later phase's boundary review.
+func formatHeld(snap *proto.Snapshot, now int64) string {
+	if len(snap.Held) == 0 {
+		return "(nothing held)\n"
+	}
+	var b strings.Builder
+	for i, item := range snap.Held {
+		age := "-"
+		if item.SinceTS > 0 {
+			age = formatAge(now - item.SinceTS)
+		}
+		fmt.Fprintf(&b, "%d. %s%-16s%s %s%4s%s  %s%s:%s %s\n",
+			i+1, dim, item.ID, reset, dim, age, reset, dim, item.Kind, reset, item.Title)
+	}
+	return b.String()
+}
+
+// formatHeldJSON marshals Snapshot.Held verbatim, in the same chronological
+// order the daemon publishes it in. `[]` for an empty held set.
+func formatHeldJSON(snap *proto.Snapshot) (string, error) {
+	held := snap.Held
+	if held == nil {
+		held = []proto.HeldItem{}
+	}
+	b, err := json.Marshal(held)
 	return string(b), err
 }
 
