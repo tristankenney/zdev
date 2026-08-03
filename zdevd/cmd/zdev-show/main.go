@@ -183,9 +183,12 @@ func run() int {
 	// `held` (phase 1 focus loop, docs/design/command-centre.md) is the
 	// debug surface over the airlock's held set: one line per item in
 	// chronological order (id, kind, age, title). `held --json` is the
-	// structured variant — the array is Snapshot.Held verbatim, `[]` for an
-	// empty held set (the parseable "nothing parked" observable, same
-	// convention as `review --json`'s empty gauge).
+	// structured variant — `{"anchor": ..., "held": [...]}` (phase 3E
+	// added the anchor field so a single call — bin/zdev-notify's
+	// SessionStart context injection — can read both the tether and the
+	// catch without a second daemon dial; "held": [] for an empty held
+	// set, "anchor": null when unanchored, same "parseable absence" style
+	// as `review --json`'s empty gauge).
 	if os.Args[1] == "held" {
 		switch {
 		case len(os.Args) >= 3 && os.Args[2] == "--json":
@@ -720,14 +723,30 @@ func formatHeld(snap *proto.Snapshot, now int64) string {
 	return b.String()
 }
 
-// formatHeldJSON marshals Snapshot.Held verbatim, in the same chronological
-// order the daemon publishes it in. `[]` for an empty held set.
+// heldJSON is the `held --json` wire shape: the held set alongside the
+// anchor (phase 3E, docs/design/command-centre.md — "hook-informed focus",
+// mechanism 3 "sessions know the focus"). Added so bin/zdev-notify's
+// SessionStart context injection can learn BOTH "what am I anchored to"
+// and "what's held" from the one cheapest daemon call this command
+// already made — before this, `held --json` carried Snapshot.Held alone
+// and a caller needing the anchor too would have had to make a second,
+// slower round trip (`zdev-show time --json`, which also drags in a
+// separate diag dial for calendar health this feature has no use for).
+type heldJSON struct {
+	Anchor *proto.Anchor    `json:"anchor"`
+	Held   []proto.HeldItem `json:"held"`
+}
+
+// formatHeldJSON marshals the anchor + Snapshot.Held (chronological order,
+// verbatim) together. `"held":[]` for an empty held set; `"anchor":null`
+// when unanchored.
 func formatHeldJSON(snap *proto.Snapshot) (string, error) {
 	held := snap.Held
 	if held == nil {
 		held = []proto.HeldItem{}
 	}
-	b, err := json.Marshal(held)
+	out := heldJSON{Anchor: snap.Anchor, Held: held}
+	b, err := json.Marshal(out)
 	return string(b), err
 }
 

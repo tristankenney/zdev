@@ -66,22 +66,54 @@ func TestFormatHeldJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("formatHeldJSON: %v", err)
 	}
-	if out != "[]" {
-		t.Errorf("formatHeldJSON(empty) = %q; want []", out)
+	var empty heldJSON
+	if err := json.Unmarshal([]byte(out), &empty); err != nil {
+		t.Fatalf("unmarshal empty held JSON: %v\n%s", err, out)
+	}
+	if empty.Anchor != nil {
+		t.Errorf("formatHeldJSON(empty).Anchor = %+v; want nil", empty.Anchor)
+	}
+	if len(empty.Held) != 0 {
+		t.Errorf("formatHeldJSON(empty).Held = %+v; want empty", empty.Held)
+	}
+	if !strings.Contains(out, `"held":[]`) {
+		t.Errorf("formatHeldJSON(empty) = %q; want a \"held\":[] field (the parseable-absence convention)", out)
 	}
 
 	out, err = formatHeldJSON(heldFixture())
 	if err != nil {
 		t.Fatalf("formatHeldJSON: %v", err)
 	}
-	var items []proto.HeldItem
-	if err := json.Unmarshal([]byte(out), &items); err != nil {
+	var got heldJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("unmarshal held JSON: %v\n%s", err, out)
 	}
-	if len(items) != 2 {
-		t.Fatalf("got %d items, want 2", len(items))
+	if len(got.Held) != 2 {
+		t.Fatalf("got %d items, want 2", len(got.Held))
 	}
-	if items[0].Title != "call the dentist" || items[0].Kind != "parked" {
-		t.Errorf("items[0] = %+v; want Title=call the dentist Kind=parked", items[0])
+	if got.Held[0].Title != "call the dentist" || got.Held[0].Kind != "parked" {
+		t.Errorf("Held[0] = %+v; want Title=call the dentist Kind=parked", got.Held[0])
+	}
+}
+
+// TestFormatHeldJSON_Anchor confirms the phase 3E addition: the anchor
+// rides alongside the held set in ONE call, `null` when unanchored.
+func TestFormatHeldJSON_Anchor(t *testing.T) {
+	snap := heldFixture()
+	snap.Anchor = &proto.Anchor{Title: "IMP-97 validate deploy", Project: "example/backend", SinceTS: 1000}
+
+	out, err := formatHeldJSON(snap)
+	if err != nil {
+		t.Fatalf("formatHeldJSON: %v", err)
+	}
+	var got heldJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal held JSON: %v\n%s", err, out)
+	}
+	if got.Anchor == nil || got.Anchor.Title != "IMP-97 validate deploy" {
+		t.Errorf("Anchor = %+v; want the snapshot's anchor", got.Anchor)
+	}
+	if got.Anchor.Project != "example/backend" || got.Anchor.SinceTS != 1000 {
+		t.Errorf("Anchor = %+v; want Project/SinceTS preserved", got.Anchor)
 	}
 }

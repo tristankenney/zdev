@@ -325,6 +325,37 @@ type state struct {
 	// instant attendance returns (wandering, not a boundary); only a
 	// CONTINUOUS absence reaching the threshold fires the away-boundary.
 	autoAwaySinceTS int64
+
+	// lastEngagedTS (phase 3E, docs/design/command-centre.md — "hook-
+	// informed focus", mechanism 2 "idle-based expiry") is the unix-second
+	// stamp of the most recent EVIDENCE the operator is actively engaged
+	// with the anchor, as opposed to merely having set it a long time ago.
+	// Refreshed by exactly two things: (a) an anchor being SET, either kind
+	// — see applyEvent's AnchorSet case, which covers an explicit pick, a
+	// dwell auto-arm, AND an instant prompt-anchor, since all three funnel
+	// through that one case; (b) a prompt-derived working signal (Src ==
+	// "prompt") landing on the ANCHOR's OWN project while attended — see
+	// autoanchor.go's handleWorkingSignal. Deliberately NOT refreshed by
+	// the PreToolUse heartbeat (Src == "heartbeat") on ANY project,
+	// including the anchor's own: an agent grinding away for an hour while
+	// the operator is at lunch is not engagement, and treating it as such
+	// would let a truly abandoned anchor sit past its expiry forever.
+	//
+	// checkBoundary's expiry check (boundary.go) compares
+	// now-s.lastEngagedTS against s.anchorExpirySec instead of
+	// now-anchor.SinceTS — a deep, continuously-prompted session never
+	// spuriously expires, while a genuinely abandoned anchor (no prompts
+	// after the operator wandered off) still expires on schedule measured
+	// from the LAST real engagement, not from the original pick time.
+	//
+	// NOT persisted (persist.go): a restart's applyPersistedState sets
+	// lastEngagedTS = the restored anchor's SinceTS — a reasonable
+	// approximation (the daemon has no memory of prompts that happened
+	// before it died) that starts the expiry clock over from "now we know
+	// about it again," never from a stale pre-restart engagement moment
+	// that would let an already-overdue anchor expire the instant the
+	// daemon comes back up.
+	lastEngagedTS int64
 }
 
 // maxConsecutiveCaptureFailures is the eviction threshold. Three attempts
@@ -1016,6 +1047,19 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			pd.DeadSinceTS = 0
 			pd.DeadReason = ""
 			pd.DeadNotified = false
+			// Phase 3E, docs/design/command-centre.md — "hook-informed
+			// focus": a working signal that the hub's own extraction (see
+			// tmuxctl.NotifSeen.Src's doc comment) tagged as coming from
+			// UserPromptSubmit specifically (not the PreToolUse heartbeat)
+			// either instant-anchors an attended, unanchored managed
+			// project, or — if already anchored — refreshes engagement
+			// when the prompt landed on the anchor's OWN project. See
+			// autoanchor.go's handleWorkingSignal for the full contract;
+			// called here (not from the publishPass heartbeat) because the
+			// brief's "instant" requirement means the SAME event that
+			// stamps HookWorkTS above is the one that may anchor, not a
+			// later derived pass.
+			handleWorkingSignal(s, e)
 		case e.Kind == proto.WaitKindDone:
 			// Turn ended (Stop). The explicit counterpart to Working: drop the
 			// working heartbeat AND any pending wait the instant the turn
@@ -1288,6 +1332,12 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			Project: strings.TrimSpace(e.Project),
 			SinceTS: e.NowNanos / int64(time.Second),
 		}
+		// Phase 3E, mechanism 2a: SETTING an anchor — of either kind, since
+		// an explicit pick, a dwell auto-arm (autoanchor.go), and an
+		// instant prompt-anchor (autoanchor.go's handleWorkingSignal) all
+		// funnel through this ONE case — counts as fresh engagement. See
+		// state.lastEngagedTS's doc comment for the full refresh contract.
+		s.lastEngagedTS = s.anchor.SinceTS
 
 	case tmuxctl.AnchorClear:
 		// Idempotent: clearing an already-nil anchor is a no-op. The

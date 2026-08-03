@@ -200,6 +200,79 @@ wire field waits for the next natural schema bump; until then this
 convention is the one place both directions (arming and persistence) agree
 on what "auto" means.
 
+### Hook-informed focus (phase 3E — refines when the anchor sets and expires)
+
+The dwell auto-anchor's one cost is latency: ten minutes of sitting in a
+session before the tether appears. Claude Code's own hooks already tell
+zdev more than tmux attendance can — specifically, the instant the
+operator submits a prompt is the instant they picked up the work, no
+dwell required. Phase 3E spends that signal on two refinements to the
+SAME auto-anchor, plus a third, independent mechanism that closes the
+loop the other direction: making a fresh session aware of the focus it's
+arriving into.
+
+**Investigation finding.** The hook JSON Claude Code pipes to every hook
+command already carries `hook_event_name` ("UserPromptSubmit",
+"PreToolUse", …) — no new hook registration or argv change is needed to
+tell a real prompt apart from a tool-use heartbeat; `bin/zdev-notify`'s
+existing `--json` payload read just needed one more field extracted. The
+value rides as a 4th line in the notif file (`tmuxctl.NotifSeen.Src`):
+`"prompt"` when `hook_event_name == "UserPromptSubmit"`, `"heartbeat"`
+otherwise. Absent entirely (an older `zdev-notify`, or a non-Claude
+agent) decodes as `""` and is treated as a heartbeat everywhere — the
+load-bearing back-compat story, since a daemon talking to an un-upgraded
+writer must never instant-anchor on a guess.
+
+Discovered along the way: `UserPromptSubmit` was still mapped to `clear`
+(a compat/manual no-op) on every existing install, and no `PreToolUse`
+heartbeat hook has ever actually been registered — the "hook-driven
+working state" ROADMAP entry shipped the notif-file support but not the
+hook wiring. Phase 3E migrates `UserPromptSubmit` to `working --json` (an
+in-place command edit to an EXISTING registration, not a new hook event)
+so the prompt signal this phase needs actually reaches the daemon; the
+`PreToolUse` heartbeat remains unwired; when a future phase adds it, the
+`Src` plumbing already recognizes it as `"heartbeat"` with no further
+change.
+
+**1. Instant anchor.** A prompt signal for project P, while the operator
+is attended to P's session and no anchor exists, auto-anchors P
+immediately — same Title convention, same `applyEvent(AnchorSet)` path,
+same never-overrides guard as the dwell arm, just with no dwell wait
+(`hub/autoanchor.go`'s `tryInstantAnchor`, gated on the same
+`ZDEV_ANCHOR_AUTO_MIN>0` master switch — one knob disables auto-anchoring
+by either path). The attendance guard is load-bearing: `zdev run` and
+supervised loops fire prompt hooks on sessions the operator isn't
+attending, and wrongly anchoring to one of those is exactly the
+wrong-guess that would kill the tether's credibility.
+
+**2. Idle-based expiry.** The anchor's expiry (`ZDEV_ANCHOR_EXPIRY_MIN`)
+now measures from `lastEngagedTS` — refreshed by any anchor-set (either
+kind) and by a prompt landing on the ANCHOR's own project while attended
+— instead of the anchor's original pick time. A long, continuously-
+prompted session no longer spuriously expires mid-flow; a genuinely
+abandoned one still expires on schedule, just measured from the last
+real engagement rather than the moment it was picked. The `PreToolUse`
+heartbeat deliberately never refreshes it: an agent grinding away for an
+hour while the operator is at lunch is not engagement. Not persisted — a
+restart sets `lastEngagedTS` to the restored anchor's `SinceTS`, the best
+available approximation once the daemon has no memory of prior prompts.
+
+**3. Sessions know the focus.** The `SessionStart` hook, with `--json`,
+queries `zdev-show held --json` (one call, hard 1s timeout, any failure
+= silence) and, when the operator is anchored or holding something,
+prints Claude Code's `SessionStart` context contract on stdout:
+
+```json
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"zdev focus: anchored on <title> (<elapsed>). Parked items for this project: <titles>. Full held set: M-; or zdev_held."}}
+```
+
+Held items are filtered to the session's own project plus a count of the
+rest, capped at roughly three lines. `held --json` gained the anchor
+alongside the held array (`{"anchor":...,"held":[...]}`) so this is one
+daemon round trip, not two — the only wire-shape change this phase
+makes, and it's additive (a bare array would have silently dropped the
+anchor a naive caller expected).
+
 ### Defer-but-promote: the pressure model
 
 Every non-demanding item carries pressure that grows on a curve set by its
