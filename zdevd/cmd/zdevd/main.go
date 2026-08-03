@@ -80,6 +80,22 @@ const waitingDwellDefault = 7 * time.Second
 // expiry entirely (anchor never auto-releases on age alone).
 const anchorExpiryDefaultMin = 90
 
+// autoAnchorMinDefaultMin is the default dwell threshold in minutes before
+// an unanchored, continuously-attended managed project session auto-anchors
+// (phase 3D of the focus loop, docs/design/command-centre.md — "the dwell
+// auto-anchor"). Override with ZDEV_ANCHOR_AUTO_MIN; 0 disables
+// auto-anchoring entirely.
+const autoAnchorMinDefaultMin = 10
+
+// autoAnchorAwayDefaultMin is the default sustained-absence threshold in
+// minutes before an AUTO-anchored session's away-boundary fires (phase 3D).
+// Shorter than the dwell threshold on purpose: arming asks for real
+// commitment before claiming presence, but leaving is cheap to detect and a
+// stale "you are here" claim outstays its welcome fast. Override with
+// ZDEV_ANCHOR_AUTO_AWAY_MIN; 0 disables the away-boundary (an auto-anchor
+// then only ends via finish/expiry/explicit-clear, same as an explicit one).
+const autoAnchorAwayDefaultMin = 3
+
 // version is injected at build time via -ldflags="-X main.version=…".
 // Falls back to "dev" for `go build` / `go install` without ldflags.
 var version = "dev"
@@ -192,6 +208,16 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "zdevd: ZDEV_ANCHOR_EXPIRY_MIN: %v\n", err)
 		return err
 	}
+	autoAnchorMin, err := parseAnchorMin(os.Getenv("ZDEV_ANCHOR_AUTO_MIN"), autoAnchorMinDefaultMin, "ZDEV_ANCHOR_AUTO_MIN")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd: ZDEV_ANCHOR_AUTO_MIN: %v\n", err)
+		return err
+	}
+	autoAnchorAwayMin, err := parseAnchorMin(os.Getenv("ZDEV_ANCHOR_AUTO_AWAY_MIN"), autoAnchorAwayDefaultMin, "ZDEV_ANCHOR_AUTO_AWAY_MIN")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd: ZDEV_ANCHOR_AUTO_AWAY_MIN: %v\n", err)
+		return err
+	}
 
 	tmuxSocket := os.Getenv("ZDEVD_TMUX_SOCKET")
 
@@ -246,6 +272,12 @@ func run() error {
 		// AnchorExpiry (phase 3A focus loop): ZDEV_ANCHOR_EXPIRY_MIN,
 		// default 90 minutes, 0 = never (the hub never reads env itself).
 		AnchorExpiry: anchorExpiry,
+		// AutoAnchorMin / AutoAnchorAwayMin (phase 3D focus loop, "the dwell
+		// auto-anchor"): ZDEV_ANCHOR_AUTO_MIN (default 10 minutes) and
+		// ZDEV_ANCHOR_AUTO_AWAY_MIN (default 3 minutes); 0 disables each
+		// independently. The hub never reads either env var itself.
+		AutoAnchorMin:     autoAnchorMin,
+		AutoAnchorAwayMin: autoAnchorAwayMin,
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve
@@ -655,15 +687,29 @@ func parseDwellMS(raw string, def time.Duration, envName string) (time.Duration,
 // anchor's lifetime is measured in the tens-of-minutes the design note
 // calibrates against (45/90m), not sub-second dwell windows.
 func parseAnchorExpiryMin(raw string) (time.Duration, error) {
+	return parseAnchorMin(raw, anchorExpiryDefaultMin, "ZDEV_ANCHOR_EXPIRY_MIN")
+}
+
+// parseAnchorMin is the shared parser for the anchor-lifecycle knobs
+// measured in minutes (ZDEV_ANCHOR_EXPIRY_MIN, and phase 3D's
+// ZDEV_ANCHOR_AUTO_MIN / ZDEV_ANCHOR_AUTO_AWAY_MIN): empty string → defMin
+// minutes; 0 → disabled (every one of these knobs treats 0 as "off", not an
+// error — an anchor lifetime, a dwell threshold, and an away threshold are
+// all legitimately optional features); positive integer → that many
+// minutes; negative / non-integer → error naming the env var, mirroring
+// parseDwellMS's shape one unit up (minutes instead of milliseconds, since
+// anchor-lifecycle knobs are calibrated in the tens-of-minutes the design
+// note itself uses, not sub-second dwell windows).
+func parseAnchorMin(raw string, defMin int, envName string) (time.Duration, error) {
 	if raw == "" {
-		return anchorExpiryDefaultMin * time.Minute, nil
+		return time.Duration(defMin) * time.Minute, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, fmt.Errorf("invalid ZDEV_ANCHOR_EXPIRY_MIN=%q: must be a non-negative integer (minutes)", raw)
+		return 0, fmt.Errorf("invalid %s=%q: must be a non-negative integer (minutes)", envName, raw)
 	}
 	if n < 0 {
-		return 0, fmt.Errorf("ZDEV_ANCHOR_EXPIRY_MIN=%d: must be >= 0", n)
+		return 0, fmt.Errorf("%s=%d: must be >= 0", envName, n)
 	}
 	return time.Duration(n) * time.Minute, nil
 }

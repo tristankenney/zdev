@@ -53,7 +53,7 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 		if pd, ok := s.projectData[proto.SessionKey(a.Project)]; ok {
 			if pd.Attention == proto.AttFinished {
 				if s.anchorFinishArmed {
-					fireBoundary(s, a, fire)
+					fireBoundary(now, s, a, fire)
 					return true
 				}
 			} else if !s.anchorFinishArmed {
@@ -65,7 +65,7 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 	// Expiry: ZDEV_ANCHOR_EXPIRY_MIN resolved by cmd/zdevd into
 	// s.anchorExpirySec (0 = never — the hub never reads the env itself).
 	if s.anchorExpirySec > 0 && now-a.SinceTS >= s.anchorExpirySec {
-		fireBoundary(s, a, fire)
+		fireBoundary(now, s, a, fire)
 		return true
 	}
 
@@ -73,14 +73,23 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 }
 
 // fireBoundary clears the anchor via applyEvent (so the mutation itself
-// stays in the pure-function layer) and fires the boundary notification.
-// The held set is left untouched — the boundary review (a later phase)
-// consumes it item-by-item; the daemon never auto-opens anything on its
-// own here (deliberate v1 choice: the daemon stays passive, the
-// notification IS the invitation — see command-centre.md "Boundary").
-func fireBoundary(s *state, a *proto.Anchor, fire func(Notification)) {
+// stays in the pure-function layer), force-restarts the dwell clock
+// (autoanchor.go's resetDwellForCurrentAttendance — phase 3D's "re-arm
+// hygiene": landing back in the same session right after ANY boundary must
+// take a full fresh dwell before the auto-anchor can retrigger, never an
+// instant re-anchor), and fires the boundary notification. The held set is
+// left untouched — the boundary review (a later phase) consumes it
+// item-by-item; the daemon never auto-opens anything on its own here
+// (deliberate v1 choice: the daemon stays passive, the notification IS the
+// invitation — see command-centre.md "Boundary"). Shared by checkBoundary's
+// two passive causes AND autoanchor.go's checkAutoAnchorAway — every
+// boundary that clears an anchor funnels through here, so the dwell reset
+// applies uniformly regardless of which cause fired or which anchor kind
+// (auto or explicit) it cleared.
+func fireBoundary(now int64, s *state, a *proto.Anchor, fire func(Notification)) {
 	held := len(s.heldItems)
 	applyEvent(s, tmuxctl.AnchorClear{}, nil)
+	resetDwellForCurrentAttendance(s, now)
 	if fire == nil {
 		return
 	}
