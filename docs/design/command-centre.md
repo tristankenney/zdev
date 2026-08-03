@@ -156,3 +156,27 @@ requirement in this note.
   exec provider.
 - **No day history.** zdev holds today. The journal already versions
   whatever the `plan` skill writes.
+
+## The sidebar contracts as the loop lands
+
+*Added 2026-08-03, from the design workshop.*
+
+The loop does not only add surfaces — it supersedes several the sidebar
+already carries. Each phase's definition of done therefore includes a
+**sidebar re-audit**: which existing surface did this phase make redundant,
+and does the dogfood confirm it? Standing candidates and their expected
+fates:
+
+| surface | expected fate |
+|---|---|
+| triage strip (`ZDEV_SIDEBAR_TRIAGE`, default off) | superseded by the boundary review — delete |
+| review gauge (`ZDEV_SIDEBAR_REVIEW`) | deliberative data — migrates into the command centre's registers; sidebar version deleted |
+| wait pulses + spoken announcements | gated by the airlock; full loudness only while unanchored |
+| stale-dim / demote-fold | "getting stale" is absorbed by the drift register; the dim channel is freed for damped mode |
+| footer tally | competes with the holding counter — one survives the dogfood |
+| initiative metadata rows (parked) | v2 is command-centre content, never sidebar rows |
+
+Convergence target: **anchor + fires + the fleet skeleton**. The sidebar
+earns its glance by shrinking. If a phase lands and no sidebar surface can
+be removed or quieted, treat that as a smell — the new surface probably
+duplicated rather than replaced.
