@@ -151,6 +151,12 @@ func (d *DemoSource) SubmitCursor(_ context.Context, _ int) (name, windowID stri
 	return "", "", nil
 }
 
+// SubmitPark is a no-op for the demo source — a scripted fake-fleet replay
+// has no daemon to park a thought into. Implements socket.SnapshotSource.
+func (d *DemoSource) SubmitPark(_ context.Context, _ string) error {
+	return nil
+}
+
 // Run advances through the frame sequence on timers, broadcasting each new
 // snapshot to all registered subscribers. Holds on the final frame until ctx
 // cancels, then tears down all remaining subscribers.

@@ -1,0 +1,195 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// ---- fixtures ----
+
+func keyRunes(rs ...rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: rs}
+}
+
+func keyType(t tea.KeyType) tea.KeyMsg {
+	return tea.KeyMsg{Type: t}
+}
+
+// isQuitCmd executes cmd (if non-nil) and reports whether it produced
+// tea.QuitMsg — the same "call it and inspect the message" check needed
+// because tea.Quit IS a tea.Cmd value, not a sentinel you can compare
+// against directly.
+func isQuitCmd(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
+
+// newTestParkModel builds a parkModel with no real terminal/socket
+// involved: parkFn is a seam the test fully controls, recording every call.
+func newTestParkModel(parkFn func(context.Context, string) (bool, error)) (*parkModel, *[]string) {
+	var calls []string
+	wrapped := func(ctx context.Context, text string) (bool, error) {
+		calls = append(calls, text)
+		return parkFn(ctx, text)
+	}
+	m := newParkModel(context.Background(), wrapped)
+	return m, &calls
+}
+
+// ---- tests ----
+
+// TestTyping verifies plain character input reaches the embedded textinput —
+// Update's fallthrough delegates any msg not consumed by a binding.
+func TestTyping(t *testing.T) {
+	m, _ := newTestParkModel(func(context.Context, string) (bool, error) { return true, nil })
+
+	model, _ := m.Update(keyRunes('h', 'i'))
+	m = model.(*parkModel)
+
+	if got := m.input.Value(); got != "hi" {
+		t.Fatalf("input.Value() = %q, want %q", got, "hi")
+	}
+}
+
+// TestEnterParksAndQuits is the primary happy path: enter with non-empty
+// text fires the park call (as a Cmd — Update itself stays pure and never
+// calls parkFn inline), and ONLY QUITS once that call's result comes back —
+// never optimistically, so a killed process can never race an in-flight
+// write.
+func TestEnterParksAndQuits(t *testing.T) {
+	m, calls := newTestParkModel(func(context.Context, string) (bool, error) { return true, nil })
+	m.input.SetValue("call the dentist")
+
+	model, cmd := m.Update(keyType(tea.KeyEnter))
+	m = model.(*parkModel)
+
+	if !m.parked {
+		t.Error("parked = false after enter with non-empty text, want true")
+	}
+	if cmd == nil {
+		t.Fatal("enter with non-empty text returned a nil Cmd, want the park Cmd")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("parkFn called during Update (%v) — Update must stay I/O-free, running parkFn only when the returned Cmd executes", *calls)
+	}
+
+	// Execute the returned Cmd exactly once (simulating what the bubbletea
+	// runtime does) and feed its result back in. A parkResultMsg here (not
+	// tea.QuitMsg) proves enter did NOT quit immediately — it waits for this
+	// round-trip to resolve first.
+	msg := cmd()
+	result, ok := msg.(parkResultMsg)
+	if !ok {
+		t.Fatalf("cmd() produced %T, want parkResultMsg (enter must not quit immediately)", msg)
+	}
+	if result.err != nil {
+		t.Fatalf("parkResultMsg.err = %v, want nil", result.err)
+	}
+	if len(*calls) != 1 || (*calls)[0] != "call the dentist" {
+		t.Fatalf("parkFn calls = %v, want exactly [\"call the dentist\"]", *calls)
+	}
+
+	model, cmd = m.Update(result)
+	m = model.(*parkModel)
+	if !isQuitCmd(cmd) {
+		t.Fatal("parkResultMsg (ok) did not produce tea.Quit")
+	}
+	if m.parkErr != nil {
+		t.Errorf("parkErr = %v, want nil on a successful park", m.parkErr)
+	}
+}
+
+// TestEnterParkFailureStillQuits confirms a failed daemon round-trip still
+// closes the popup (per the design: "closes itself" — there's nothing to
+// retry or browse) while recording the error for main.go's stderr surface.
+func TestEnterParkFailureStillQuits(t *testing.T) {
+	wantErr := errors.New("dial: connection refused")
+	m, _ := newTestParkModel(func(context.Context, string) (bool, error) { return false, wantErr })
+	m.input.SetValue("thought")
+
+	_, cmd := m.Update(keyType(tea.KeyEnter))
+	msg := cmd()
+	result := msg.(parkResultMsg)
+	if result.err != wantErr {
+		t.Fatalf("parkResultMsg.err = %v, want %v", result.err, wantErr)
+	}
+
+	model, cmd := m.Update(result)
+	m = model.(*parkModel)
+	if !isQuitCmd(cmd) {
+		t.Fatal("parkResultMsg (failed) did not produce tea.Quit")
+	}
+	if m.parkErr != wantErr {
+		t.Errorf("parkErr = %v, want %v", m.parkErr, wantErr)
+	}
+}
+
+// TestEscQuitsWithoutParking verifies esc/ctrl+c drop the thought silently —
+// tea.Quit fires immediately and parkFn is never called at all, matching
+// esc's "instant, no daemon involved" contract.
+func TestEscQuitsWithoutParking(t *testing.T) {
+	for _, key := range []tea.KeyMsg{keyType(tea.KeyEsc), keyType(tea.KeyCtrlC)} {
+		m, calls := newTestParkModel(func(context.Context, string) (bool, error) {
+			t.Fatal("parkFn must not be called on esc/ctrl+c")
+			return false, nil
+		})
+		m.input.SetValue("a thought that should be dropped")
+
+		model, cmd := m.Update(key)
+		m = model.(*parkModel)
+
+		if !isQuitCmd(cmd) {
+			t.Fatalf("key %v: expected an immediate tea.Quit", key)
+		}
+		if m.parked {
+			t.Errorf("key %v: parked = true, want false (nothing was sent)", key)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("key %v: parkFn calls = %v, want none", key, *calls)
+		}
+	}
+}
+
+// TestEmptyEnterStaysOpen verifies a bare enter on an empty (or
+// whitespace-only) value is a no-op: the popup stays open, nothing is
+// sent — an accidental bare enter must not close the only chance to
+// capture the thought (design: "there is nothing to browse" implies the
+// popup shouldn't vanish on nothing).
+func TestEmptyEnterStaysOpen(t *testing.T) {
+	for _, value := range []string{"", "   ", "\t"} {
+		m, calls := newTestParkModel(func(context.Context, string) (bool, error) {
+			t.Fatal("parkFn must not be called on an empty/whitespace-only enter")
+			return false, nil
+		})
+		m.input.SetValue(value)
+
+		model, cmd := m.Update(keyType(tea.KeyEnter))
+		m = model.(*parkModel)
+
+		if cmd != nil {
+			t.Errorf("value %q: expected a nil Cmd (stay open), got one", value)
+		}
+		if m.parked {
+			t.Errorf("value %q: parked = true, want false", value)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("value %q: parkFn calls = %v, want none", value, *calls)
+		}
+	}
+}
+
+// TestInitReturnsFocusCmd verifies Init returns a non-nil Cmd (the
+// textinput.Focus() blink-starter captured at construction) so the cursor
+// actually blinks the moment the popup opens.
+func TestInitReturnsFocusCmd(t *testing.T) {
+	m, _ := newTestParkModel(func(context.Context, string) (bool, error) { return true, nil })
+	if m.Init() == nil {
+		t.Error("Init() returned nil, want the textinput focus/blink Cmd")
+	}
+}

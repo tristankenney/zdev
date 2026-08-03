@@ -199,6 +199,61 @@ func DialCursor(ctx context.Context, socketPath string, delta int) (name, window
 	return reply.Name, reply.WindowID, nil
 }
 
+// DialPark implements the park client side of phase 1 of the focus loop
+// (docs/design/command-centre.md — the M-. prompt). One-shot: dial → write
+// {"type":"park","v":1,"text":<text>}\n → read one park reply line → close.
+// Returns (false, err) on a dial/transport failure; (false, nil) when the
+// daemon replied ok:false (rejected — empty/whitespace-only text, or a
+// stopped hub) with the daemon's own message folded into err via a
+// synthesized error so callers have one signal to check either way. Used by
+// both `zdevd park` (cmd/zdevd/subcommands.go) and cmd/zdev-park (the M-.
+// popup) — this is the ONE client implementation of the wire shape.
+func DialPark(ctx context.Context, socketPath, text string) (ok bool, err error) {
+	conn, err := Dial(ctx, socketPath)
+	if err != nil {
+		return false, fmt.Errorf("socket: dial: %w", err)
+	}
+	defer conn.Close()
+
+	req := struct {
+		Type string `json:"type"`
+		V    int    `json:"v"`
+		Text string `json:"text"`
+	}{Type: "park", V: 1, Text: text}
+	payload, err := proto.MarshalCompact(req)
+	if err != nil {
+		return false, fmt.Errorf("park marshal: %w", err)
+	}
+	if _, err := conn.Write(append(payload, '\n')); err != nil {
+		return false, fmt.Errorf("park write: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(snapshotReadTimeout)); err != nil {
+		return false, fmt.Errorf("park set deadline: %w", err)
+	}
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 4*1024), proto.MaxHelloBytes)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return false, fmt.Errorf("park read: %w", err)
+		}
+		return false, errors.New("park: no reply (clean EOF)")
+	}
+	var reply struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &reply); err != nil {
+		return false, fmt.Errorf("park unmarshal: %w", err)
+	}
+	if !reply.OK {
+		if reply.Error != "" {
+			return false, errors.New(reply.Error)
+		}
+		return false, errors.New("park: daemon rejected the request")
+	}
+	return true, nil
+}
+
 // Stream reads subsequent snapshots from an already-handshaked conn (i.e.,
 // the conn returned by Subscribe). Returns a channel that receives every
 // snapshot the daemon emits until ctx cancels OR the conn closes. The

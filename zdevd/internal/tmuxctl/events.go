@@ -311,6 +311,24 @@ type CursorMove struct{ Delta int }
 
 func (CursorMove) isEvent() {}
 
+// ParkText is submitted by the "zdevd park" subcommand via the socket
+// protocol (phase 1 of the focus loop, docs/design/command-centre.md — the
+// `M-.` park prompt). Hub.SubmitPark trims and rejects empty/whitespace-only
+// text on the CALLER's goroutine before this event is ever constructed, so
+// applyEvent can assume Text is non-empty (it still guards defensively —
+// applyEvent must never trust a caller's discipline as its only line of
+// defense). NowNanos is a single unix-nanosecond timestamp sampled by
+// SubmitPark and threaded in so applyEvent stays pure and deterministic in
+// tests: it seeds both the held item's ID ("parked-<nanos>", unique even for
+// two parks landing in the same wall-clock second) and its SinceTS
+// (NowNanos / time.Second).
+type ParkText struct {
+	Text     string
+	NowNanos int64
+}
+
+func (ParkText) isEvent() {}
+
 // PaneCaptureFailed reports that an asynchronous tmux capture-pane returned
 // an error. The hub uses consecutive-failure counting to evict ghost panes
 // (e.g. a pane whose session was killed externally without zdevd seeing a

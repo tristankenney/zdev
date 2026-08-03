@@ -55,6 +55,26 @@ type cursorReply struct {
 	WindowID string `json:"window_id,omitempty"`
 }
 
+// parkRequest is the client-to-server park wire frame (phase 1 of the focus
+// loop, docs/design/command-centre.md — the M-. prompt). Type is always
+// "park"; V is the protocol version (1); Text is the raw captured thought
+// (validated/trimmed daemon-side by Hub.SubmitPark, not here).
+type parkRequest struct {
+	Type string `json:"type"`
+	V    int    `json:"v"`
+	Text string `json:"text"`
+}
+
+// parkReply is the server-to-client park wire frame. Reuses Type "park"
+// (rather than a distinct "park-reply" the way cursor does) because the
+// brief that specified this wire shape gave it literally — OK is false with
+// Error set on rejection (empty/whitespace-only text, or a stopped hub).
+type parkReply struct {
+	Type  string `json:"type"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 // SnapshotSource is the interface the Server requires from its backing hub.
 // *hub.Hub satisfies this interface; demo.DemoSource also satisfies it for
 // the `zdevd demo` subcommand (reproducible README GIF, no agents needed).
@@ -68,6 +88,13 @@ type SnapshotSource interface {
 	// query without moving. Returns "" name when no projects exist; windowID is
 	// "" for a project row.
 	SubmitCursor(ctx context.Context, delta int) (name, windowID string, err error)
+	// SubmitPark appends text to the held set (phase 1 of the focus loop,
+	// docs/design/command-centre.md). Returns a non-nil error on
+	// empty/whitespace-only text or a stopped hub; the "park" case below
+	// turns that into {ok:false, error:"..."} on the wire rather than
+	// closing the connection, so a rejected park is a normal reply, not a
+	// protocol failure.
+	SubmitPark(ctx context.Context, text string) error
 }
 
 // dialProbeTimeout caps the liveness probe in BindOrCleanStale.
@@ -255,6 +282,35 @@ func (s *Server) serveOne(ctx context.Context, conn net.Conn) {
 		}
 		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
 			slog.Warn("socket: cursor reply write failed", "err", wErr)
+		}
+		return
+
+	case "park":
+		// One-shot park: append text to the held set, write {ok,...} reply +
+		// close. Only v==1 supported. Empty/whitespace-only text is a normal
+		// reject (ok:false), not a closed connection — SubmitPark's error
+		// covers exactly that case plus a stopped hub.
+		if h.V != 1 {
+			slog.Warn("socket: park request unsupported version", "v", h.V)
+			return
+		}
+		var pr parkRequest
+		if err := json.Unmarshal(sc.Bytes(), &pr); err != nil {
+			slog.Warn("socket: park request unmarshal failed", "err", err)
+			return
+		}
+		reply := parkReply{Type: "park", OK: true}
+		if err := s.hub.SubmitPark(ctx, pr.Text); err != nil {
+			reply.OK = false
+			reply.Error = err.Error()
+		}
+		payload, mErr := proto.MarshalCompact(reply)
+		if mErr != nil {
+			slog.Warn("socket: park reply marshal failed", "err", mErr)
+			return
+		}
+		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
+			slog.Warn("socket: park reply write failed", "err", wErr)
 		}
 		return
 

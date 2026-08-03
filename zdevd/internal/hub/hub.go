@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,7 @@ type Hub struct {
 	unregister     chan *Subscriber   // socket.Server → hub
 	diagRequests   chan diagReq       // socket.Server (diag handler) → hub; ARCH-10
 	cursorRequests chan cursorReq     // socket.Server (cursor handler) → hub; zd-e6e
+	parkRequests   chan parkReq       // socket.Server (park handler) → hub; phase 1 focus loop
 	errInc         chan struct{}      // RecordError → hub; errors_1h ticker
 	stopped        chan struct{}      // closed by Run on exit; signals Submit/Register/DiagSnapshot
 
@@ -152,6 +154,17 @@ type cursorResult struct {
 	windowID string
 }
 
+// parkReq is the channel round-trip envelope for park requests (phase 1 of
+// the focus loop, docs/design/command-centre.md). SubmitPark validates and
+// trims the text and samples the wall clock ONCE on the caller's goroutine,
+// then hands both into the Run loop, which applies a ParkText event and
+// republishes — same Pitfall-6 round-trip pattern as cursorReq/diagReq.
+type parkReq struct {
+	text     string
+	nowNanos int64
+	reply    chan<- struct{}
+}
+
 // Config bundles every dependency the hub needs. Pass to NewHub once;
 // fields are read-only after Run starts. Replaces the previous fluent
 // setter chain (WithSocketPath/WithEventLog/WithStatePath/WithNotifier)
@@ -260,6 +273,7 @@ func NewHub(cfg Config) *Hub {
 		unregister:     make(chan *Subscriber),
 		diagRequests:   make(chan diagReq),
 		cursorRequests: make(chan cursorReq),
+		parkRequests:   make(chan parkReq),
 		errInc:         make(chan struct{}, errIncChanCap),
 		stopped:        make(chan struct{}),
 		state:          st,
@@ -614,6 +628,22 @@ func (h *Hub) Run(ctx context.Context) error {
 			}
 			req.reply <- res
 
+		case req := <-h.parkRequests:
+			// Apply the park (pure state mutation — no I/O). The nanosecond
+			// sample was taken on the CALLER's goroutine (SubmitPark), not
+			// here, so applyEvent stays deterministic and testable without
+			// touching the wall clock itself.
+			applyEvent(h.state, tmuxctl.ParkText{Text: req.text, NowNanos: req.nowNanos}, nil)
+			// Arm debounce so subscribers see the updated held set promptly —
+			// same pattern as the cursor branch above.
+			if timer == nil {
+				timer = time.NewTimer(h.debounce)
+				debounceFired = timer.C
+			} else {
+				resetDebounce(timer, h.debounce)
+			}
+			close(req.reply)
+
 		case <-h.errInc:
 			h.errCounter.Inc(time.Now())
 
@@ -734,6 +764,45 @@ func (h *Hub) SubmitCursor(ctx context.Context, delta int) (name, windowID strin
 		return "", "", ErrHubStopped
 	case <-ctx.Done():
 		return "", "", ctx.Err()
+	}
+}
+
+// SubmitPark applies a park (phase 1 of the focus loop,
+// docs/design/command-centre.md — the M-. prompt) and returns once the hub
+// goroutine has appended it to the held set. Same synchronous channel
+// round-trip as SubmitCursor/DiagSnapshot (Pitfall 6).
+//
+// Empty and whitespace-only text is rejected HERE, before the channel send,
+// so a blank park never even reaches the hub goroutine — applyEvent's own
+// guard (state.go) is defense in depth, not the only line of defense. The
+// wall clock is sampled exactly once, on this (the caller's) goroutine, and
+// threaded into the ParkText event so applyEvent itself never calls
+// time.Now() — see project-conventions on threaded time.
+func (h *Hub) SubmitPark(ctx context.Context, text string) error {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return errors.New("hub: park text is empty")
+	}
+	select {
+	case <-h.stopped:
+		return ErrHubStopped
+	default:
+	}
+	reply := make(chan struct{}, 1)
+	select {
+	case h.parkRequests <- parkReq{text: trimmed, nowNanos: time.Now().UnixNano(), reply: reply}:
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-reply:
+		return nil
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -1033,6 +1102,31 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	}
 	if !commitmentsEqual(a.Commitments, b.Commitments) {
 		return false
+	}
+	// Held (phase4-v24, phase 1 focus loop): a park lands silently unless
+	// this participates — length alone would miss a same-length swap, so
+	// this compares every field. Unlike ReviewRow.AgeSec (a ticking proxy
+	// clock deliberately excluded above), HeldItem.SinceTS is a fixed
+	// timestamp assigned once at park time — it never changes after
+	// append, so including it is both safe and necessary.
+	if !heldEqual(a.Held, b.Held) {
+		return false
+	}
+	return true
+}
+
+// heldEqual compares two Held slices element-wise. proto.HeldItem has no
+// slice-typed fields, so a direct == per element is a correct (and cheap)
+// field-by-field comparison — no helper struct needed the way projectEquals
+// needs one for Project's ListeningPorts.
+func heldEqual(a, b []proto.HeldItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
 	}
 	return true
 }

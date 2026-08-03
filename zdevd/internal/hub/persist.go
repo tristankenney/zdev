@@ -79,6 +79,17 @@ type persistedState struct {
 	DeadSinceTS  map[string]int64  `json:"deadSinceTS,omitempty"`
 	DeadReason   map[string]string `json:"deadReason,omitempty"`
 	DeadNotified map[string]bool   `json:"deadNotified,omitempty"`
+
+	// ParkedHeld (phase1 focus loop, additive — no schema bump needed; an
+	// absent key loads as a nil slice, same "old file loads fine" story as
+	// the death-lifecycle fields above) persists ONLY the "parked" entries
+	// of state.heldItems: the trust contract ("nothing deferred is lost",
+	// docs/design/command-centre.md) requires a park to survive a daemon
+	// restart. Other Held kinds (arrivals — a later phase) are NOT persisted
+	// here — they are reconstructible from live state on the next pass, so
+	// persisting them would risk shipping stale/duplicate arrivals across a
+	// restart for no benefit.
+	ParkedHeld []proto.HeldItem `json:"parkedHeld,omitempty"`
 }
 
 // loadState reads and unmarshals the persisted state from path.
@@ -198,6 +209,15 @@ func saveState(path string, s *state) error {
 		}
 	}
 
+	// Flatten the held set down to its "parked" entries only — see
+	// ParkedHeld's doc comment above for why other kinds are excluded.
+	var parkedHeld []proto.HeldItem
+	for _, item := range s.heldItems {
+		if item.Kind == "parked" {
+			parkedHeld = append(parkedHeld, item)
+		}
+	}
+
 	ps := persistedState{
 		V:                 stateSchemaV,
 		LastVisitTS:       s.lastVisitTS,
@@ -209,6 +229,7 @@ func saveState(path string, s *state) error {
 		DeadSinceTS:       deadTS,
 		DeadReason:        deadReason,
 		DeadNotified:      deadNotified,
+		ParkedHeld:        parkedHeld,
 	}
 
 	body, err := json.Marshal(ps)
@@ -293,5 +314,12 @@ func applyPersistedState(s *state, ps *persistedState) {
 			continue // deadline already passed
 		}
 		s.celebrateUntil[k] = v
+	}
+
+	// Restore parked items. This runs before Run starts (LoadPersistedState's
+	// contract), so s.heldItems is still empty — a plain append preserves the
+	// persisted chronological order without needing a merge/sort.
+	if len(ps.ParkedHeld) > 0 {
+		s.heldItems = append(s.heldItems, ps.ParkedHeld...)
 	}
 }
