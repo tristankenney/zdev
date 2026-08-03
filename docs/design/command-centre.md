@@ -140,6 +140,66 @@ Two load-bearing consequences:
 - **Switching sessions does not move the anchor.** It is sticky and shows
   drift honestly. One anchor, ever — the WIP limit of one is the point.
 
+### The dwell auto-anchor (phase 3D — operator-approved amendment, 2026-08-03)
+
+The explicit anchor solved trust but reintroduced ceremony, and ceremony
+gets skipped — the operator never anchored. But zdev already tracks session
+attendance as **fact**, not inference. So: dwell in one session past a
+threshold ⇒ auto-anchor to it, visibly marked as inferred (`▶ now
+marketplace (auto) · 18m`), full airlock engaged. Leaving the session for a
+sustained period, or the session's work finishing, is the boundary. An
+explicit anchor (pick or `M-,`) always overrides. The wrong-guess risk is
+near zero because the auto-anchor never claims more than the fact: you are
+here, and have been for a while.
+
+This makes the auto-anchor the loop's **ambient entry point** — a fourth
+way into `▶ now` alongside the three explicit ones above, and the only one
+that needs no key at all.
+
+**Semantics, as shipped:**
+
+- **Arming.** The operator attended to exactly one managed project session
+  *continuously* (every relevant observation since the attach, no gaps) for
+  at least `ZDEV_ANCHOR_AUTO_MIN` minutes (default 10; 0 disables
+  auto-anchoring entirely) while unanchored auto-anchors:
+  `Anchor{Title: "<project> (auto)", Project: <project>, SinceTS: now}`
+  through the SAME `applyEvent` path an explicit pick uses — finish-arming,
+  publish, and persistence semantics all come free from that one path.
+  Never overrides an existing anchor, explicit or auto.
+- **Away boundary.** While auto-anchored, sustained absence from that
+  session — attending a different session, or none, continuously — for at
+  least `ZDEV_ANCHOR_AUTO_AWAY_MIN` minutes (default 3; 0 disables) clears
+  it and fires the usual boundary notification. A brief hop back under the
+  threshold is wandering, not a boundary: the anchor holds exactly like an
+  explicit one, and the absence timer forgets the hop entirely.
+- **Finish/expiry.** Unchanged, and apply identically to an auto-anchor —
+  the existing boundary detector never distinguished anchor kinds.
+- **Explicit override.** An explicit anchor-set replaces an auto-anchor
+  *without* firing a boundary — upgrading the tether is not ending work.
+  An explicit *clear* of an auto-anchor, however, IS a boundary, same as
+  clearing an explicit one.
+- **Re-arm hygiene.** Every boundary — finish, expiry, away, or an explicit
+  clear — restarts the dwell clock at zero for whatever is attended right
+  now. Landing back in the very same session immediately after a boundary
+  requires a full fresh dwell before it can auto-anchor again; without this
+  the loop would oscillate boundary → instant-re-anchor.
+- **Persistence.** Auto-anchors are deliberately never persisted (unlike
+  explicit ones). A restart mid-dwell losing an auto-anchor is harmless — it
+  re-derives within one dwell period from live attendance, the daemon's
+  actual source of truth. Persisting it would resurrect a stale "(auto)"
+  claim about presence that a restart has no way to verify.
+
+**The wire encoding is a v1 hack, done on purpose.** `proto.Anchor` carries
+only `Title`/`Project`/`SinceTS` — no schema bump for this phase. "(auto)"
+rides the Title field as a naming convention (`Title == Project + "
+(auto)"`), which the renderer already draws verbatim, so the sidebar needed
+no code change at all. The daemon owns exactly one place that must tell
+auto from explicit (persistence — see above); it reuses the same
+convention rather than inventing a second one. A proper `Kind`/`IsAuto`
+wire field waits for the next natural schema bump; until then this
+convention is the one place both directions (arming and persistence) agree
+on what "auto" means.
+
 ### Defer-but-promote: the pressure model
 
 Every non-demanding item carries pressure that grows on a curve set by its
