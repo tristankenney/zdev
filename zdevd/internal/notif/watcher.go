@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 
@@ -101,7 +102,7 @@ func (w *Watcher) handle(name string) {
 		// platform (first caught by CI's Linux leg).
 		return
 	}
-	w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary, Src: src})
+	w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary, Src: src, ReceivedNanos: time.Now().UnixNano()})
 }
 
 // readNotifFile reads the notif file zdev-notify wrote. Four formats, each

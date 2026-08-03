@@ -199,6 +199,15 @@ type NotifSeen struct {
 	Kind      string
 	Summary   string
 	Src       string
+	// ReceivedNanos is the watcher's own clock at submit time (sampled on
+	// the watcher goroutine, where clock access is allowed). The hub uses
+	// it to bound instant-anchor freshness: the notif watcher subscribes
+	// Chmod (deliberately — cp/mv save patterns), so a spurious Chmod can
+	// REPLAY a stale prompt file with an old Timestamp, and anchoring off
+	// hours-old evidence would produce a set→instant-expiry boundary blip
+	// (invariants review, 2026-08-03). Zero means "unknown" and is treated
+	// as fresh — direct-constructed test events keep working.
+	ReceivedNanos int64
 }
 
 // ProjectListChanged is emitted when the workspace fsnotify watcher (D3-06)

@@ -267,7 +267,14 @@ func handleWorkingSignal(s *state, ev tmuxctl.NotifSeen) {
 	// session while anchored) says nothing about whether the ANCHORED work
 	// is still being engaged with, so it must not reset that clock.
 	if s.anchor.Project != "" && proto.SessionKey(s.anchor.Project) == ev.Session {
-		s.lastEngagedTS = ev.Timestamp
+		// Monotonic (invariants review, 2026-08-03): the notif watcher's
+		// Chmod subscription can replay a STALE prompt file; taking its
+		// old timestamp unconditionally would drag engagement backwards
+		// and expire an actively-engaged anchor early. Same guard the
+		// lastVisitTS stamping already uses.
+		if ev.Timestamp > s.lastEngagedTS {
+			s.lastEngagedTS = ev.Timestamp
+		}
 	}
 }
 
@@ -293,11 +300,25 @@ func handleWorkingSignal(s *state, ev tmuxctl.NotifSeen) {
 // in for `now` here, the same way PaneTitleChanged's handling elsewhere in
 // applyEvent uses an already-sampled timestamp rather than re-reading the
 // clock. Returns true when it armed.
+// instantAnchorFreshnessSec bounds how old a prompt's file timestamp may
+// be, relative to the watcher's receive time, and still instant-anchor.
+// The notif watcher subscribes Chmod (deliberately), so a spurious Chmod
+// can REPLAY a stale prompt file; anchoring off hours-old evidence would
+// set SinceTS in the past and expire into a boundary blip on the next
+// pass. 60s is generous for any real hook→fsnotify→hub path.
+const instantAnchorFreshnessSec = 60
+
 func tryInstantAnchor(s *state, ev tmuxctl.NotifSeen) bool {
 	if s.anchor != nil {
 		return false
 	}
 	if s.autoAnchorMinSec <= 0 {
+		return false
+	}
+	// Freshness (invariants review, 2026-08-03): a replayed stale file
+	// must never anchor. ReceivedNanos==0 means "unknown" (direct-built
+	// test events) and is treated as fresh.
+	if ev.ReceivedNanos > 0 && ev.ReceivedNanos/1e9-ev.Timestamp > instantAnchorFreshnessSec {
 		return false
 	}
 	var project string

@@ -817,3 +817,49 @@ func TestApplyPersistedState_NoAnchor_EngagementLeftZero(t *testing.T) {
 		t.Errorf("lastEngagedTS = %d with no persisted anchor, want 0", s.lastEngagedTS)
 	}
 }
+
+// Stale-replay defense (invariants review, 2026-08-03): the notif
+// watcher's Chmod subscription can replay an old prompt file. A replayed
+// prompt must neither instant-anchor (freshness bound) nor drag an
+// engaged anchor's clock backwards (monotonic guard).
+func TestStaleReplayNeverAnchorsNorRegressesEngagement(t *testing.T) {
+	s := newState()
+	s.autoAnchorMinSec = 600
+	s.projectListNames = []string{"marketplace/pay-ops"}
+	s.clientSessions = map[string]string{"c1": "marketplace-pay-ops"}
+	s.lastVisitTS = map[string]int64{"marketplace-pay-ops": 1000}
+
+	// A prompt whose file timestamp is hours older than its receive time
+	// is a replay — no anchor.
+	stale := tmuxctl.NotifSeen{
+		Session: "marketplace-pay-ops", Timestamp: 1000, Src: "prompt",
+		ReceivedNanos: (1000 + 7200) * 1e9,
+	}
+	handleWorkingSignal(s, stale)
+	if s.anchor != nil {
+		t.Fatalf("stale replayed prompt must not instant-anchor, got %+v", s.anchor)
+	}
+
+	// Fresh prompt anchors.
+	fresh := tmuxctl.NotifSeen{
+		Session: "marketplace-pay-ops", Timestamp: 8000, Src: "prompt",
+		ReceivedNanos: 8001 * 1e9,
+	}
+	handleWorkingSignal(s, fresh)
+	if s.anchor == nil {
+		t.Fatal("fresh prompt must instant-anchor")
+	}
+	if s.lastEngagedTS != 8000 {
+		t.Fatalf("lastEngagedTS = %d, want 8000", s.lastEngagedTS)
+	}
+
+	// A replayed OLD prompt on the anchored project must not drag
+	// engagement backwards.
+	handleWorkingSignal(s, tmuxctl.NotifSeen{
+		Session: "marketplace-pay-ops", Timestamp: 2000, Src: "prompt",
+		ReceivedNanos: 8002 * 1e9,
+	})
+	if s.lastEngagedTS != 8000 {
+		t.Fatalf("lastEngagedTS regressed to %d; monotonic guard failed", s.lastEngagedTS)
+	}
+}
