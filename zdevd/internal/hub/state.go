@@ -283,6 +283,48 @@ type state struct {
 	// every publishPass. Set once by NewHub from hub.Config.AnchorExpiry;
 	// read-only throughout Run.
 	anchorExpirySec int64
+
+	// --- Dwell auto-anchor (phase 3D, docs/design/command-centre.md —
+	// "the dwell auto-anchor" under "the anchor lifecycle"). See
+	// autoanchor.go for the derivation functions; these fields are their
+	// storage. NONE of the fields below are persisted (persist.go) — a
+	// restart mid-dwell (or mid-away) just re-derives from live attendance
+	// within one pass/dwell-period, the same "cheap to re-probe" reasoning
+	// as anchorFinishArmed.
+
+	// dwellProject is the canonical name of the ONE managed project every
+	// attached tmux client is CONTINUOUSLY viewing, or "" when no client is
+	// attached, clients disagree, or the attended session isn't a managed
+	// project. Updated every publishPass by updateDwell.
+	dwellProject string
+	// dwellSinceTS is the unix-second timestamp the CURRENT dwellProject
+	// run started. Restarts (to `now`, or to 0 when dwellProject goes
+	// empty) whenever dwellProject changes — any hop, including a hop
+	// to/from no session at all — and is force-restarted by
+	// resetDwellForCurrentAttendance after every boundary (finish, expiry,
+	// away, or an explicit clear): the "re-arm hygiene" rule that lands the
+	// operator back in the same session needing a full fresh dwell before
+	// auto-anchoring again, never an instant re-anchor.
+	dwellSinceTS int64
+
+	// autoAnchorMinSec mirrors ZDEV_ANCHOR_AUTO_MIN — dwell minutes before
+	// an unanchored, continuously-attended managed project auto-anchors.
+	// 0 disables auto-anchoring entirely. Set once by NewHub from
+	// hub.Config.AutoAnchorMin; read-only throughout Run.
+	autoAnchorMinSec int64
+	// autoAnchorAwayMinSec mirrors ZDEV_ANCHOR_AUTO_AWAY_MIN — sustained
+	// absence from an AUTO-anchored project's session before the
+	// away-boundary fires (explicit anchors never carry this exit — "switching
+	// sessions does not move the anchor" stays true for a pick). Set once by
+	// NewHub from hub.Config.AutoAnchorAwayMin; read-only throughout Run.
+	autoAnchorAwayMinSec int64
+	// autoAwaySinceTS is the unix-second timestamp the operator was first
+	// observed away from the current auto-anchor's project this absence —
+	// 0 while attending it (or whenever there is no auto-anchor to be away
+	// from). A brief hop under autoAnchorAwayMinSec resets this to 0 the
+	// instant attendance returns (wandering, not a boundary); only a
+	// CONTINUOUS absence reaching the threshold fires the away-boundary.
+	autoAwaySinceTS int64
 }
 
 // maxConsecutiveCaptureFailures is the eviction threshold. Three attempts

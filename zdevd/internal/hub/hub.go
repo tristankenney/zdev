@@ -267,6 +267,25 @@ type Config struct {
 	// follows. cmd/zdevd resolves the env var (default 90 minutes when
 	// unset) into this field; the hub never reads env itself.
 	AnchorExpiry time.Duration
+
+	// AutoAnchorMin mirrors ZDEV_ANCHOR_AUTO_MIN (phase 3D of the focus
+	// loop, docs/design/command-centre.md — "the dwell auto-anchor").
+	// Continuous, unanchored attendance of one managed project session for
+	// at least this long auto-anchors to it (autoanchor.go's
+	// checkAutoAnchorArm). Zero disables auto-anchoring entirely — the
+	// Config-zero-value convention every other optional knob follows.
+	// cmd/zdevd resolves the env var (default 10 minutes when unset) into
+	// this field; the hub never reads env itself.
+	AutoAnchorMin time.Duration
+
+	// AutoAnchorAwayMin mirrors ZDEV_ANCHOR_AUTO_AWAY_MIN — sustained
+	// absence from an AUTO-anchored project's session before the
+	// away-boundary fires (autoanchor.go's checkAutoAnchorAway; explicit
+	// anchors never carry this exit). Zero disables the away-boundary — an
+	// auto-anchor then only ends via finish/expiry/explicit-clear, same as
+	// an explicit one. cmd/zdevd resolves the env var (default 3 minutes
+	// when unset) into this field; the hub never reads env itself.
+	AutoAnchorAwayMin time.Duration
 }
 
 // NewHub constructs a hub from a Config. Every dependency is bundled into
@@ -301,6 +320,8 @@ func NewHub(cfg Config) *Hub {
 	}
 	st.teamWindows = cfg.TeamWindows
 	st.anchorExpirySec = int64(cfg.AnchorExpiry.Seconds())
+	st.autoAnchorMinSec = int64(cfg.AutoAnchorMin.Seconds())
+	st.autoAnchorAwayMinSec = int64(cfg.AutoAnchorAwayMin.Seconds())
 	return &Hub{
 		debounce:       cfg.Debounce,
 		events:         make(chan tmuxctl.Event, eventsChanCap),
@@ -529,7 +550,26 @@ func (h *Hub) Run(ctx context.Context) error {
 		// moment the operator explicitly wants zdev to speak; delaying its
 		// own visible effect would be a needless inconsistency).
 		boundaryFired := checkBoundary(passNow.Unix(), h.state, h.notifier)
-		if boundaryFired {
+		// Dwell auto-anchor (phase 3D, autoanchor.go) runs on this same
+		// heartbeat, in this order:
+		//   1. checkAutoAnchorAway — the auto-anchor's OWN away-boundary.
+		//      No-ops instantly if checkBoundary already cleared the anchor
+		//      above (finish/expiry) or if the current anchor is explicit.
+		//   2. updateDwell — track this pass's attendance. If a boundary
+		//      fired above (either check), fireBoundary already
+		//      force-restarted the dwell clock via
+		//      resetDwellForCurrentAttendance, so this call is a no-op in
+		//      that case (same attendance, same value) — the reset wins.
+		//   3. checkAutoAnchorArm — arm only while unanchored, and only once
+		//      the dwell just tracked/reset clears the threshold. Guaranteed
+		//      NOT to fire in the very same pass a boundary just cleared the
+		//      way, because resetDwellForCurrentAttendance just set
+		//      dwellSinceTS to this pass's `now` (elapsed == 0).
+		awayFired := checkAutoAnchorAway(passNow.Unix(), h.state, h.notifier)
+		updateDwell(h.state, passNow.Unix())
+		armFired := checkAutoAnchorArm(passNow.Unix(), h.state)
+		anchorMutated := boundaryFired || awayFired || armFired
+		if anchorMutated {
 			snap = buildSnapshot(h.state, 0, time.Time{}, passNow.Unix(), passNow.UnixMilli())
 		}
 		// Daemon health fields (zd-6e1): set before snapshotEqualsCore so
@@ -554,11 +594,12 @@ func (h *Hub) Run(ctx context.Context) error {
 		// changed AND no tier mutation needs to be captured. Restores the
 		// project's zero-idle-CPU posture under the supervisor's
 		// idempotent 1Hz polls — without this, every poll cycle triggers
-		// a marshal + socket write per subscriber forever. boundaryFired
+		// a marshal + socket write per subscriber forever. anchorMutated
 		// participates defensively (snapshotChanged already catches the
-		// Anchor-going-nil case in practice, since Anchor is compared by
-		// snapshotEqualsCore).
-		if !snapshotChanged && !clientsChanged && !tierFired && !boundaryFired {
+		// Anchor-going-nil/appearing case in practice, since Anchor is
+		// compared by snapshotEqualsCore) — covers boundaryFired (finish/
+		// expiry), the away-boundary, and a fresh auto-anchor arming.
+		if !snapshotChanged && !clientsChanged && !tierFired && !anchorMutated {
 			return
 		}
 		h.lastClientSessionsSeq = h.state.clientSessionsSeq
@@ -714,6 +755,17 @@ func (h *Hub) Run(ctx context.Context) error {
 			case "clear":
 				prev := h.state.anchor
 				applyEvent(h.state, tmuxctl.AnchorClear{}, nil)
+				if prev != nil {
+					// Re-arm hygiene (phase 3D, autoanchor.go): an explicit
+					// clear IS a boundary (see comment above), so it gets the
+					// same dwell-clock restart every other boundary cause
+					// gets via fireBoundary — landing back in the same
+					// session right after this clear must take a full fresh
+					// dwell before the auto-anchor can retrigger. Idempotent
+					// clear-of-nil (prev == nil) is NOT a boundary, so it
+					// leaves the dwell clock untouched.
+					resetDwellForCurrentAttendance(h.state, time.Now().Unix())
+				}
 				if prev != nil && h.notifier != nil {
 					h.notifier(boundaryNotification(prev, len(h.state.heldItems)))
 				}

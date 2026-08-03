@@ -225,6 +225,22 @@ func saveState(path string, s *state) error {
 		}
 	}
 
+	// Auto-anchors are DELIBERATELY never persisted (phase 3D, autoanchor.go
+	// — docs/design/command-centre.md "the dwell auto-anchor"): a restart
+	// mid-dwell losing an auto-anchor is harmless — it re-derives within one
+	// fresh dwell period from live attendance, the daemon's actual source of
+	// truth. Persisting it would resurrect a stale "(auto)" claim about
+	// PRESENCE that a restart has no way to verify (the operator may well be
+	// gone by the time the daemon comes back up) — exactly the kind of wrong
+	// guess the design note's "near zero" risk claim depends on never
+	// happening. Distinguished from an explicit anchor by the SAME
+	// Title-convention isAutoAnchor uses everywhere else (own this hack in
+	// one place, not two): Title == Project + " (auto)".
+	anchorToPersist := s.anchor
+	if isAutoAnchor(anchorToPersist) {
+		anchorToPersist = nil
+	}
+
 	ps := persistedState{
 		V:                 stateSchemaV,
 		LastVisitTS:       s.lastVisitTS,
@@ -237,7 +253,7 @@ func saveState(path string, s *state) error {
 		DeadReason:        deadReason,
 		DeadNotified:      deadNotified,
 		ParkedHeld:        parkedHeld,
-		Anchor:            s.anchor,
+		Anchor:            anchorToPersist,
 	}
 
 	body, err := json.Marshal(ps)
