@@ -236,8 +236,17 @@ func saveState(path string, s *state) error {
 	// happening. Distinguished from an explicit anchor by the SAME
 	// Title-convention isAutoAnchor uses everywhere else (own this hack in
 	// one place, not two): Title == Project + " (auto)".
+	//
+	// Scheduled anchors (design amendment, "The scheduled anchor and the
+	// push surface") are NOT persisted either, same rationale: they
+	// re-derive from live commitments within one publishPass — and
+	// commitments themselves are never persisted (state.go's field doc
+	// comment), so a scheduled anchor restored from disk would rest on
+	// data the restart has no way to re-verify either. Distinguished by
+	// isScheduledAnchor's own Title-convention (Title ends with
+	// " (scheduled)").
 	anchorToPersist := s.anchor
-	if isAutoAnchor(anchorToPersist) {
+	if isAutoAnchor(anchorToPersist) || isScheduledAnchor(anchorToPersist) {
 		anchorToPersist = nil
 	}
 

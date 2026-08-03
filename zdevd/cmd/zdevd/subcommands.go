@@ -37,6 +37,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	socketpkg "github.com/tristankenney/zdev/zdevd/internal/socket"
 )
 
@@ -411,6 +412,124 @@ func extractFlagValue(args []string, name string) (rest []string, value string) 
 		}
 	}
 	return args, ""
+}
+
+// scheduleSubcmd implements `zdevd schedule push --source <name>` (reading
+// NDJSON Commitment records on stdin) and `zdevd schedule [list]` (printing
+// the merged, source-annotated set) — the CLI side of the design
+// amendment, docs/design/command-centre.md — "The scheduled anchor and the
+// push surface". With no action word, defaults to "list" (mirrors
+// anchorSubcmd's no-action-word == print convention).
+func scheduleSubcmd(args []string) int {
+	if len(args) == 0 {
+		return scheduleListSubcmd(nil)
+	}
+	switch args[0] {
+	case "push":
+		return schedulePushSubcmd(args[1:])
+	case "list":
+		return scheduleListSubcmd(args[1:])
+	default:
+		fmt.Fprintln(os.Stderr, "usage: zdevd schedule [list|push --source <name>] [--socket <path>]")
+		return 2
+	}
+}
+
+// schedulePushSubcmd implements `zdevd schedule push --source <name>
+// [--socket <path>]`, reading one JSON-encoded proto.Commitment per line
+// (NDJSON) on stdin. An empty stdin (zero records) is a VALID push — it's
+// how a source clears its previously-pushed set; this is not treated as a
+// usage error the way parkSubcmd treats empty input, because "clear
+// myself" is a legitimate, deliberate request here.
+//
+// Exit codes: 0 ok, 1 dial/rejection/malformed-record failure, 2 usage.
+func schedulePushSubcmd(args []string) int {
+	fs := flag.NewFlagSet("zdevd schedule push", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	socket := fs.String("socket", platform.ResolveSocketPath(), "path to zdevd unix socket")
+	source := fs.String("source", "", "source name for this push (e.g. \"plan\"); must not be \"ics\"")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*source) == "" {
+		fmt.Fprintln(os.Stderr, "usage: zdevd schedule push --source <name> [--socket <path>] (reads NDJSON Commitment records on stdin)")
+		return 2
+	}
+	var commitments []proto.Commitment
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var c proto.Commitment
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			fmt.Fprintf(os.Stderr, "zdevd schedule push: malformed record: %v\n", err)
+			return 2
+		}
+		commitments = append(commitments, c)
+	}
+	if err := sc.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd schedule push: reading stdin: %v\n", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ok, err := socketpkg.DialSchedulePush(ctx, *socket, *source, commitments)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd schedule push: %v\n", err)
+		return 1
+	}
+	if !ok {
+		fmt.Fprintln(os.Stderr, "zdevd schedule push: daemon rejected the request")
+		return 1
+	}
+	return 0
+}
+
+// scheduleListSubcmd implements `zdevd schedule [list] [--socket <path>]`:
+// prints the daemon's merged, chronological commitment set — one line per
+// commitment, annotated with its source — by reading it straight off a
+// one-shot snapshot subscription (there is no dedicated "get commitments"
+// wire verb, mirroring anchorPrintSubcmd's reasoning: the snapshot already
+// carries Commitments on every connect).
+func scheduleListSubcmd(args []string) int {
+	fs := flag.NewFlagSet("zdevd schedule list", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	socket := fs.String("socket", platform.ResolveSocketPath(), "path to zdevd unix socket")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	snap, conn, err := socketpkg.Subscribe(ctx, *socket, "", "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd schedule: %v\n", err)
+		return 1
+	}
+	defer conn.Close()
+	if len(snap.Commitments) == 0 {
+		fmt.Println("(no commitments)")
+		return 0
+	}
+	for _, c := range snap.Commitments {
+		start := time.Unix(c.At, 0).Local().Format("15:04")
+		end := "-"
+		if c.Until > 0 {
+			end = time.Unix(c.Until, 0).Local().Format("15:04")
+		}
+		kind := c.Kind
+		if kind == "" {
+			kind = "meeting"
+		}
+		source := c.Source
+		if source == "" {
+			source = "ics"
+		}
+		fmt.Printf("%s-%s  %-28s [%s] (%s)\n", start, end, c.Title, kind, source)
+	}
+	return 0
 }
 
 // notifyMuteSubcmd implements `zdevd notify-mute [seconds]`. Writes a

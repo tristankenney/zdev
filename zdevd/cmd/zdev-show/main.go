@@ -821,7 +821,20 @@ func formatTime(snap *proto.Snapshot, health *diag.Reply, now int64) string {
 			if kind == "" {
 				kind = "meeting"
 			}
-			fmt.Fprintf(&b, "%d. %s-%s  %-28s %s[%s]%s\n", i+1, start, end, c.Title, dim, kind, reset)
+			// Source annotation (design amendment, docs/design/command-
+			// centre.md — "The scheduled anchor and the push surface"):
+			// now that commitments are multi-source, each line names WHICH
+			// source contributed it — "ics" (the calendar probe, also the
+			// back-compat default for a pre-multi-source empty Source) or
+			// a pushed source's own name (e.g. "plan"). Appended as its
+			// own trailing "(source)" segment, not folded into the
+			// "[kind]" bracket, so existing "[meeting]"/"[allday]"
+			// substring checks keep matching verbatim.
+			source := c.Source
+			if source == "" {
+				source = "ics"
+			}
+			fmt.Fprintf(&b, "%d. %s-%s  %-28s %s[%s]%s %s(%s)%s\n", i+1, start, end, c.Title, dim, kind, reset, dim, source, reset)
 		}
 	}
 

@@ -125,6 +125,8 @@ func main() {
 			os.Exit(parkSubcmd(os.Args[2:]))
 		case "anchor":
 			os.Exit(anchorSubcmd(os.Args[2:]))
+		case "schedule":
+			os.Exit(scheduleSubcmd(os.Args[2:]))
 		case "notify-mute":
 			os.Exit(notifyMuteSubcmd(os.Args[2:]))
 		case "layout":

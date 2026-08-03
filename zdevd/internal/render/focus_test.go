@@ -107,6 +107,30 @@ func TestAnchorRowRendersAutoSuffixAtStandardWidth(t *testing.T) {
 	}
 }
 
+// A scheduled anchor (design amendment, docs/design/command-centre.md —
+// "The scheduled anchor and the push surface") is ALSO a v1 Title-naming
+// convention with NO schema field (hub/scheduledanchor.go's
+// isScheduledAnchor), same trick as the "(auto)" suffix above — the
+// renderer needs no code change here either. Read-only: this just pins
+// that the "(scheduled)" suffix reads fine and survives verbatim at the
+// standard sidebar width.
+func TestAnchorRowRendersScheduledSuffixAtStandardWidth(t *testing.T) {
+	withFocus(t, true)
+
+	snap := &proto.Snapshot{
+		Anchor:   &proto.Anchor{Title: "IMP-97 stand-up (scheduled)", Project: "marketplace/pay-ops", SinceTS: fixedNow - 12*60},
+		Projects: []proto.Project{{Name: "marketplace/pay-ops", Status: "alive"}},
+	}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	lines := strings.Split(out, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("empty frame")
+	}
+	if want := "▶ now  IMP-97 stand-up (scheduled) · 12m"; lines[0] != want {
+		t.Errorf("anchor row = %q, want %q", lines[0], want)
+	}
+}
+
 // A title too long for the pane truncates with an ellipsis — the elapsed
 // time is the one thing that must never be pushed off the edge.
 func TestAnchorRowTitleTruncatesAtNarrowWidth(t *testing.T) {

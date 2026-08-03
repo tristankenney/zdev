@@ -16,7 +16,8 @@ import (
 // real implementations. Each test overrides only the seam(s) it exercises.
 func resetFocusLoopSeams(t *testing.T) {
 	t.Helper()
-	origPark, origSet, origClear, origRM, origSnap := mcpDialPark, mcpDialAnchorSet, mcpDialAnchorClear, mcpDialHeldRemove, mcpSnapshot
+	origPark, origSet, origClear, origRM, origSnap, origSchedule :=
+		mcpDialPark, mcpDialAnchorSet, mcpDialAnchorClear, mcpDialHeldRemove, mcpSnapshot, mcpDialSchedulePush
 	unexpected := func(name string) func() {
 		return func() { t.Fatalf("%s: unexpected call — test did not stub this seam", name) }
 	}
@@ -37,9 +38,13 @@ func resetFocusLoopSeams(t *testing.T) {
 		unexpected("mcpSnapshot")()
 		return nil, nil
 	}
+	mcpDialSchedulePush = func(context.Context, string, string, []proto.Commitment) (bool, error) {
+		unexpected("mcpDialSchedulePush")()
+		return false, nil
+	}
 	t.Cleanup(func() {
-		mcpDialPark, mcpDialAnchorSet, mcpDialAnchorClear, mcpDialHeldRemove, mcpSnapshot =
-			origPark, origSet, origClear, origRM, origSnap
+		mcpDialPark, mcpDialAnchorSet, mcpDialAnchorClear, mcpDialHeldRemove, mcpSnapshot, mcpDialSchedulePush =
+			origPark, origSet, origClear, origRM, origSnap, origSchedule
 	})
 }
 
@@ -48,6 +53,7 @@ func TestMCP_ToolsList_FocusLoop(t *testing.T) {
 	list, _ := json.Marshal(resps[0].Result)
 	for _, want := range []string{
 		`"zdev_park"`, `"zdev_anchor_set"`, `"zdev_anchor_clear"`, `"zdev_anchor"`, `"zdev_held"`, `"zdev_held_remove"`,
+		`"zdev_schedule_push"`,
 		`"required":["text"]`,  // zdev_park
 		`"required":["title"]`, // zdev_anchor_set
 		`"required":["id"]`,    // zdev_held_remove
@@ -317,6 +323,83 @@ func TestMCP_HeldRemove(t *testing.T) {
 		text, isErr := toolText(t, callTool(t, "zdev_held_remove", `{"id":""}`))
 		if !isErr || !strings.Contains(text, "non-empty") {
 			t.Errorf("want helpful non-empty error, got isErr=%v text=%q", isErr, text)
+		}
+	})
+}
+
+func TestMCP_SchedulePush(t *testing.T) {
+	t.Run("success parses commitments and forwards to the socket seam", func(t *testing.T) {
+		resetFocusLoopSeams(t)
+		var gotSource string
+		var gotCommitments []proto.Commitment
+		mcpDialSchedulePush = func(_ context.Context, _ string, source string, commitments []proto.Commitment) (bool, error) {
+			gotSource = source
+			gotCommitments = commitments
+			return true, nil
+		}
+		text, isErr := toolText(t, callTool(t, "zdev_schedule_push", `{"source":"plan","commitments":[
+			{"id":"t1","title":"IMP-97 stand-up","at":1000,"until":2000,"kind":"task:zitcha/backend"}
+		]}`))
+		if isErr {
+			t.Fatalf("unexpected error: %s", text)
+		}
+		if gotSource != "plan" {
+			t.Errorf("source = %q, want %q", gotSource, "plan")
+		}
+		if len(gotCommitments) != 1 {
+			t.Fatalf("commitments = %+v, want 1 parsed record", gotCommitments)
+		}
+		got := gotCommitments[0]
+		if got.ID != "t1" || got.Title != "IMP-97 stand-up" || got.At != 1000 || got.Until != 2000 || got.Kind != "task:zitcha/backend" {
+			t.Errorf("parsed commitment = %+v, want the input round-tripped", got)
+		}
+		if !strings.Contains(text, "1") || !strings.Contains(text, "plan") {
+			t.Errorf("reply text = %q, want it to mention the count and source", text)
+		}
+	})
+
+	t.Run("empty commitments array is valid (clears the source)", func(t *testing.T) {
+		resetFocusLoopSeams(t)
+		var gotCommitments []proto.Commitment
+		called := false
+		mcpDialSchedulePush = func(_ context.Context, _ string, _ string, commitments []proto.Commitment) (bool, error) {
+			called = true
+			gotCommitments = commitments
+			return true, nil
+		}
+		if _, isErr := toolText(t, callTool(t, "zdev_schedule_push", `{"source":"plan","commitments":[]}`)); isErr {
+			t.Fatalf("unexpected error")
+		}
+		if !called {
+			t.Fatal("mcpDialSchedulePush was never called")
+		}
+		if len(gotCommitments) != 0 {
+			t.Errorf("commitments = %+v, want empty", gotCommitments)
+		}
+	})
+
+	t.Run("empty source rejected at tool layer", func(t *testing.T) {
+		resetFocusLoopSeams(t) // the socket seam stub fatals if called — proves validation short-circuits
+		text, isErr := toolText(t, callTool(t, "zdev_schedule_push", `{"source":"  ","commitments":[]}`))
+		if !isErr {
+			t.Fatalf("want isError for whitespace-only source, got %q", text)
+		}
+		if !strings.Contains(text, "non-empty") {
+			t.Errorf("error message not helpful: %q", text)
+		}
+	})
+
+	t.Run("daemon rejection (e.g. reserved \"ics\" source) surfaces as error", func(t *testing.T) {
+		resetFocusLoopSeams(t)
+		mcpDialSchedulePush = func(context.Context, string, string, []proto.Commitment) (bool, error) {
+			return false, errors.New(`hub: schedule source "ics" is reserved for the calendar probe`)
+		}
+		text, isErr := toolText(t, callTool(t, "zdev_schedule_push", `{"source":"ics","commitments":[]}`))
+		if !isErr {
+			t.Fatalf("want isError, got %q", text)
+		}
+		if !strings.Contains(text, "reserved") {
+			t.Errorf("error message lost the daemon's own reason: %q", text)
 		}
 	})
 }
