@@ -266,6 +266,16 @@ type state struct {
 	// wire, never aliasing this field (Invariant 8 / immutable-after-
 	// publish).
 	anchor *proto.Anchor
+	// anchorFinishArmed gates the finish-boundary on an EDGE, not a level
+	// (invariants review R2, 2026-08-03): anchoring onto a project whose
+	// attention is ALREADY AttFinished must not self-destruct inside its
+	// own ack — "anchor to review the finished work" is a legitimate act.
+	// False until the anchored project is observed in any non-finished
+	// state; only then does AttFinished fire the boundary. Set true
+	// immediately at anchor-set when the project is not currently
+	// finished (or the anchor is listless). Not persisted: on restart the
+	// same arming logic re-derives from live attention within a pass.
+	anchorFinishArmed bool
 
 	// anchorExpirySec mirrors ZDEV_ANCHOR_EXPIRY_MIN (resolved by cmd/zdevd
 	// into seconds; the hub never reads the env var itself). 0 = never
@@ -1222,6 +1232,14 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		title := strings.TrimSpace(e.Title)
 		if title == "" {
 			return
+		}
+		// Arm the finish-boundary only if the project is not ALREADY
+		// finished (edge semantics — see anchorFinishArmed).
+		s.anchorFinishArmed = true
+		if e.Project != "" {
+			if pd, ok := s.projectData[proto.SessionKey(e.Project)]; ok && pd.Attention == proto.AttFinished {
+				s.anchorFinishArmed = false
+			}
 		}
 		s.anchor = &proto.Anchor{
 			Title:   title,

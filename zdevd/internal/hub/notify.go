@@ -169,48 +169,6 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 			break
 		}
 	}
-	// A death leads any digest: mark every unnotified death's bit (all
-	// are "covered" by this banner), lead with the oldest, and fold the
-	// wait context into the message. Tier bits for wait crossings were
-	// already marked above, so they don't re-fire next pass either.
-	if len(deaths) > 0 {
-		sort.Slice(deaths, func(i, j int) bool {
-			a, b := s.projectData[deaths[i]], s.projectData[deaths[j]]
-			if a.DeadSinceTS != b.DeadSinceTS {
-				return a.DeadSinceTS < b.DeadSinceTS // oldest death leads
-			}
-			return deaths[i] < deaths[j]
-		})
-		for _, name := range deaths {
-			pd := s.projectData[name]
-			pd.DeadNotified = true
-			s.projectData[name] = pd
-		}
-		lead := s.projectData[deaths[0]]
-		msg := "agent died"
-		if lead.DeadReason != "" {
-			msg += " (" + lead.DeadReason + ")"
-		}
-		if extra := len(deaths) - 1; extra > 0 {
-			msg += fmt.Sprintf(" · %d more dead", extra)
-		}
-		if eligibleWaits > 0 {
-			msg += fmt.Sprintf(" · %d waiting", eligibleWaits)
-		}
-		fire(Notification{
-			Project: deaths[0],
-			Message: msg,
-			Sound:   "Sosumi", // the STUCK-tier sound — death is never routine
-			Kind:    proto.WaitKindDead,
-			AgeSec:  now - lead.DeadSinceTS,
-		})
-		return true
-	}
-
-	if len(crossings) == 0 {
-		return false
-	}
-
 	// Airlock (phase 3A, docs/design/command-centre.md "the airlock" / "the
 	// pierce list"): while anchored, a tier crossing on any project OTHER
 	// than the anchor's own is HELD — captured into the held set instead of
@@ -242,14 +200,72 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 			captureHeldWait(s, c, now)
 		}
 		crossings = kept
-		if len(crossings) == 0 {
-			// Every crossing this pass was airlocked into the held set;
-			// nothing fires, but the held-set mutation (and the tier bits
-			// marked above) both need saving — the caller (publishPass)
-			// treats a true return as "must persist" exactly like a
-			// crossing that did fire.
+		if len(crossings) == 0 && len(deaths) == 0 {
+			// Every crossing this pass was airlocked into the held set and
+			// no death needs to fire; nothing emits, but the held-set
+			// mutation (and the tier bits marked above) both need saving —
+			// the caller (publishPass) treats a true return as "must
+			// persist" exactly like a crossing that did fire.
 			return true
 		}
+		// R1 (invariants review, 2026-08-03): this block deliberately runs
+		// BEFORE the deaths branch below. When a death and a foreign
+		// crossing land in the same pass, the death's early return used to
+		// skip capture entirely — the crossing's tier bit was already
+		// marked, so a 15m-tier crossing (the top tier, with no later
+		// escalation to rescue it) silently vanished: not fired, not held,
+		// never re-generated. Capture-first makes the held set complete no
+		// matter which notification leads.
+	}
+
+	// A death leads any digest: mark every unnotified death's bit (all
+	// are "covered" by this banner), lead with the oldest, and fold the
+	// wait context into the message. Tier bits for wait crossings were
+	// already marked above, so they don't re-fire next pass either.
+	if len(deaths) > 0 {
+		sort.Slice(deaths, func(i, j int) bool {
+			a, b := s.projectData[deaths[i]], s.projectData[deaths[j]]
+			if a.DeadSinceTS != b.DeadSinceTS {
+				return a.DeadSinceTS < b.DeadSinceTS // oldest death leads
+			}
+			return deaths[i] < deaths[j]
+		})
+		for _, name := range deaths {
+			pd := s.projectData[name]
+			pd.DeadNotified = true
+			s.projectData[name] = pd
+		}
+		lead := s.projectData[deaths[0]]
+		msg := "agent died"
+		if lead.DeadReason != "" {
+			msg += " (" + lead.DeadReason + ")"
+		}
+		if extra := len(deaths) - 1; extra > 0 {
+			msg += fmt.Sprintf(" · %d more dead", extra)
+		}
+		// While anchored, the airlock's no-leak rule applies to this
+		// suffix too: eligibleWaits was tallied before the airlock
+		// partition, so it would count waits being held silently. The
+		// surviving (pierced) crossings are the only honest number.
+		waitCount := eligibleWaits
+		if s.anchor != nil {
+			waitCount = len(crossings)
+		}
+		if waitCount > 0 {
+			msg += fmt.Sprintf(" · %d waiting", waitCount)
+		}
+		fire(Notification{
+			Project: deaths[0],
+			Message: msg,
+			Sound:   "Sosumi", // the STUCK-tier sound — death is never routine
+			Kind:    proto.WaitKindDead,
+			AgeSec:  now - lead.DeadSinceTS,
+		})
+		return true
+	}
+
+	if len(crossings) == 0 {
+		return false
 	}
 
 	// Digest leader: most urgent crossing — highest tier, then oldest

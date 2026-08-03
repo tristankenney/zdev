@@ -43,11 +43,22 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 
 	// Anchored work finished: the anchor names a project and that
 	// project's DISPLAYED attention (the dwell-debounced value buildSnapshot
-	// just committed for this pass) is AttFinished.
+	// just committed for this pass) is AttFinished — as an EDGE, not a
+	// level. anchorFinishArmed is false while the project has been finished
+	// SINCE anchor-set (anchoring onto finished work must not bounce inside
+	// its own ack — invariants review R2); it arms the first pass the
+	// project is seen in any other state, after which a fresh finish is a
+	// real boundary.
 	if a.Project != "" {
-		if pd, ok := s.projectData[proto.SessionKey(a.Project)]; ok && pd.Attention == proto.AttFinished {
-			fireBoundary(s, a, fire)
-			return true
+		if pd, ok := s.projectData[proto.SessionKey(a.Project)]; ok {
+			if pd.Attention == proto.AttFinished {
+				if s.anchorFinishArmed {
+					fireBoundary(s, a, fire)
+					return true
+				}
+			} else if !s.anchorFinishArmed {
+				s.anchorFinishArmed = true
+			}
 		}
 	}
 

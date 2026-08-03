@@ -729,19 +729,18 @@ func (h *Hub) Run(ctx context.Context) error {
 			close(req.reply)
 
 		case req := <-h.heldRmRequests:
-			// Apply the removal (pure — no I/O) and arm the debounce rather
-			// than publish synchronously — unlike park/anchor, a held-rm has
-			// no "ack means persisted" requirement (only "parked" kind items
-			// persist at all; a removed "wait" capture was never on disk to
-			// begin with, see persist.go's ParkedHeld). Mirrors the cursor
-			// branch's shape.
+			// Apply the removal (pure — no I/O), then publish SYNCHRONOUSLY
+			// like park/anchor. The first version armed the debounce on the
+			// theory that removals never touch disk — wrong for exactly the
+			// items that matter: Kind=="parked" entries ARE persisted, so a
+			// crash inside the debounce window after an ok:true resurrected
+			// a parked thought the operator had consumed at a boundary
+			// (invariants review R3, 2026-08-03). A resurrected item is the
+			// trust contract's mirror failure — 'nothing deferred is lost'
+			// also means 'nothing consumed comes back'. Removals are
+			// human-keystroke rare; the coalescing forfeited costs nothing.
 			applyEvent(h.state, tmuxctl.HeldRemove{ID: req.id}, nil)
-			if timer == nil {
-				timer = time.NewTimer(h.debounce)
-				debounceFired = timer.C
-			} else {
-				resetDebounce(timer, h.debounce)
-			}
+			publishPass()
 			close(req.reply)
 
 		case <-h.errInc:

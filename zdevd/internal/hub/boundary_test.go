@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
 
 // fullNotifRecorder captures the complete Notification (recordingNotifier
@@ -40,6 +41,7 @@ func (r *fullNotifRecorder) snapshot() []Notification {
 func TestCheckBoundary_AnchoredProjectFinished(t *testing.T) {
 	s := stateWithProject("example-agora", projectData{Attention: proto.AttFinished})
 	s.anchor = &proto.Anchor{Title: "IMP-97 validate deploy", Project: "example/agora", SinceTS: 100}
+	s.anchorFinishArmed = true // anchored while the work was live; this finish is fresh
 	s.heldItems = []proto.HeldItem{{ID: "wait-other", Kind: "wait", Title: "still waiting (5m)", SinceTS: 50}}
 	rec := &fullNotifRecorder{}
 
@@ -144,6 +146,7 @@ func TestCheckBoundary_UnanchoredIsNoop(t *testing.T) {
 func TestCheckBoundary_NilFireDoesNotPanic(t *testing.T) {
 	s := stateWithProject("example-agora", projectData{Attention: proto.AttFinished})
 	s.anchor = &proto.Anchor{Title: "x", Project: "example/agora", SinceTS: 0}
+	s.anchorFinishArmed = true
 	if !checkBoundary(100, s, nil) {
 		t.Error("checkBoundary = false with nil fire, want true — the anchor must still clear")
 	}
@@ -259,5 +262,51 @@ func TestBoundary_Expiry_EndToEnd(t *testing.T) {
 	}
 	if recs[0].Kind != "boundary" {
 		t.Errorf("Kind = %q, want %q", recs[0].Kind, "boundary")
+	}
+}
+
+// R2 (invariants review): anchoring onto a project that is ALREADY finished
+// must not self-destruct inside its own ack — the finish-boundary is an
+// EDGE. The stale finish is ignored; once the project is seen live again,
+// a fresh finish is a real boundary.
+func TestCheckBoundary_FinishIsAnEdgeNotALevel(t *testing.T) {
+	s := stateWithProject("example-agora", projectData{Attention: proto.AttFinished})
+	rec := &fullNotifRecorder{}
+
+	// Anchor set while the project is already finished — applyEvent leaves
+	// the finish-boundary disarmed.
+	applyEvent(s, tmuxctl.AnchorSet{Title: "review the finished work", Project: "example/agora", NowNanos: 100e9}, nil)
+	if s.anchorFinishArmed {
+		t.Fatal("anchor onto an already-finished project must start disarmed")
+	}
+	if checkBoundary(200, s, rec.fire) {
+		t.Fatal("stale finish must not fire a boundary")
+	}
+	if s.anchor == nil {
+		t.Fatal("anchor must survive the stale finish")
+	}
+
+	// The project comes alive (operator started something) — arms.
+	pd := s.projectData["example-agora"]
+	pd.Attention = proto.AttWorking
+	s.projectData["example-agora"] = pd
+	if checkBoundary(300, s, rec.fire) {
+		t.Fatal("working project must not fire a boundary")
+	}
+	if !s.anchorFinishArmed {
+		t.Fatal("leaving the finished state must arm the finish-boundary")
+	}
+
+	// A FRESH finish — now it is a real boundary.
+	pd.Attention = proto.AttFinished
+	s.projectData["example-agora"] = pd
+	if !checkBoundary(400, s, rec.fire) {
+		t.Fatal("fresh finish while armed must fire the boundary")
+	}
+	if s.anchor != nil {
+		t.Error("anchor must clear on the real boundary")
+	}
+	if got := len(rec.snapshot()); got != 1 {
+		t.Errorf("exactly one boundary notification, got %d", got)
 	}
 }
