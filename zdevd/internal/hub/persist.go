@@ -90,6 +90,13 @@ type persistedState struct {
 	// persisting them would risk shipping stale/duplicate arrivals across a
 	// restart for no benefit.
 	ParkedHeld []proto.HeldItem `json:"parkedHeld,omitempty"`
+
+	// Anchor (phase 3A focus loop, additive — no schema bump needed; an
+	// absent key loads as nil, same "old file loads fine" story as the
+	// fields above) persists the operator's current anchor so a daemon
+	// restart while anchored restores the tether (the brief's explicit
+	// requirement) rather than silently dropping back to unanchored.
+	Anchor *proto.Anchor `json:"anchor,omitempty"`
 }
 
 // loadState reads and unmarshals the persisted state from path.
@@ -230,6 +237,7 @@ func saveState(path string, s *state) error {
 		DeadReason:        deadReason,
 		DeadNotified:      deadNotified,
 		ParkedHeld:        parkedHeld,
+		Anchor:            s.anchor,
 	}
 
 	body, err := json.Marshal(ps)
@@ -321,5 +329,16 @@ func applyPersistedState(s *state, ps *persistedState) {
 	// persisted chronological order without needing a merge/sort.
 	if len(ps.ParkedHeld) > 0 {
 		s.heldItems = append(s.heldItems, ps.ParkedHeld...)
+	}
+
+	// Restore the anchor (phase 3A) so a restart while anchored keeps the
+	// tether — the brief's explicit requirement. A fresh copy, not the
+	// decoded pointer directly, only as a defensive habit matching
+	// buildSnapshot's "never alias" discipline (there's no aliasing risk
+	// here in practice — ps is a throwaway freshly unmarshaled value — but
+	// the cost of copying one small struct is zero).
+	if ps.Anchor != nil {
+		a := *ps.Anchor
+		s.anchor = &a
 	}
 }

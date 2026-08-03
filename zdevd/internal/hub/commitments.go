@@ -47,16 +47,13 @@ func sortedCommitments(commitments []proto.Commitment) []proto.Commitment {
 	return out
 }
 
-// deriveInFocus reports whether `now` falls inside any commitment.
-//
-// anchored is always false until phase 3 lands the Anchor field on state
-// (docs/design/command-centre.md, phase 3: "the loop core"). InFocus
-// generalizes "in a meeting" to "in a meeting OR anchored" — the OR is kept
-// here, with the anchor side permanently false for now, specifically so
-// phase 3 only has to flip this one constant to a real state read instead
-// of rediscovering that InFocus needs to become an OR at all.
-func deriveInFocus(commitments []proto.Commitment, now int64) bool {
-	const anchored = false // phase 3 replaces this with state.anchor != nil
+// deriveInFocus reports whether `now` falls inside any commitment, OR the
+// operator is anchored (phase 3A, docs/design/command-centre.md — "the loop
+// core"). InFocus generalizes "in a meeting" to "in a meeting OR anchored";
+// anchored is buildSnapshot's `st.anchor != nil` — passed in rather than
+// read here so this stays a pure function of its arguments, matching every
+// other derivation in this file.
+func deriveInFocus(commitments []proto.Commitment, anchored bool, now int64) bool {
 	if anchored {
 		return true
 	}

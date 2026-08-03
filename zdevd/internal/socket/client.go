@@ -254,6 +254,132 @@ func DialPark(ctx context.Context, socketPath, text string) (ok bool, err error)
 	return true, nil
 }
 
+// DialAnchorSet implements the anchor-set client side of phase 3A of the
+// focus loop (docs/design/command-centre.md — "the anchor lifecycle").
+// One-shot: dial → write {"type":"anchor","v":1,"action":"set","title":...,
+// "project":...}\n → read one anchor reply line → close. Returns (false,
+// nil) folded into err when the daemon replied ok:false (rejected — an
+// empty/whitespace-only title, or a stopped hub), same convention as
+// DialPark.
+func DialAnchorSet(ctx context.Context, socketPath, title, project string) (ok bool, err error) {
+	req := struct {
+		Type    string `json:"type"`
+		V       int    `json:"v"`
+		Action  string `json:"action"`
+		Title   string `json:"title,omitempty"`
+		Project string `json:"project,omitempty"`
+	}{Type: "anchor", V: 1, Action: "set", Title: title, Project: project}
+	return dialAnchor(ctx, socketPath, req)
+}
+
+// DialAnchorClear implements the anchor-clear client side of phase 3A.
+// One-shot: dial → write {"type":"anchor","v":1,"action":"clear"}\n → read
+// one anchor reply line → close.
+func DialAnchorClear(ctx context.Context, socketPath string) (ok bool, err error) {
+	req := struct {
+		Type   string `json:"type"`
+		V      int    `json:"v"`
+		Action string `json:"action"`
+	}{Type: "anchor", V: 1, Action: "clear"}
+	return dialAnchor(ctx, socketPath, req)
+}
+
+// dialAnchor is the shared one-shot round-trip for DialAnchorSet/
+// DialAnchorClear — same shape as DialPark, factored out because both
+// anchor verbs share everything but the request payload.
+func dialAnchor(ctx context.Context, socketPath string, req any) (ok bool, err error) {
+	conn, err := Dial(ctx, socketPath)
+	if err != nil {
+		return false, fmt.Errorf("socket: dial: %w", err)
+	}
+	defer conn.Close()
+
+	payload, err := proto.MarshalCompact(req)
+	if err != nil {
+		return false, fmt.Errorf("anchor marshal: %w", err)
+	}
+	if _, err := conn.Write(append(payload, '\n')); err != nil {
+		return false, fmt.Errorf("anchor write: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(snapshotReadTimeout)); err != nil {
+		return false, fmt.Errorf("anchor set deadline: %w", err)
+	}
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 4*1024), proto.MaxHelloBytes)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return false, fmt.Errorf("anchor read: %w", err)
+		}
+		return false, errors.New("anchor: no reply (clean EOF)")
+	}
+	var reply struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &reply); err != nil {
+		return false, fmt.Errorf("anchor unmarshal: %w", err)
+	}
+	if !reply.OK {
+		if reply.Error != "" {
+			return false, errors.New(reply.Error)
+		}
+		return false, errors.New("anchor: daemon rejected the request")
+	}
+	return true, nil
+}
+
+// DialHeldRemove implements the held-rm client side of phase 3A (the
+// boundary popup's consume action). One-shot: dial → write
+// {"type":"held-rm","v":1,"id":<id>}\n → read one held-rm reply line →
+// close. "*" removes the whole held set. Removal is idempotent, so a
+// (false, err) return here means a transport/protocol failure or a stopped
+// hub, never "id not found".
+func DialHeldRemove(ctx context.Context, socketPath, id string) (ok bool, err error) {
+	conn, err := Dial(ctx, socketPath)
+	if err != nil {
+		return false, fmt.Errorf("socket: dial: %w", err)
+	}
+	defer conn.Close()
+
+	req := struct {
+		Type string `json:"type"`
+		V    int    `json:"v"`
+		ID   string `json:"id"`
+	}{Type: "held-rm", V: 1, ID: id}
+	payload, err := proto.MarshalCompact(req)
+	if err != nil {
+		return false, fmt.Errorf("held-rm marshal: %w", err)
+	}
+	if _, err := conn.Write(append(payload, '\n')); err != nil {
+		return false, fmt.Errorf("held-rm write: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(snapshotReadTimeout)); err != nil {
+		return false, fmt.Errorf("held-rm set deadline: %w", err)
+	}
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 4*1024), proto.MaxHelloBytes)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return false, fmt.Errorf("held-rm read: %w", err)
+		}
+		return false, errors.New("held-rm: no reply (clean EOF)")
+	}
+	var reply struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &reply); err != nil {
+		return false, fmt.Errorf("held-rm unmarshal: %w", err)
+	}
+	if !reply.OK {
+		if reply.Error != "" {
+			return false, errors.New(reply.Error)
+		}
+		return false, errors.New("held-rm: daemon rejected the request")
+	}
+	return true, nil
+}
+
 // Stream reads subsequent snapshots from an already-handshaked conn (i.e.,
 // the conn returned by Subscribe). Returns a channel that receives every
 // snapshot the daemon emits until ctx cancels OR the conn closes. The

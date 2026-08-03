@@ -27,6 +27,26 @@ func TestFormatTime_InFocus(t *testing.T) {
 			t.Errorf("formatTime missing %q\ngot:\n%s", want, got)
 		}
 	}
+	// No Anchor on this fixture — InFocus is via the commitment, not an
+	// anchor (phase 3A cause note).
+	if !strings.Contains(got, "(commitment)") {
+		t.Errorf("formatTime(InFocus, no anchor) missing %q\ngot:\n%s", "(commitment)", got)
+	}
+}
+
+// TestFormatTime_InFocus_Anchored confirms the phase 3A cause note reads
+// "(anchored)" instead of "(commitment)" when Snapshot.Anchor is set,
+// regardless of whether a commitment also happens to be active.
+func TestFormatTime_InFocus_Anchored(t *testing.T) {
+	snap := timeFixtureSnapshot()
+	snap.Anchor = &proto.Anchor{Title: "IMP-97 validate deploy", SinceTS: 1000}
+	got := formatTime(snap, nil, 1500)
+	if !strings.Contains(got, "(anchored)") {
+		t.Errorf("formatTime(InFocus, anchored) missing %q\ngot:\n%s", "(anchored)", got)
+	}
+	if strings.Contains(got, "(commitment)") {
+		t.Errorf("formatTime(InFocus, anchored) must not say (commitment)\ngot:\n%s", got)
+	}
 }
 
 func TestFormatTime_FreeUntil(t *testing.T) {

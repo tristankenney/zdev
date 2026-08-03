@@ -691,15 +691,24 @@ func formatReviewJSON(snap *proto.Snapshot) (string, error) {
 	return string(b), err
 }
 
-// formatHeld renders the held set behind `zdev-show held`: one line per item
-// in chronological order (id, kind, age, title). Nothing renders in the
-// sidebar for phase 1 (docs/design/command-centre.md) — this IS the only
-// way to inspect the airlock's catch until a later phase's boundary review.
+// formatHeld renders the held set behind `zdev-show held`: an anchor header
+// line (phase 3A — "anchored: <title> · <age>" or "unanchored"), then one
+// line per held item in chronological order (id, kind, age, title). Nothing
+// renders in the sidebar for phase 1 (docs/design/command-centre.md) — this
+// IS the only way to inspect the airlock's catch until a later phase's
+// boundary review.
 func formatHeld(snap *proto.Snapshot, now int64) string {
-	if len(snap.Held) == 0 {
-		return "(nothing held)\n"
-	}
 	var b strings.Builder
+	if snap.Anchor != nil {
+		age := formatAge(now - snap.Anchor.SinceTS)
+		fmt.Fprintf(&b, "%s%sanchored: %s · %s%s\n", bold, cyan, snap.Anchor.Title, age, reset)
+	} else {
+		fmt.Fprintf(&b, "%sunanchored%s\n", dim, reset)
+	}
+	if len(snap.Held) == 0 {
+		b.WriteString("(nothing held)\n")
+		return b.String()
+	}
 	for i, item := range snap.Held {
 		age := "-"
 		if item.SinceTS > 0 {
@@ -763,7 +772,15 @@ func formatTime(snap *proto.Snapshot, health *diag.Reply, now int64) string {
 	var b strings.Builder
 	switch {
 	case snap.InFocus:
-		fmt.Fprintf(&b, "%s%sIn focus%s\n", bold, cyan, reset)
+		// Phase 3A: InFocus is anchored OR inside-a-commitment (an OR the
+		// hub's deriveInFocus computes, never recomputed here) — note WHICH
+		// one it is so the debug surface doesn't just say "in focus" and
+		// leave the operator guessing why.
+		cause := "commitment"
+		if snap.Anchor != nil {
+			cause = "anchored"
+		}
+		fmt.Fprintf(&b, "%s%sIn focus%s %s(%s)%s\n", bold, cyan, reset, dim, cause, reset)
 	case snap.FreeUntil > 0:
 		until := time.Unix(snap.FreeUntil, 0).Local()
 		fmt.Fprintf(&b, "Free until %s%s%s %s(in %s)%s\n",

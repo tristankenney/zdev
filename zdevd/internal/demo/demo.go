@@ -157,6 +157,24 @@ func (d *DemoSource) SubmitPark(_ context.Context, _ string) error {
 	return nil
 }
 
+// SubmitAnchorSet is a no-op for the demo source — a scripted fake-fleet
+// replay has no daemon state to anchor. Implements socket.SnapshotSource.
+func (d *DemoSource) SubmitAnchorSet(_ context.Context, _, _ string) error {
+	return nil
+}
+
+// SubmitAnchorClear is a no-op for the demo source, mirroring
+// SubmitAnchorSet. Implements socket.SnapshotSource.
+func (d *DemoSource) SubmitAnchorClear(_ context.Context) error {
+	return nil
+}
+
+// SubmitHeldRemove is a no-op for the demo source — a scripted fake-fleet
+// replay has no held set to consume from. Implements socket.SnapshotSource.
+func (d *DemoSource) SubmitHeldRemove(_ context.Context, _ string) error {
+	return nil
+}
+
 // Run advances through the frame sequence on timers, broadcasting each new
 // snapshot to all registered subscribers. Holds on the final frame until ctx
 // cancels, then tears down all remaining subscribers.

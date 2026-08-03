@@ -35,9 +35,29 @@ func TestFormatHeld(t *testing.T) {
 }
 
 func TestFormatHeld_Empty(t *testing.T) {
-	want := "(nothing held)\n"
-	if got := formatHeld(&proto.Snapshot{}, 0); got != want {
-		t.Errorf("formatHeld(empty) = %q; want %q", got, want)
+	got := formatHeld(&proto.Snapshot{}, 0)
+	if !strings.Contains(got, "unanchored") {
+		t.Errorf("formatHeld(empty) = %q; want it to contain %q", got, "unanchored")
+	}
+	if !strings.Contains(got, "(nothing held)\n") {
+		t.Errorf("formatHeld(empty) = %q; want it to contain %q", got, "(nothing held)\n")
+	}
+}
+
+// TestFormatHeld_Anchored confirms the phase 3A anchor header line: title
+// and a non-empty age render when Snapshot.Anchor is set.
+func TestFormatHeld_Anchored(t *testing.T) {
+	snap := heldFixture()
+	snap.Anchor = &proto.Anchor{Title: "IMP-97 validate deploy", SinceTS: 1000}
+	got := formatHeld(snap, 3000)
+	if !strings.Contains(got, "anchored:") {
+		t.Errorf("formatHeld(anchored) = %q; want it to contain %q", got, "anchored:")
+	}
+	if !strings.Contains(got, "IMP-97 validate deploy") {
+		t.Errorf("formatHeld(anchored) = %q; want it to contain the anchor title", got)
+	}
+	if strings.Contains(got, "unanchored") {
+		t.Errorf("formatHeld(anchored) = %q; must not say unanchored", got)
 	}
 }
 

@@ -315,6 +315,17 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 	// mutating it here would be safe but unnecessary; buildSnapshot doesn't.
 	commitmentsToday := sortedCommitments(st.commitments)
 
+	// Anchor (phase 3A, phase4-v24): a FRESH pointer copy, never an alias of
+	// st.anchor — the hub may clear/replace its own field on the next pass
+	// while a previously-published snapshot must never change out from under
+	// a subscriber still holding it (Invariant 8 / immutable-after-publish),
+	// same rationale as heldItemsCopy below.
+	var anchorCopy *proto.Anchor
+	if st.anchor != nil {
+		a := *st.anchor
+		anchorCopy = &a
+	}
+
 	return &proto.Snapshot{
 		V:              proto.CurrentProtocolVersion,
 		Type:           "snapshot",
@@ -325,8 +336,9 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		Projects:       projects,
 		CurrentSession: "", // resolved per-connection in Plan 02-04 from hello.TmuxPane
 		Commitments:    commitmentsToday,
-		InFocus:        deriveInFocus(commitmentsToday, now),
+		InFocus:        deriveInFocus(commitmentsToday, st.anchor != nil, now),
 		FreeUntil:      deriveFreeUntil(commitmentsToday, now),
+		Anchor:         anchorCopy,
 		// Triage (phase4-v9) ranks the rows just assembled above, so the
 		// queue always reflects exactly what the renderer draws —
 		// including the dwell-debounced Attention. Computed here (not

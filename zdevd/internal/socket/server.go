@@ -75,6 +75,45 @@ type parkReply struct {
 	Error string `json:"error,omitempty"`
 }
 
+// anchorRequest is the client-to-server anchor wire frame (phase 3A of the
+// focus loop, docs/design/command-centre.md — "the anchor lifecycle").
+// Action is "set" or "clear"; Title/Project are only meaningful for "set"
+// (empty Title is a normal reject on "set", not a protocol error).
+type anchorRequest struct {
+	Type    string `json:"type"`
+	V       int    `json:"v"`
+	Action  string `json:"action"`
+	Title   string `json:"title,omitempty"`
+	Project string `json:"project,omitempty"`
+}
+
+// anchorReply is the server-to-client anchor wire frame. Same shape as
+// parkReply — OK false with Error set on rejection (empty title, unknown
+// action, or a stopped hub).
+type anchorReply struct {
+	Type  string `json:"type"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// heldRmRequest is the client-to-server held-rm wire frame (phase 3A — the
+// boundary popup's consume action). ID is the HeldItem.ID to remove, or "*"
+// to clear the whole held set.
+type heldRmRequest struct {
+	Type string `json:"type"`
+	V    int    `json:"v"`
+	ID   string `json:"id"`
+}
+
+// heldRmReply is the server-to-client held-rm wire frame. Removal is
+// idempotent (a missing/already-gone ID still replies ok:true), so Error is
+// only set on a stopped hub.
+type heldRmReply struct {
+	Type  string `json:"type"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 // SnapshotSource is the interface the Server requires from its backing hub.
 // *hub.Hub satisfies this interface; demo.DemoSource also satisfies it for
 // the `zdevd demo` subcommand (reproducible README GIF, no agents needed).
@@ -95,6 +134,20 @@ type SnapshotSource interface {
 	// closing the connection, so a rejected park is a normal reply, not a
 	// protocol failure.
 	SubmitPark(ctx context.Context, text string) error
+	// SubmitAnchorSet sets the anchor (phase 3A of the focus loop,
+	// docs/design/command-centre.md — "the anchor lifecycle"). Returns a
+	// non-nil error on an empty/whitespace-only title or a stopped hub; the
+	// "anchor" case below turns that into {ok:false, error:"..."} on the
+	// wire, same convention as SubmitPark.
+	SubmitAnchorSet(ctx context.Context, title, project string) error
+	// SubmitAnchorClear releases the anchor. Idempotent — clearing an
+	// already-nil anchor still returns nil (ok:true on the wire).
+	SubmitAnchorClear(ctx context.Context) error
+	// SubmitHeldRemove removes one held-set item by ID ("*" clears the
+	// whole set) — the boundary popup's consume action (phase 3A). Removing
+	// a non-existent ID is not an error (idempotent — the popup may race a
+	// refresh).
+	SubmitHeldRemove(ctx context.Context, id string) error
 }
 
 // dialProbeTimeout caps the liveness probe in BindOrCleanStale.
@@ -311,6 +364,72 @@ func (s *Server) serveOne(ctx context.Context, conn net.Conn) {
 		}
 		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
 			slog.Warn("socket: park reply write failed", "err", wErr)
+		}
+		return
+
+	case "anchor":
+		// One-shot anchor set/clear: apply the action, write {ok,...} reply
+		// + close. Only v==1 supported. Rejection (empty title on "set", or
+		// an unknown action) is a normal reply (ok:false), not a closed
+		// connection — same convention as "park".
+		if h.V != 1 {
+			slog.Warn("socket: anchor request unsupported version", "v", h.V)
+			return
+		}
+		var ar anchorRequest
+		if err := json.Unmarshal(sc.Bytes(), &ar); err != nil {
+			slog.Warn("socket: anchor request unmarshal failed", "err", err)
+			return
+		}
+		reply := anchorReply{Type: "anchor", OK: true}
+		var opErr error
+		switch ar.Action {
+		case "set":
+			opErr = s.hub.SubmitAnchorSet(ctx, ar.Title, ar.Project)
+		case "clear":
+			opErr = s.hub.SubmitAnchorClear(ctx)
+		default:
+			opErr = fmt.Errorf("socket: unknown anchor action %q", ar.Action)
+		}
+		if opErr != nil {
+			reply.OK = false
+			reply.Error = opErr.Error()
+		}
+		payload, mErr := proto.MarshalCompact(reply)
+		if mErr != nil {
+			slog.Warn("socket: anchor reply marshal failed", "err", mErr)
+			return
+		}
+		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
+			slog.Warn("socket: anchor reply write failed", "err", wErr)
+		}
+		return
+
+	case "held-rm":
+		// One-shot held-set removal: apply, write {ok,...} reply + close.
+		// Only v==1 supported. Removal is idempotent (SubmitHeldRemove never
+		// errors on a missing ID), so OK is false here only on a stopped hub.
+		if h.V != 1 {
+			slog.Warn("socket: held-rm request unsupported version", "v", h.V)
+			return
+		}
+		var hr heldRmRequest
+		if err := json.Unmarshal(sc.Bytes(), &hr); err != nil {
+			slog.Warn("socket: held-rm request unmarshal failed", "err", err)
+			return
+		}
+		reply := heldRmReply{Type: "held-rm", OK: true}
+		if err := s.hub.SubmitHeldRemove(ctx, hr.ID); err != nil {
+			reply.OK = false
+			reply.Error = err.Error()
+		}
+		payload, mErr := proto.MarshalCompact(reply)
+		if mErr != nil {
+			slog.Warn("socket: held-rm reply marshal failed", "err", mErr)
+			return
+		}
+		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
+			slog.Warn("socket: held-rm reply write failed", "err", wErr)
 		}
 		return
 

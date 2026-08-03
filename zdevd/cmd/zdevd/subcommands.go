@@ -298,6 +298,121 @@ func parkSubcmd(args []string) int {
 	return 0
 }
 
+// anchorSubcmd implements `zdevd anchor [set <title...> [--project <name>]|clear] [--socket <path>]`
+// and, with no action word, `zdevd anchor` prints the current anchor (or
+// "unanchored") — phase 3A of the focus loop, docs/design/command-centre.md
+// — "the anchor lifecycle".
+//
+// The action word ("set"/"clear") is always the first positional argument,
+// which makes Go's flag package stop parsing at the first non-flag arg —
+// the same shape cursorSubcmd's leading-dash workaround exists for — so
+// every flag here (--socket, --project) is hand-extracted via
+// extractFlagValue rather than run through a flag.FlagSet.
+//
+// Exit codes: 0 ok, 1 dial/rejection failure, 2 usage.
+func anchorSubcmd(args []string) int {
+	rest, socketOverride := extractFlagValue(args, "--socket")
+	socket := platform.ResolveSocketPath()
+	if socketOverride != "" {
+		socket = socketOverride
+	}
+
+	if len(rest) == 0 {
+		return anchorPrintSubcmd(socket)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	switch rest[0] {
+	case "set":
+		remainder, project := extractFlagValue(rest[1:], "--project")
+		title := strings.TrimSpace(strings.Join(remainder, " "))
+		if title == "" {
+			fmt.Fprintln(os.Stderr, "usage: zdevd anchor set <title...> [--project <name>] [--socket <path>]")
+			return 2
+		}
+		ok, err := socketpkg.DialAnchorSet(ctx, socket, title, project)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zdevd anchor: %v\n", err)
+			return 1
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "zdevd anchor: daemon rejected the request")
+			return 1
+		}
+		return 0
+	case "clear":
+		ok, err := socketpkg.DialAnchorClear(ctx, socket)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zdevd anchor: %v\n", err)
+			return 1
+		}
+		if !ok {
+			fmt.Fprintln(os.Stderr, "zdevd anchor: daemon rejected the request")
+			return 1
+		}
+		return 0
+	default:
+		fmt.Fprintln(os.Stderr, "usage: zdevd anchor [set <title...> [--project <name>]|clear] [--socket <path>]")
+		return 2
+	}
+}
+
+// anchorPrintSubcmd implements `zdevd anchor` with no action word: prints
+// the current anchor, or "unanchored". There is no dedicated "get anchor"
+// wire verb — the snapshot already carries Anchor on every connect, so this
+// reads it off a one-shot subscription rather than inventing a new round
+// trip.
+func anchorPrintSubcmd(socket string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	snap, conn, err := socketpkg.Subscribe(ctx, socket, "", "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd anchor: %v\n", err)
+		return 1
+	}
+	defer conn.Close()
+	if snap.Anchor == nil {
+		fmt.Println("unanchored")
+		return 0
+	}
+	if snap.Anchor.Project != "" {
+		fmt.Printf("%s (%s)\n", snap.Anchor.Title, snap.Anchor.Project)
+	} else {
+		fmt.Println(snap.Anchor.Title)
+	}
+	return 0
+}
+
+// extractFlagValue hand-extracts a "--name value" or "--name=value" pair
+// from anywhere in args, returning the remaining args with that pair
+// removed plus the extracted value ("" if the flag isn't present). Needed
+// because anchorSubcmd's action word ("set"/"clear") is always args[0],
+// which makes flag.Parse stop at the first positional argument before it
+// ever sees a later --project/--socket — the same problem cursorSubcmd's
+// leading-dash workaround solves for a different shape.
+func extractFlagValue(args []string, name string) (rest []string, value string) {
+	prefix := name + "="
+	for i, a := range args {
+		if a == name {
+			if i+1 < len(args) {
+				value = args[i+1]
+				rest = append(append([]string{}, args[:i]...), args[i+2:]...)
+			} else {
+				rest = append(append([]string{}, args[:i]...), args[i+1:]...)
+			}
+			return rest, value
+		}
+		if strings.HasPrefix(a, prefix) {
+			value = strings.TrimPrefix(a, prefix)
+			rest = append(append([]string{}, args[:i]...), args[i+1:]...)
+			return rest, value
+		}
+	}
+	return args, ""
+}
+
 // notifyMuteSubcmd implements `zdevd notify-mute [seconds]`. Writes a
 // unix-timestamp expiry to hub.MutePath() that the running daemon's
 // notifier wrapper reads before each fire (no restart, no socket
