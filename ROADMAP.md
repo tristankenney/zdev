@@ -114,9 +114,16 @@ unknown-flag handling (exit 2). Pure bash 3.2. `--probe` predated this.
   socket+tmux only. Note: `agent-smoke` installs from a checkout, so CI
   covers detection but NOT the bootstrap clone path.
 
----
-
-## NOW (~2 weeks)
+### ✅ 9. `zdev initiatives` — machine-readable initiative digest — `d2c665d`
+`zdev-show initiatives [--json]`: per-initiative intent/decisions/outcome
+(tolerant INITIATIVE.md parse), member-clone git state (LOCAL only — never
+fetches), optional `bd stats` work counts, notes listing. No daemon dial —
+pure workspace derivation, works pre-install. `--json` is a versioned
+consumer contract (v1, `docs/initiatives-digest.md`) so downstream skills
+(`/plan`, `/zdev:initiative`) stop growing their own INITIATIVE.md parsers.
+- **Kill (live):** if no consumer beyond the initiative skill adopts the
+  contract within a month, fold the human view into `zdev --list-projects -v`
+  and drop the JSON surface.
 
 ### 4. S3 — `zdev review` landing-readiness gauge, worktree-grouping built in *(converged, load-bearing)*
 **The** load-bearing bet: replace the sidebar strip with a review-debt gauge —

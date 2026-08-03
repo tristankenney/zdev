@@ -57,10 +57,18 @@ that its mainline is only as fresh as its own last `git fetch`.
 
 ## Status
 
+- `zdev initiatives [--json]` — the first read, always: every initiative's
+  intent, dated decisions, member branches with dirty/unpushed state, bd
+  work counts, and notes in one local-only call (no daemon, no network).
+  The `--json` shape is a versioned contract — see
+  `docs/initiatives-digest.md` in the zdev repo; never parse INITIATIVE.md
+  or invoke `bd stats` yourself.
 - `zdev-show review --json`, filtered to `<name>/` — what's ready to land.
-- Per clone: `git log --oneline @{upstream}..` for unpushed work;
+- Deeper per-clone drill-down when the digest flags something:
+  `git log --oneline @{upstream}..` for the unpushed commits themselves;
   `git fetch -q && git rev-list --count HEAD..origin/HEAD` for drift behind
-  mainline.
+  mainline (the digest never fetches, so its numbers are as fresh as the
+  clone's last fetch).
 - **Rot check**: a clone whose branch merged more than ~2 weeks ago is rot.
   Flag it for deletion rather than nursing it.
 
