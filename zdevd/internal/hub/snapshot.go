@@ -308,6 +308,13 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		_, projects[i].Collapsed = hiddenNames[projects[i].Name]
 	}
 
+	// Commitments/InFocus/FreeUntil (phase 2, docs/design/command-centre.md
+	// "the time spine"): pure derivations over st.commitments, threaded
+	// `now` — see commitments.go. commitmentsToday is chronological and is
+	// a fresh copy (sortedCommitments never aliases st.commitments), so
+	// mutating it here would be safe but unnecessary; buildSnapshot doesn't.
+	commitmentsToday := sortedCommitments(st.commitments)
+
 	return &proto.Snapshot{
 		V:              proto.CurrentProtocolVersion,
 		Type:           "snapshot",
@@ -317,6 +324,9 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		Sessions:       allNames,
 		Projects:       projects,
 		CurrentSession: "", // resolved per-connection in Plan 02-04 from hello.TmuxPane
+		Commitments:    commitmentsToday,
+		InFocus:        deriveInFocus(commitmentsToday, now),
+		FreeUntil:      deriveFreeUntil(commitmentsToday, now),
 		// Triage (phase4-v9) ranks the rows just assembled above, so the
 		// queue always reflects exactly what the renderer draws —
 		// including the dwell-debounced Attention. Computed here (not

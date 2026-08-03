@@ -50,6 +50,28 @@ type Reply struct {
 	QueueDepth      int     `json:"queue_depth"`        // current depth of the hub's events channel
 	Errors1h        int     `json:"errors_1h"`          // count of classified errors in the last 1h (rolling)
 	Socket          string  `json:"socket"`             // unix-socket path the daemon is listening on
+
+	// --- phase 2 addition (docs/design/command-centre.md, the time spine) ---
+	//
+	// The ARCH-10 field set above is fixed by D4-07; these two fields are a
+	// deliberate, additive exception rather than a violation of that rule.
+	// Calendar SOURCE HEALTH doesn't belong on proto.Snapshot (which is
+	// schema-versioned and consumed by every renderer — the design brief for
+	// this phase explicitly forbids bumping that schema) but the operator
+	// still needs to see when their calendar feed is silently broken, per
+	// the design note's single most important failure requirement: a
+	// calendar that quietly stops updating while still reporting "you are
+	// free" is worse than no calendar. diag is the existing daemon-
+	// introspection channel for exactly this class of fact (Errors1h,
+	// LastEventAgoSec) — `zdev-show time` dials it alongside the normal
+	// snapshot subscription.
+	CalendarLastOK string `json:"calendar_last_ok,omitempty"` // RFC3339Nano UTC of the last successful fetch; "" = never fetched
+	// CalendarLastErr is the most recent fetch/parse failure message; "" means
+	// healthy (or the feed is unconfigured / has never been probed).
+	CalendarLastErr string `json:"calendar_last_err,omitempty"`
+	// CalendarLastErrAt is the RFC3339Nano UTC timestamp CalendarLastErr was
+	// recorded at; "" when CalendarLastErr is "".
+	CalendarLastErrAt string `json:"calendar_last_err_at,omitempty"`
 }
 
 // ErrorCounter is a 1-hour rolling error counter for Reply.Errors1h. It is
@@ -134,5 +156,15 @@ func FormatHuman(r *Reply) string {
 	write("queue_depth", fmt.Sprintf("%d", r.QueueDepth))
 	write("errors_1h", fmt.Sprintf("%d", r.Errors1h))
 	write("socket", r.Socket)
+	// Calendar lines are omitted entirely when the feed has never been
+	// probed (ZDEV_CALENDAR_ICS unset) — no point cluttering `zdevd diag`
+	// for every operator who hasn't configured one.
+	if r.CalendarLastOK != "" || r.CalendarLastErr != "" {
+		write("calendar_ok", r.CalendarLastOK)
+		if r.CalendarLastErr != "" {
+			write("calendar_err", r.CalendarLastErr)
+			write("calendar_err_at", r.CalendarLastErrAt)
+		}
+	}
 	return b.String()
 }

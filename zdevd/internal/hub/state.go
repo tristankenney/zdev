@@ -95,6 +95,25 @@ type state struct {
 	projectListNames []string               // canonical names from ProjectListChanged
 	projectRepos     map[string]string      // canonical name → resolved "owner/repo" (S3 review-gauge grouping); empty when unresolved
 
+	// commitments is the last successfully-fetched calendar set (phase 2,
+	// docs/design/command-centre.md), replaced WHOLESALE on a successful
+	// CommitmentsRefresh and deliberately NOT persisted (persist.go) — a
+	// restart re-fetches rather than risk carrying a stale calendar across
+	// a daemon restart, the same "re-probe cheaply rather than trust old
+	// disk content" rationale as Branch/DirtyCount/Intent.
+	//
+	// commitmentsLastOK / commitmentsLastErr / commitmentsLastErrAt track
+	// SOURCE HEALTH, not display state: a fetch failure leaves commitments
+	// untouched (see applyEvent's CommitmentsRefresh case) but still needs
+	// to be visible somewhere, because a calendar probe that silently stays
+	// broken while quietly showing yesterday's meetings is the single
+	// worst failure mode this phase exists to avoid. Surfaced via
+	// diag.Reply (buildDiagReply in hub.go) and `zdev-show time`.
+	commitments          []proto.Commitment
+	commitmentsLastOK    time.Time // zero = never fetched successfully
+	commitmentsLastErr   string    // most recent fetch/parse failure; "" = healthy or never tried
+	commitmentsLastErrAt time.Time // when commitmentsLastErr was recorded; zero = no error on record
+
 	// showUnmanaged mirrors config.ShowUnmanaged. When true, buildSnapshot
 	// appends tmux sessions without a projects-file entry below the managed
 	// block with proto.Project.Unmanaged=true. Set once by NewHub before
@@ -786,6 +805,25 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		pd.Intent = e.Intent
 		pd.BdReady = e.BdReady
 		s.projectData[key] = pd
+
+	case tmuxctl.CommitmentsRefresh:
+		// Phase 2 (docs/design/command-centre.md): a successful fetch
+		// replaces the stored set WHOLESALE. A failed fetch (FetchErr != "")
+		// deliberately does NOT touch s.commitments — the design note's
+		// single most important failure requirement is that a broken
+		// calendar must never silently blank out to "you are free"; the
+		// last-known set stays authoritative until a fetch actually
+		// succeeds again. Either branch records source health so
+		// `zdev-show time` / diag can surface it.
+		if e.FetchErr == "" {
+			s.commitments = e.Commitments
+			s.commitmentsLastOK = time.Now()
+			s.commitmentsLastErr = ""
+			s.commitmentsLastErrAt = time.Time{}
+		} else {
+			s.commitmentsLastErr = e.FetchErr
+			s.commitmentsLastErrAt = time.Now()
+		}
 
 	case tmuxctl.PRRefresh:
 		// PR-celebration edge detection — Pitfall G + Pitfall P2-D.
