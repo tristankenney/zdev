@@ -36,6 +36,7 @@ describe() {
         *zdev-prompt-picker*)    echo "insert a saved prompt into this pane" ;;
         *zdev-timeline-popup*)   echo "fleet activity timeline" ;;
         *zdev-help-popup*)       echo "this help" ;;
+        *zdev-park*)             echo "park a thought — one line, enter to capture, esc to drop" ;;
         *zdev-announce*)         echo "announcements menu — mute/unmute the 'X needs you' notifications" ;;
         *zdev-sidebar-move*+1*|*zdev-sidebar-move*-1*) echo "move the sidebar row cursor" ;;
         *zdev-sidebar-move*select*) echo "switch to the sidebar cursor's row" ;;
