@@ -764,7 +764,12 @@ func (h *Hub) Run(ctx context.Context) error {
 					// dwell before the auto-anchor can retrigger. Idempotent
 					// clear-of-nil (prev == nil) is NOT a boundary, so it
 					// leaves the dwell clock untouched.
-					resetDwellForCurrentAttendance(h.state, time.Now().Unix())
+					// req.nowNanos, not a second time.Now(): the wall clock is sampled
+					// exactly once per request, on the caller's goroutine (the
+					// documented SubmitAnchor* convention) — the invariants review
+					// caught this branch taking a second sample, which broke the
+					// discipline and made the branch untestable with injected time.
+					resetDwellForCurrentAttendance(h.state, req.nowNanos/int64(time.Second))
 				}
 				if prev != nil && h.notifier != nil {
 					h.notifier(boundaryNotification(prev, len(h.state.heldItems)))
