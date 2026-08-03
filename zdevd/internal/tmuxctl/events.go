@@ -180,11 +180,25 @@ type PortsRefresh struct {
 // Summary (Read-then-Round S1) is the agent's own last line from the
 // notif file's third line — single-line, capped by the writer. Empty for
 // legacy/two-line files or when the hook payload carried no message.
+//
+// Src (phase 3E, docs/design/command-centre.md — "hook-informed focus") is
+// the notif file's fourth line, meaningful ONLY when Kind ==
+// proto.WaitKindWorking: "prompt" when zdev-notify's --json payload carried
+// `.hook_event_name == "UserPromptSubmit"`, "heartbeat" for any other
+// hook_event_name (a PreToolUse heartbeat, once one is ever wired up), and
+// "" for everything else — an untagged wait/done/dead/alive/ack marker, OR
+// a working marker written by an OLDER zdev-notify that predates this
+// field. The empty string is the deliberate, load-bearing back-compat
+// default: the hub's instant-anchor (autoanchor.go's handleWorkingSignal)
+// requires Src == "prompt" exactly, so an old writer's untagged working
+// signal can never instant-anchor — it degrades to a harmless heartbeat,
+// which was always a safe no-op on that path.
 type NotifSeen struct {
 	Session   string
 	Timestamp int64
 	Kind      string
 	Summary   string
+	Src       string
 }
 
 // ProjectListChanged is emitted when the workspace fsnotify watcher (D3-06)

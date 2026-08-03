@@ -91,7 +91,7 @@ func (w *Watcher) handle(name string) {
 		return
 	}
 	session := strings.TrimSuffix(strings.TrimPrefix(base, notifPrefix), notifSuffix)
-	ts, kind, summary := readNotifFile(name)
+	ts, kind, summary, src := readNotifFile(name)
 	if ts == 0 {
 		// No valid timestamp = no signal yet. On Linux, inotify delivers the
 		// Create event BEFORE the writer's content lands, so the first read of
@@ -101,33 +101,38 @@ func (w *Watcher) handle(name string) {
 		// platform (first caught by CI's Linux leg).
 		return
 	}
-	w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary})
+	w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary, Src: src})
 }
 
-// readNotifFile reads the notif file zdev-notify wrote. Three formats,
-// each a superset of the last:
+// readNotifFile reads the notif file zdev-notify wrote. Four formats, each
+// a superset of the last:
 //
-//	legacy (one line):    <unix-seconds>
-//	tagged (two lines):   <unix-seconds>\n<kind>
+//	legacy (one line):     <unix-seconds>
+//	tagged (two lines):    <unix-seconds>\n<kind>
 //	summary (three lines): <unix-seconds>\n<kind>\n<summary>
+//	src (four lines):      <unix-seconds>\n<kind>\n<summary>\n<src>
 //
-// kind is the wait cost-class ("permission" / "decision"; may be the
-// empty placeholder line when only a summary is present). summary is the
-// agent's own last line, single-line by writer contract. Returns zeros
-// on read failure or a malformed first line — the consumer treats ts==0
-// as "no signal", so kind/summary without a valid timestamp are
-// meaningless and dropped with it. An unrecognized kind passes through
-// verbatim; the hub-side classifier normalizes unknowns to the
-// conservative "decision" class.
-func readNotifFile(path string) (ts int64, kind, summary string) {
+// kind is the wait cost-class ("permission" / "decision") OR the
+// zdev-notify lifecycle marker ("working"/"done"/"dead"/"alive"/"ack");
+// may be the empty placeholder line when only a later field is present.
+// summary is the agent's own last line, single-line by writer contract.
+// src (phase 3E, tmuxctl.NotifSeen's doc comment) is meaningful only
+// alongside kind=="working": "prompt" or "heartbeat", written by
+// zdev-notify as an empty summary + a 4th line when it can't attach a
+// wait summary to a working marker. Returns zeros on read failure or a
+// malformed first line — the consumer treats ts==0 as "no signal", so
+// kind/summary/src without a valid timestamp are meaningless and dropped
+// with it. An unrecognized kind passes through verbatim; the hub-side
+// classifier normalizes unknowns to the conservative "decision" class.
+func readNotifFile(path string) (ts int64, kind, summary, src string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return 0, "", ""
+		return 0, "", "", ""
 	}
-	lines := strings.SplitN(strings.TrimRight(string(b), "\n"), "\n", 3)
+	lines := strings.SplitN(strings.TrimRight(string(b), "\n"), "\n", 4)
 	n, err := strconv.ParseInt(strings.TrimSpace(lines[0]), 10, 64)
 	if err != nil {
-		return 0, "", ""
+		return 0, "", "", ""
 	}
 	if len(lines) > 1 {
 		kind = strings.TrimSpace(lines[1])
@@ -135,5 +140,8 @@ func readNotifFile(path string) (ts int64, kind, summary string) {
 	if len(lines) > 2 {
 		summary = strings.TrimSpace(lines[2])
 	}
-	return n, kind, summary
+	if len(lines) > 3 {
+		src = strings.TrimSpace(lines[3])
+	}
+	return n, kind, summary, src
 }
