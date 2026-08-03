@@ -16,8 +16,10 @@ import (
 // see that file's comment for why.
 const textInputWidth = boxWidth - 4
 
-// parkKeyMap is the popup's two bindings — enter to park, esc/ctrl+c to drop
-// without parking. bubbles/help renders the footer legend from these.
+// parkKeyMap is the popup's two bindings — enter to park (or anchor, in
+// -anchor mode), esc/ctrl+c to drop without acting. bubbles/help renders the
+// footer legend from these; only the Enter binding's help text differs
+// between modes.
 type parkKeyMap struct {
 	Enter key.Binding
 	Esc   key.Binding
@@ -29,6 +31,15 @@ func (k parkKeyMap) FullHelp() [][]key.Binding { return [][]key.Binding{{k.Enter
 
 var defaultParkKeys = parkKeyMap{
 	Enter: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "park")),
+	Esc:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "drop")),
+}
+
+// defaultAnchorKeys is -anchor mode's keymap (phase 3B, "the by-hand anchor
+// prompt" — docs/design/command-centre.md's anchor lifecycle path 3): same
+// two bindings, only the Enter help text changes so the footer reads
+// "enter anchor . esc drop" instead of "enter park . esc drop".
+var defaultAnchorKeys = parkKeyMap{
+	Enter: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "anchor")),
 	Esc:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "drop")),
 }
 
@@ -46,11 +57,21 @@ type parkModel struct {
 	help  help.Model
 	keys  parkKeyMap
 
+	// label titles the box border ("park" or "anchor") — park_view.go reads
+	// it directly rather than a hardcoded string, so the two modes share
+	// one View().
+	label string
+
 	ctx context.Context
-	// parkFn is the injectable seam for the actual daemon round-trip —
-	// production wires it to socket.DialPark (main.go); tests substitute a
-	// fake so Update's park-and-quit path is verifiable without a socket.
-	parkFn func(context.Context, string) (bool, error)
+	// submitFn is the injectable seam for the actual daemon round-trip —
+	// production wires it to socket.DialPark in park mode, or a
+	// socket.DialAnchorSet wrapper in -anchor mode (main.go). Tests
+	// substitute a fake so Update's submit-and-quit path is verifiable
+	// without a socket. Named generically (not parkFn) because the same
+	// field and the same Update logic now serve both modes — see
+	// newAnchorModel's doc comment for why this is an extension of the
+	// park popup rather than a third binary.
+	submitFn func(context.Context, string) (bool, error)
 
 	// initCmd is textinput.Focus()'s returned Cmd, captured at construction
 	// time and replayed from Init — Focus() must run once to start cursor
@@ -63,28 +84,48 @@ type parkModel struct {
 	// nothing"). parked is set the instant Enter fires (before the daemon
 	// round-trip resolves) so a torn-down popup mid-dial is still
 	// recognizable as "an attempt happened", not silently indistinguishable
-	// from esc/ctrl+c.
+	// from esc/ctrl+c. The name predates -anchor mode but is kept as-is —
+	// it means "the popup committed to a round-trip", park or anchor alike.
 	parked  bool
 	parkErr error
 }
 
-// newParkModel builds the popup ready to focus and blink immediately. ctx is
-// threaded through to every parkCmd invocation so a SIGINT/SIGTERM during an
-// in-flight dial cancels it rather than leaking past program exit.
+// newParkModel builds the park-mode popup ready to focus and blink
+// immediately. ctx is threaded through to every parkCmd invocation so a
+// SIGINT/SIGTERM during an in-flight dial cancels it rather than leaking
+// past program exit.
 func newParkModel(ctx context.Context, parkFn func(context.Context, string) (bool, error)) *parkModel {
+	return newPromptModel(ctx, parkFn, "park", "park a thought…", defaultParkKeys)
+}
+
+// newAnchorModel builds the -anchor mode popup (phase 3B, "the by-hand
+// anchor prompt" — docs/design/command-centre.md's anchor lifecycle path
+// 3: "for work that lives in no list — a phone call, an ad-hoc favour").
+// Same textinput popup, same Update logic as park mode; only the box
+// label, placeholder, keymap help text, and the injected round-trip differ
+// (anchorFn wraps socket.DialAnchorSet with an empty project — listless
+// work, per the design note).
+func newAnchorModel(ctx context.Context, anchorFn func(context.Context, string) (bool, error)) *parkModel {
+	return newPromptModel(ctx, anchorFn, "anchor", "anchor on…", defaultAnchorKeys)
+}
+
+// newPromptModel is the shared constructor park and anchor mode both call —
+// "extend cmd/zdev-park, do not fork a third prompt binary" per the brief.
+func newPromptModel(ctx context.Context, submitFn func(context.Context, string) (bool, error), label, placeholder string, keys parkKeyMap) *parkModel {
 	ti := textinput.New()
-	ti.Placeholder = "park a thought…"
+	ti.Placeholder = placeholder
 	ti.CharLimit = 240
 	ti.Width = textInputWidth
 	initCmd := ti.Focus()
 
 	return &parkModel{
-		input:   ti,
-		help:    help.New(),
-		keys:    defaultParkKeys,
-		ctx:     ctx,
-		parkFn:  parkFn,
-		initCmd: initCmd,
+		input:    ti,
+		help:     help.New(),
+		keys:     keys,
+		label:    label,
+		ctx:      ctx,
+		submitFn: submitFn,
+		initCmd:  initCmd,
 	}
 }
 
@@ -137,9 +178,11 @@ func (m *parkModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // parkCmd defers the actual daemon round-trip to a Cmd so Update stays
-// I/O-free — same shape as cmd/zdev-round's jumpCmd/pollCmd.
+// I/O-free — same shape as cmd/zdev-round's jumpCmd/pollCmd. The name
+// predates -anchor mode; it dispatches through m.submitFn regardless of
+// which mode built this model.
 func (m *parkModel) parkCmd(text string) tea.Cmd {
-	fn := m.parkFn
+	fn := m.submitFn
 	ctx := m.ctx
 	return func() tea.Msg {
 		_, err := fn(ctx, text)
