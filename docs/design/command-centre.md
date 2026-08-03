@@ -107,6 +107,39 @@ credibility.
    view** while the operator worked. Deferring again is a first-class
    choice that re-parks with a bumped rank.
 
+### The anchor lifecycle (how "now" gets set)
+
+The anchor is never typed into a list — it is **the output of picking
+work**. Anywhere the operator chooses what to do next, the choice itself
+anchors:
+
+1. **Boundary review pick** (the main path): `enter` on an item switches to
+   its session (when it maps to one), sends `anchor set` to the daemon, and
+   closes — one action. Picking IS anchoring; a separate declaration step
+   would be ceremony, and ceremony gets skipped.
+2. **Command centre pick**: identical.
+3. **By hand** (`M-,` → one line → enter): for work that lives in no list —
+   a phone call, an ad-hoc favour. The only path where anything is typed.
+
+Candidates come from the three registers; e.g. IMP-97 sits in *available*
+because bd reports it unblocked, and picking it is what creates
+`▶ now: IMP-97`.
+
+Mechanics follow the cursor-command precedent: the popup's pick Cmd sends
+`anchor set` over the socket; the daemon stamps `Anchor{Title, Project,
+SinceTS}`; the next snapshot carries it, which is what flips `InFocus`,
+engages the airlock, and renders the row. Release mirrors it: a boundary
+pick replaces the anchor, `q` leaves the operator unanchored, plus an
+explicit release key and the expiry.
+
+Two load-bearing consequences:
+
+- **Unanchored zdev is exactly today's zdev** — no anchor row, no airlock,
+  waits speak as they do now. The loop is opt-in per pick, and must win by
+  being picked, never by being default.
+- **Switching sessions does not move the anchor.** It is sticky and shows
+  drift honestly. One anchor, ever — the WIP limit of one is the point.
+
 ### Defer-but-promote: the pressure model
 
 Every non-demanding item carries pressure that grows on a curve set by its
