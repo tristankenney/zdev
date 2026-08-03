@@ -365,6 +365,16 @@ drive waiting/working/finished; death detection catches unclean exits —
 <span class="glyph g-wait">✗</span> tops the triage queue.</li>
 <li><strong><code>zdev run &lt;project&gt; "&lt;prompt&gt;"</code></strong> spawns a
 supervised agent loop in its own window — the actuator for triggers and MCP.</li>
+<li><strong>Focus loop over MCP</strong>: <code>zdevd mcp</code> also exposes the
+anchor/airlock/held-set loop (the <span class="k">M-.</span>/<span class="k">M-,</span>/<span class="k">M-;</span>
+keys above) as tools, so a skill — a morning <code>/plan</code> flow, say —
+can drive it directly:
+<code>zdev_park</code> (park a thought), <code>zdev_anchor_set</code> /
+<code>zdev_anchor_clear</code> (set/release the anchor), <code>zdev_anchor</code>
+(read anchor + in-focus/free-until), <code>zdev_held</code> /
+<code>zdev_held_remove</code> (read/consume the held set). Same daemon socket
+verbs <code>zdevd park</code>/<code>zdevd anchor</code>/<code>zdevd held-rm</code>
+already use.</li>
 <li><strong>Agent Teams</strong> (<code>ZDEV_TEAM_WINDOWS=1</code>): teammates
 auto-move to their own windows, nest under the lead's row, and are individually
 jumpable from <span class="k">M-p</span>.</li>
