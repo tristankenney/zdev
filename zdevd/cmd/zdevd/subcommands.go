@@ -16,6 +16,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -245,6 +247,53 @@ func cursorSubcmd(args []string) int {
 		} else {
 			fmt.Println(name)
 		}
+	}
+	return 0
+}
+
+// parkSubcmd implements `zdevd park [text...]` (phase 1 of the focus loop,
+// docs/design/command-centre.md). Joins any positional args with spaces as
+// the text; with no args, reads exactly one line from stdin — this is both
+// cmd/zdev-park's backend call (via socketpkg.DialPark directly, not this
+// subcommand — see that package) and the scriptable surface: `zdevd park
+// "call the dentist"` or `echo "call the dentist" | zdevd park`.
+//
+// Exit codes: 0 ok, 1 dial/rejection failure, 2 usage (no text on args OR
+// stdin).
+func parkSubcmd(args []string) int {
+	fs := flag.NewFlagSet("zdevd park", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	socket := fs.String("socket", platform.ResolveSocketPath(), "path to zdevd unix socket")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	var text string
+	if fs.NArg() > 0 {
+		text = strings.Join(fs.Args(), " ")
+	} else {
+		sc := bufio.NewScanner(os.Stdin)
+		if sc.Scan() {
+			text = sc.Text()
+		}
+		if err := sc.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "zdevd park: reading stdin: %v\n", err)
+			return 1
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		fmt.Fprintln(os.Stderr, "usage: zdevd park <text...> (or pipe one line on stdin)")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ok, err := socketpkg.DialPark(ctx, *socket, text)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd park: %v\n", err)
+		return 1
+	}
+	if !ok {
+		fmt.Fprintln(os.Stderr, "zdevd park: daemon rejected the request")
+		return 1
 	}
 	return 0
 }

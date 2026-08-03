@@ -95,6 +95,8 @@ func main() {
 			os.Exit(demoSubcmd(os.Args[2:]))
 		case "cursor":
 			os.Exit(cursorSubcmd(os.Args[2:]))
+		case "park":
+			os.Exit(parkSubcmd(os.Args[2:]))
 		case "notify-mute":
 			os.Exit(notifyMuteSubcmd(os.Args[2:]))
 		case "layout":
@@ -113,7 +115,7 @@ func main() {
 			// is a usage error — the daemon takes flags only.
 			if !strings.HasPrefix(os.Args[1], "-") {
 				fmt.Fprintf(os.Stderr,
-					"zdevd: unknown subcommand %q (expected: cursor, demo, diag, history, layout, mcp, notify-mute, version, or no args for daemon)\n",
+					"zdevd: unknown subcommand %q (expected: cursor, demo, diag, history, layout, mcp, notify-mute, park, version, or no args for daemon)\n",
 					os.Args[1])
 				os.Exit(2)
 			}
