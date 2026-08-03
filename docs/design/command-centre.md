@@ -1,182 +1,294 @@
-# Command centre: the time model
+# Command centre: the focus loop
 
-*Design note, 2026-08-03. Status: agreed, unbuilt. Supersedes the first
-draft of this file, which was organised around a day strip — the wrong
-spine (see "Why not a strip").*
+*Design note, 2026-08-03 (third iteration, consolidated from the design
+workshop — supersedes both the "day strip" and "time model" drafts that
+previously lived in this file). Status: agreed, unbuilt. Visual reference:
+the workshop artifact "The focus loop, built from stock parts".*
 
-zdev answers *"who needs me next?"* over a fleet of agents. This extends it
-with the operator's **time**, so it can answer the questions that only exist
-where those two domains meet.
+## The problem, in the operator's terms
 
-## Why not a strip
+zdev is the central hub for attention: it should draw attention to the right
+thing at the right time, give enough context to discover what's next and
+what could run in parallel, and balance immediate work against ad-hoc
+arrivals with the week's horizon in view.
 
-The obvious build is a calendar section in the sidebar. It is the wrong
-first move: a strip of today's meetings is a worse calendar app, competing
-with Outlook on Outlook's turf and adding rows to the one surface whose
-value is that it stays scannable.
+The constraint that shapes everything: **the operator self-distracts**
+(ADHD). So the system's bias must be the opposite of throughput-maximising.
+It protects the current thing, and it makes deferral trustworthy enough that
+everything else can be let go. The design goal is not "show the right
+things" — it is **earning the right to show nothing**.
 
-Everything genuinely worth building here is a case of **zdev behaving
-differently because it knows your time**:
+## The contract
 
-- *The gap* — "25 minutes until Sprint planning; here is the fleet work that
-  actually fits in 25 minutes."
-- *The shield* — announcements suppress themselves while you are in a
-  meeting, and a digest of what happened waits for you on the way out.
-- *Shutdown* — what landed against what you planned; what carries.
+> Nothing deferred is lost. Nothing deferred may interrupt. Everything held
+> gets its hearing at the next boundary.
 
-None of those are a view of a calendar. All three are **the same
-capability**: knowing when you are free, when you are not, and for how long.
-So that capability is the spine, and any display is a consumer of it.
+That trust is the entire product. The moment the operator stops believing
+parked things come back on their own, they start checking — and checking is
+self-distraction wearing a productivity costume.
 
-## The spine: a time model on the snapshot
+## The model
 
-Three derived fields, computed by the hub like every other derivation
-(pure, `now` threaded in, never `time.Now()` inside):
+### Three registers
+
+Everything zdev knows about sorts into one of three, and they never share a
+ranking:
+
+- **Demanding** — needs the operator now: blocked agents, deaths, a meeting
+  about to start. This is `rankTriage` and it already ships.
+- **Available** — could be picked up: bd-ready items, PRs one command from
+  landing, review requests, parked thoughts. The "what else could I be
+  doing" pool.
+- **Drifting** — quietly getting worse: rot, untouched initiatives,
+  approaching due dates, waits acked but never resolved. The week horizon
+  lives here. This register does not exist in zdev today and is the genuinely
+  new modelling work.
+
+### The time model (the spine)
+
+Derived by the hub like every other derivation — pure, `now` threaded in:
 
 ```go
 // proto.Snapshot
-Commitments []Commitment  // upcoming, chronological, today only
-InMeeting   bool          // now falls inside a commitment
-FreeUntil   int64         // unix: start of the next commitment; 0 = clear
+Commitments []Commitment // upcoming, chronological, today only
+InFocus     bool         // anchored, or inside a commitment
+FreeUntil   int64        // unix: next commitment start; 0 = clear
+Anchor      *Anchor      // what the operator is ON, if anything
+HeldCount   int          // size of the held set (the ┊ counter)
 ```
 
 ```go
 type Commitment struct {
-    ID     string  // stable per source — the ack/dedup key
-    Source string  // which provider emitted it
+    ID     string // stable per source — dedup/ack key
+    Source string
     Title  string
-    At     int64   // unix start
-    Until  int64   // unix end (0 = unknown; treat as At + default)
-    URL    string  // optional: join link
-    Kind   string  // "meeting" | "focus" | "task" — open string, not an enum
+    At     int64  // unix start
+    Until  int64  // unix end (0 = unknown → At + default)
+    URL    string // optional join link
+    Kind   string // "meeting" | "focus" | … — open string, never an enum
+}
+
+type Anchor struct {
+    Title   string // what the operator chose ("IMP-97 validate deploy")
+    Project string // optional: the session it lives in
+    SinceTS int64
 }
 ```
 
-That is the whole wire change. `FreeUntil` is the field the moments actually
-consume; `Commitments` exists so a surface can say *what* you are free until.
+`InFocus` generalises the earlier `InMeeting`: a meeting is just one cause
+of focus. The anchor is **explicitly chosen** (at a boundary, or by hand),
+never inferred — a guessed anchor that guesses wrong destroys the tether's
+credibility.
 
-**Why `Kind` is an open string**: an unknown kind renders with a neutral
-glyph rather than being dropped, which is what lets a new provider be a
-zero-change addition.
+### The loop
 
-## The moments (consumers of the spine)
+1. **Anchor.** At a boundary the operator picks one thing. The sidebar pins
+   it: `▶ now: IMP-97 · 32m`. Its job is cheap re-entry — after any
+   micro-distraction, one glance answers "what was I doing?". If the
+   operator wanders to another session, the anchor stays and shows the
+   drift honestly; a tether, not a nag.
+2. **Airlock.** While anchored, nothing new renders and nothing speaks.
+   Arrivals — a wait elsewhere, an agent finishing, a review request, a
+   drift item crossing its threshold — are **held**: captured, aging,
+   silent. The only visible trace is a dim `┊ holding N` counter under the
+   anchor, which exists as proof the airlock is catching things (that proof
+   is what lets the operator not go look). The sidebar damps: no pulsing,
+   no spinners except on the anchored work.
+3. **Capture.** Mid-focus thoughts get a two-keystroke park (`M-.` → one
+   line → enter → gone), landing in the held set with a guaranteed hearing.
+   The thought is externalised; the focus survives. Cheapest feature in the
+   design, likely the highest-value one for this operator.
+4. **Fires.** A closed, boring list may pierce the airlock: an agent death
+   anywhere; an urgent-tier wait on the anchored item; a meeting starting
+   in ~5 minutes. Nothing joins this list by aging.
+5. **Boundary.** When the current thing ends — its agent finishes, the
+   operator lands it or releases it, a meeting edge — the held set is
+   presented once, ranked, alongside anything that **promoted itself into
+   view** while the operator worked. Deferring again is a first-class
+   choice that re-parks with a bumped rank.
 
-### 1. The gap — "what fits before I go?"
+### Defer-but-promote: the pressure model
 
-The strongest of the three, and the one nothing else can compute: it needs
-the calendar *and* per-agent attention state *and* review readiness, and zdev
-is the only place all three exist.
+Every non-demanding item carries pressure that grows on a curve set by its
+kind:
 
-Given `FreeUntil`, rank fleet work by **whether it fits**, not by age:
+- **due dates accelerate**: quiet Monday, "coming into view" Tuesday,
+  outranking available work Wednesday, topping every boundary Thursday,
+  demanding when overdue;
+- **rot grows linearly** with days-since-merge;
+- **acked-but-unresolved waits** bump on every ack.
 
-- a blocked agent — clearing it is a keystroke, always fits
-- a PR that is green and clean — a small, bounded landing
-- uncommitted work — does not fit in ten minutes; say so rather than offer it
+The discipline that makes it safe: **promotion changes rank at the next
+boundary — never the right to interrupt.** Urgency accumulates silently and
+gets its hearing at a moment the operator is deciding anyway. The week
+horizon is not a view; it is this bias term.
 
-The estimates must be honest and coarse. A wrong "~2m" that eats fifteen
-minutes and makes you late is worse than no estimate at all, so the ranking
-is ordinal ("fits / tight / won't fit"), never a promised duration.
+### Boundaries (scheduling points)
 
-### 2. The shield + digest
+The system decides when a decision is already happening, never continuously:
+an agent finishes or dies · the queue clears · a meeting starts or ends ·
+the anchor is released or expires · morning start · evening shutdown · the
+operator asks.
 
-zdev already suppresses notifications while you are attached to a session,
-and already has a manual mute (`M-o`). The calendar supplies the missing
-reason: `InMeeting` gates the notifier the same way attendance does — no new
-notification path, one new predicate.
+**Deliberately cut**: the "capacity free — you could also start X" nudge
+from an earlier iteration. For this operator that is the distraction engine
+wearing a helpful hat. "What else can I do" is answered only at boundaries
+or when the command centre is opened by hand.
 
-The digest is the other half and the more valuable one. zdev knows what
-changed while you were away because it already tracks per-project
-transitions. On the way out of a commitment, "while you were out" is
-assembled from state it holds: finished, died, went green, started waiting.
+## The surfaces
 
-### 3. Shutdown
+### Sidebar (ambient — contracts, never grows)
 
-At end of day, join what zdev computed (landable, rotting, still waiting)
-with what the `plan` skill decided this morning. zdev supplies the fleet
-half; the skill runs the conversation and owns the write-back. zdev does not
-re-plan.
+Gains exactly: the anchor row, the `┊ holding N` counter, and a damped
+render mode while anchored. Everything else about it shrinks — see "The
+sidebar contracts" below.
+
+### The park prompt (`M-.`)
+
+`bubbles/textinput` in a lipgloss rounded border; footer legend from
+`bubbles/help`. Appends to the held set and closes itself. There is nothing
+to browse, on purpose.
+
+### The boundary review
+
+One popup, presented at boundaries: the held set ("held while you worked")
+and the promotions ("coming into view"), each ranked; pick / defer / later.
+`bubbles/list` with filtering and title chrome off and a custom item
+delegate rendering zdev's glyph grammar; keys via `bubbles/key`+`help`;
+mouse via bubblezone.
+
+### The command centre (the pull)
+
+The deliberative surface — never volunteered, only opened. Three registers
+side by side; the free window counting down in the title
+(`bubbles/timer`); pressure per drifting item as a small gradient bar
+(`bubbles/progress`, animation off — a popup that breathes invites watching
+it); a fits verdict per available item against `FreeUntil`, strictly
+ordinal (**fits / tight / won't**) — a wrong "~2m" that makes the operator
+late poisons the surface.
+
+### One popup skeleton
+
+Park, boundary, and centre share the Round's architecture — pure `Update`,
+Cmds for I/O, alt-screen, bubblezone — plus a list-with-delegate body. They
+differ in entry state and keymap only. The Round itself retrofits onto the
+skeleton later: four popups, one codebase, one visual voice.
+
+## Built from stock parts
+
+| part | used for | status |
+|---|---|---|
+| `bubbles/textinput` | park prompt | stock |
+| `bubbles/list` | boundary + centre sections | stock; filter/title off, custom delegate |
+| `bubbles/key` + `help` | every popup's bindings + footer | stock |
+| `bubbles/timer` | free-window countdown | stock |
+| `bubbles/progress` | pressure bars (gradient, no animation) | stock |
+| `bubbles/viewport` | centre overflow | stock |
+| lipgloss borders/join/width | popup frames + layout | shipped (pinned renderer) |
+| bubblezone | hover/click in popups | shipped (Round) |
+| Round model pattern | the shared skeleton | shipped |
+| sidebar tea engine + theme seam | anchor, counter, damped mode | shipped |
+| **pressure model** | curves, "coming into view" threshold | **custom — the real design work** |
+| **boundary detector** | anchor end, meeting edge, queue-clear | **custom — hub derivation** |
+| anchor + held set state | snapshot + persisted | custom, small |
+
+Three deliberate refusals:
+
+- **No bubbles components in the sidebar.** They assume a focused, owned
+  screen; the sidebar is inline, input-less, 50 columns, golden-pinned.
+- **Colour never routes through lipgloss.** Measured during the
+  review-gauge work: the pinned ANSI256 profile downsamples the theme's
+  truecolor. Lipgloss does layout; theme tokens do colour; the scatter gate
+  enforces the split.
+- **`list`'s fuzzy filter stays off.** A filter invites browsing; these
+  surfaces exist to end a decision, not host one.
 
 ## Sources
 
-The daemon's rule is that it never opens a network **listener** — outbound
-is already normal (the `gh` and CI probes shell out and hit the network on a
-five-minute cadence). So fetching is allowed; the constraint is auth.
+The daemon's rule is no network **listener** — outbound is normal (the gh
+and CI probes already shell out on a five-minute cadence). The constraint is
+auth, so the order is:
 
-**Primary: zdevd as an MCP client.** zdev already *serves* MCP (`zdevd mcp`
-exposes fleet state to Claude); consuming MCP `resources` closes the circle
-and matches the ecosystem the operator already lives in. Configured servers
-are spawned over stdio and polled on a cadence by the existing scheduler,
-which already handles staleness gating, timeouts and back-pressure.
+1. **zdevd as an MCP client** (primary). zdev already serves MCP; consuming
+   `resources` from configured stdio servers closes the circle, polled by
+   the existing scheduler (staleness gating, timeouts, back-pressure for
+   free).
+2. **iCalendar / RFC 5545** (fallback). Interactively-authenticated servers
+   — the operator's Outlook connector authorises through Claude's own OAuth
+   — are unreachable by a daemon by definition. A subscribed `.ics` URL is
+   the universal escape hatch (`VEVENT`/`VTODO`; `arran4/golang-ical`).
+3. **Exec provider** (escape hatch). Any executable emitting `Commitment`
+   records as NDJSON.
 
-**Fallback: iCalendar (RFC 5545).** Interactively-authenticated servers —
-notably the operator's Outlook connector, which is authorised through
-Claude's own OAuth flow — are *not* reachable by a daemon, and no amount of
-MCP client work changes that. A subscribed `.ics` URL is the universal
-escape hatch: every calendar provider publishes one, it needs no auth dance,
-and `VEVENT`/`VTODO` parse in a few lines (`arran4/golang-ical`).
-
-**Escape hatch: an exec provider.** Any executable emitting the same
-`Commitment` records as NDJSON, for anything with neither an MCP server nor
-an ICS feed.
-
-Sources are keyed by `(source, id)`; a source's emission replaces its own
-records wholesale. No delta protocol, no orphan reconciliation.
-
-**Failure is non-fatal and visible.** Last-known commitments are retained
-rather than blanked, and a source's health surfaces (the daemon-health row
-precedent) — because a silently-broken calendar that reports "you are free"
-is worse than no calendar at all. This is the single most important failure
+Records are keyed `(source, id)`; a source's emission replaces its own
+records wholesale. **Failure is non-fatal and visible**: last-known records
+are retained rather than blanked, and source health surfaces (daemon-health
+row precedent) — a silently-broken calendar that reports "you are free" is
+worse than no calendar at all. This is the single most important failure
 requirement in this note.
 
-## Phases, each independently killable
-
-1. **The spine.** `Commitments`/`InMeeting`/`FreeUntil` on the wire, one
-   source (whichever is cheapest to prove — likely ICS), no UI beyond a
-   debug surface in `zdev-show`. *Kill: if the time data cannot be kept
-   accurate enough to trust, everything downstream is unsafe — stop here.*
-2. **The shield.** `InMeeting` gates the notifier; the digest on the way
-   out. Smallest surface, highest daily value, and it exercises the spine
-   without any new visual language. *Kill: if suppression ever hides
-   something the operator needed during a meeting, revert to manual mute.*
-3. **The gap.** The fits/tight/won't-fit ranking, surfaced where the
-   operator already looks. *Kill: if the estimates mislead even once in a
-   way that costs a meeting, drop to showing the raw countdown only.*
-4. **Shutdown**, and whatever display the preceding phases prove is
-   actually wanted — deliberately last, because by then there is evidence.
-
-## Explicitly not building
-
-- **No planning in zdev.** No prioritisation, no scheduling, no judgment
-  about what matters. That is the `plan` skill's job and Motion's job.
-- **No write-back.** zdev does not update Motion or the calendar. Acting on
-  something runs a command or opens a URL; the source of truth stays
-  upstream.
-- **No network listener, no OAuth in the daemon.** If a source needs
-  interactive auth, it is unreachable by zdevd by definition — use ICS or an
-  exec provider.
-- **No day history.** zdev holds today. The journal already versions
-  whatever the `plan` skill writes.
+The `plan` skill remains the author of the week: it writes due-dated
+intents where a source can read them (Motion via its normal write-back, or
+a journal file), and shutdown reconciles against it. zdev never re-plans.
 
 ## The sidebar contracts as the loop lands
 
-*Added 2026-08-03, from the design workshop.*
-
-The loop does not only add surfaces — it supersedes several the sidebar
-already carries. Each phase's definition of done therefore includes a
-**sidebar re-audit**: which existing surface did this phase make redundant,
-and does the dogfood confirm it? Standing candidates and their expected
-fates:
+The loop supersedes surfaces, not just adds popups. Each phase's definition
+of done includes a **sidebar re-audit**: what did this phase make redundant,
+and does the dogfood confirm it?
 
 | surface | expected fate |
 |---|---|
 | triage strip (`ZDEV_SIDEBAR_TRIAGE`, default off) | superseded by the boundary review — delete |
-| review gauge (`ZDEV_SIDEBAR_REVIEW`) | deliberative data — migrates into the command centre's registers; sidebar version deleted |
+| review gauge (`ZDEV_SIDEBAR_REVIEW`) | deliberative data — migrates to the centre's registers; sidebar version deleted |
 | wait pulses + spoken announcements | gated by the airlock; full loudness only while unanchored |
-| stale-dim / demote-fold | "getting stale" is absorbed by the drift register; the dim channel is freed for damped mode |
-| footer tally | competes with the holding counter — one survives the dogfood |
-| initiative metadata rows (parked) | v2 is command-centre content, never sidebar rows |
+| stale-dim / demote-fold | absorbed by the drift register; the dim channel is freed for damped mode |
+| footer tally | competes with the holding counter — one survives |
+| initiative metadata rows (parked) | v2 is centre content, never sidebar rows |
 
-Convergence target: **anchor + fires + the fleet skeleton**. The sidebar
-earns its glance by shrinking. If a phase lands and no sidebar surface can
-be removed or quieted, treat that as a smell — the new surface probably
-duplicated rather than replaced.
+Convergence target: **anchor + fires + fleet skeleton**. The sidebar earns
+its glance by shrinking. If a phase lands and nothing can be removed or
+quieted, treat it as a smell — the new surface probably duplicated rather
+than replaced.
+
+## Phases, each independently killable
+
+1. **Park + held set.** `M-.` prompt, held-set state in the daemon
+   (persisted), `zdev-show` debug surface. Useful before anything else
+   exists. *Kill: if parked items are never reviewed, capture is a
+   graveyard — stop.*
+2. **The time spine.** `Commitments`/`FreeUntil` from one source (cheapest
+   to prove — likely ICS), `InFocus`. *Kill: if the time data cannot be
+   kept trustworthy, everything downstream is unsafe.*
+3. **The loop core.** Anchor (set/release/expiry), damped sidebar, airlock
+   gating the notifier, boundary review presenting held + digest.
+   *Kill: if suppression ever hides something needed, revert to manual
+   mute; if the anchor goes stale enough to be ignored, the tether is
+   noise — rethink expiry before building further.*
+4. **Pressure.** The drift register and "coming into view".
+   *Kill: if promotions feel arbitrary, fall back to held-only boundaries.*
+5. **The command centre.** Full pull surface with fits verdicts.
+   *Kill: if the boundary review turns out to suffice, the centre is
+   ceremony — don't build it out of momentum.*
+
+## Open calibration (decided by dogfood, not upfront)
+
+- **How the anchor ends well.** Natural boundaries plus a settable expiry
+  (45/90m) that forces a review; honest drift display when the operator
+  wanders. The failure mode being designed against: a stale anchor teaches
+  the operator to ignore the tether, and the trust structure decays.
+- **The exact pierce list.** As drawn: deaths anywhere, urgent-tier waits
+  on the anchored item, meeting-in-5m. Notably held: waits on *other*
+  projects, which speak aloud today — a real behaviour change.
+
+## Explicitly not building
+
+- **No planning in zdev.** No prioritisation judgment, no scheduling. The
+  `plan` skill and Motion own that.
+- **No write-back.** Acting on an item runs a command or opens a URL; the
+  source of truth stays upstream. (Shutdown's "carry" hands items *to the
+  skill*, which owns the write.)
+- **No network listener, no OAuth in the daemon.**
+- **No capacity nudges mid-focus.** Ever. See "deliberately cut".
+- **No day history.** zdev holds today; the journal versions what the
+  skill writes.

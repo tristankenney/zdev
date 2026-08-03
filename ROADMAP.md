@@ -243,6 +243,27 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   tier escalation + a death on a ticker. Doubles as a free e2e render gate.
   Effort: week. Depends: S1+S3+death (so the GIF shows the differentiators).
   Kill: if it drifts from real hub output and starts lying, internal-only.
+- **Command centre — the focus loop** *(2026-08-03; design:
+  docs/design/command-centre.md, workshopped with the operator)* — zdev as
+  the attention hub for an operator who self-distracts: an explicit ANCHOR
+  ("now: IMP-97 · 32m") pinned in the sidebar, an AIRLOCK that holds every
+  non-fire arrival while anchored (waits elsewhere stop speaking; a dim
+  "┊ holding N" is the only trace), two-keystroke thought CAPTURE (M-.),
+  and a BOUNDARY review that gives the held set + pressure-promoted drift
+  items ("due Thu ▲") one ranked hearing at natural scheduling points.
+  Three registers that never share a ranking (demanding = rankTriage,
+  untouched; available; drifting = the new modelling work), a time spine
+  (Commitments/InFocus/FreeUntil) sourced MCP-client-first with ICS
+  fallback, and popups assembled from stock bubbles parts on the Round's
+  skeleton. The contract the whole thing rests on: nothing deferred is
+  lost, nothing deferred may interrupt, everything held gets its hearing.
+  Five phases, each with its own kill criterion (see the note); the
+  standing rule that each phase's definition of done REMOVES or quiets a
+  sidebar surface (convergence: anchor + fires + fleet skeleton); and one
+  hard never: no capacity nudges mid-focus. Effort: phase 1 (park+held)
+  ~day; phases 2–3 ~week each. Depends: nothing. Kill: per-phase in the
+  note; globally, if the operator stops trusting deferral and resumes
+  checking, the design has failed regardless of what shipped.
 - **Daemon self-health row** — surface already-computed diag fields
   (`last_event_ago_sec`, `errors_1h`) as a single dim "degraded" row; a dead
   daemon and a dead agent are the same operator question. Effort: days. Depends:
