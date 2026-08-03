@@ -194,7 +194,7 @@ import (
 // compatible in practice, but bumped for strict-equality validation.
 // Restart all zdev-sidebar-render instances after deploying the new zdevd
 // binary.
-const SchemaVersion = "phase4-v23"
+const SchemaVersion = "phase4-v24"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -291,6 +291,31 @@ type Snapshot struct {
 	// ~/.claude/teams/, sorted by name. Empty when the experimental
 	// feature is unused — non-team fleets see no change.
 	TeamGroups []TeamGroup `json:"team_groups,omitempty"`
+
+	// ---- focus loop (phase4-v24; docs/design/command-centre.md) ----
+	//
+	// The wire for phases 1–3 lands together so the phases don't fight
+	// over the schema constant. Until the producing phase ships, each
+	// field is simply never set — omitempty keeps the frames identical.
+
+	// Anchor is what the operator is ON — explicitly chosen (a boundary
+	// or centre pick, or a by-hand entry), never inferred. nil when
+	// unanchored, and unanchored zdev behaves exactly as before.
+	Anchor *Anchor `json:"anchor,omitempty"`
+	// Held is the airlock's catch: arrivals and parked thoughts captured
+	// while anchored, awaiting their hearing at the next boundary.
+	// Chronological by SinceTS. The sidebar shows only len() (the dim
+	// "┊ holding N" counter); the boundary review shows the items.
+	Held []HeldItem `json:"held,omitempty"`
+	// Commitments are today's calendar records, chronological, replaced
+	// wholesale per source emission (keyed source+id upstream).
+	Commitments []Commitment `json:"commitments,omitempty"`
+	// InFocus is true while anchored or inside a commitment — the
+	// airlock predicate. Derived; never persisted.
+	InFocus bool `json:"in_focus,omitempty"`
+	// FreeUntil is the unix start of the next commitment, 0 when the
+	// rest of the day is clear. The fits-verdict input.
+	FreeUntil int64 `json:"free_until,omitempty"`
 
 	// ReviewGauge (phase4-v21) is the S3 landing-readiness gauge: per-repo
 	// READY / NEEDS-FIX / WILL-ROT counts plus contributing rows, grouped by
@@ -586,4 +611,55 @@ func NewStubSnapshot(seq int64, sentAt time.Time) Snapshot {
 // rule enforceable at one chokepoint. Pitfall 22.
 func MarshalCompact(v any) ([]byte, error) {
 	return json.Marshal(v)
+}
+
+// Anchor is the focus loop's "now" (phase4-v24): the one thing the
+// operator chose to be on. See docs/design/command-centre.md — the anchor
+// is the OUTPUT of picking work, sticky across session switches, and its
+// absence means the loop is entirely inert.
+type Anchor struct {
+	// Title is what the operator picked ("IMP-97 validate deploy").
+	Title string `json:"title"`
+	// Project is the session the pick maps to, canonical slash-form;
+	// empty for listless work (a phone call).
+	Project string `json:"project,omitempty"`
+	// SinceTS is when the anchor was set (unix seconds).
+	SinceTS int64 `json:"since_ts"`
+}
+
+// HeldItem is one entry in the airlock's held set (phase4-v24): an arrival
+// captured while the operator was anchored, or a parked thought (M-.).
+type HeldItem struct {
+	// ID is stable per item — the dedup key ("parked-<ts>", or the
+	// arrival's own identity like "wait-<project>").
+	ID string `json:"id"`
+	// Kind is an open string: "parked" | "wait" | "finished" | … —
+	// unknown kinds render with a neutral glyph, never dropped.
+	Kind string `json:"kind"`
+	// Title is the display line.
+	Title string `json:"title"`
+	// Project is the related session when there is one.
+	Project string `json:"project,omitempty"`
+	// SinceTS is when the item entered the held set (unix seconds).
+	SinceTS int64 `json:"since_ts"`
+}
+
+// Commitment is one calendar record for today (phase4-v24), emitted by a
+// time source (MCP resource, ICS feed, or exec provider) and replaced
+// wholesale per source emission.
+type Commitment struct {
+	// ID is stable per source — the dedup/ack key.
+	ID string `json:"id"`
+	// Source names the emitting provider ("ics", "mcp:<server>", …).
+	Source string `json:"source"`
+	Title  string `json:"title"`
+	// At/Until are unix seconds; Until 0 means unknown (treat as At +
+	// a default duration at the consumer).
+	At    int64 `json:"at"`
+	Until int64 `json:"until,omitempty"`
+	// URL is the optional join link.
+	URL string `json:"url,omitempty"`
+	// Kind is an open string ("meeting" | "focus" | …) — never an enum,
+	// so a new source is a zero-change addition.
+	Kind string `json:"kind,omitempty"`
 }
