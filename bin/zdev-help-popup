@@ -36,7 +36,9 @@ describe() {
         *zdev-prompt-picker*)    echo "insert a saved prompt into this pane" ;;
         *zdev-timeline-popup*)   echo "fleet activity timeline" ;;
         *zdev-help-popup*)       echo "this help" ;;
+        *zdev-park*-anchor*)     echo "anchor by hand — one line, enter sets it as what you're on, esc drops" ;;
         *zdev-park*)             echo "park a thought — one line, enter to capture, esc to drop" ;;
+        *zdev-boundary*)         echo "boundary review — the held set's hearing: enter picks, d defers, D drops, q/esc leaves it for next time" ;;
         *zdev-announce*)         echo "announcements menu — mute/unmute the 'X needs you' notifications" ;;
         *zdev-sidebar-move*+1*|*zdev-sidebar-move*-1*) echo "move the sidebar row cursor" ;;
         *zdev-sidebar-move*select*) echo "switch to the sidebar cursor's row" ;;
@@ -107,6 +109,15 @@ printf '\n%sAGENT TEAMS%s\n' "$BOLD" "$RESET"
 printf '  Teammates auto-move into their own windows; the sidebar nests them\n'
 printf '  under the lead project. %sM-p%s -> pick the project (lands on the\n' "$CYAN" "$RESET"
 printf '  orchestrator) or a member (jumps to that teammate'\''s window).\n'
+
+# --- focus loop (docs/design/command-centre.md) ---
+printf '\n%sFOCUS LOOP%s %s(the anchor + airlock + boundary review)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %sM-.%s park a thought — one line, gone, guaranteed a hearing later\n' "$CYAN" "$RESET"
+printf '  %sM-,%s anchor by hand — one line, sets what you'\''re on (%s▶ now%s)\n' "$CYAN" "$RESET" "$CYAN" "$RESET"
+printf '  %sM-;%s boundary — the held set'\''s hearing: enter picks, %sd%s defers,\n' "$CYAN" "$RESET" "$CYAN" "$RESET"
+printf '       %sD%s drops, %sq%s/esc leaves it all for next time\n' "$CYAN" "$RESET" "$CYAN" "$RESET"
+printf '  %sopt-in%s: unanchored zdev behaves exactly as it does today — the\n' "$DIM" "$RESET"
+printf '  loop only engages once something is anchored\n'
 
 # --- glyph cheatsheet (full legend: zdev-show --legend) ---
 printf '\n%sGLYPHS%s %s(quick — full set: zdev-show --legend)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"

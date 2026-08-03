@@ -26,6 +26,7 @@ GO_DAEMON     := $(BIN_DIR)/zdevd
 GO_SHOW       := $(BIN_DIR)/zdev-show
 GO_ROUND      := $(BIN_DIR)/zdev-round
 GO_PARK       := $(BIN_DIR)/zdev-park
+GO_BOUNDARY   := $(BIN_DIR)/zdev-boundary
 
 # OS detection — controls which service manager (launchd / systemd) the
 # install/start/stop/restart/status/logs targets dispatch to. Path layout
@@ -100,7 +101,7 @@ all: build
 help:
 	@echo "Targets:"
 	@echo "  build           — go build both binaries (-trimpath -ldflags=-s -w)"
-	@echo "  install         — build, symlink renderer + daemon + zdev-show + zdev-round + zdev-park, install plist, bootstrap launchd"
+	@echo "  install         — build, symlink renderer + daemon + zdev-show + zdev-round + zdev-park + zdev-boundary, install plist, bootstrap launchd"
 	@echo "  uninstall       — bootout, remove symlinks and plist"
 	@echo ""
 	@echo "  start           — bootstrap launchd (start daemon)"
@@ -214,7 +215,7 @@ logs:
 		kill %1 2>/dev/null
 endif
 
-build: $(GO_DAEMON) $(GO_RENDERER) $(GO_SHOW) $(GO_ROUND) $(GO_PARK)
+build: $(GO_DAEMON) $(GO_RENDERER) $(GO_SHOW) $(GO_ROUND) $(GO_PARK) $(GO_BOUNDARY)
 
 $(GO_DAEMON): $(shell find cmd/zdevd internal -name '*.go' 2>/dev/null) go.mod
 	@mkdir -p "$(BIN_DIR)"
@@ -235,6 +236,10 @@ $(GO_ROUND): $(shell find cmd/zdev-round internal -name '*.go' 2>/dev/null) go.m
 $(GO_PARK): $(shell find cmd/zdev-park internal -name '*.go' 2>/dev/null) go.mod
 	@mkdir -p "$(BIN_DIR)"
 	cd "$(ZDEVD_DIR)" && go build $(GOFLAGS) -o "$(GO_PARK)" ./cmd/zdev-park
+
+$(GO_BOUNDARY): $(shell find cmd/zdev-boundary internal -name '*.go' 2>/dev/null) go.mod
+	@mkdir -p "$(BIN_DIR)"
+	cd "$(ZDEVD_DIR)" && go build $(GOFLAGS) -o "$(GO_BOUNDARY)" ./cmd/zdev-boundary
 
 ifeq ($(UNAME_S),Darwin)
 # PLIST_BUILT — sed-substituted launchd plist. Generated into bin/ alongside
@@ -381,6 +386,7 @@ install: build $(PLIST_BUILT) $(REAPER_PLIST_BUILT)
 	ln -sf "$(GO_SHOW)" "$(LOCAL_BIN)/zdev-show"
 	ln -sf "$(GO_ROUND)" "$(LOCAL_BIN)/zdev-round"
 	ln -sf "$(GO_PARK)" "$(LOCAL_BIN)/zdev-park"
+	ln -sf "$(GO_BOUNDARY)" "$(LOCAL_BIN)/zdev-boundary"
 	@# Symlink substituted plists into LaunchAgents.
 	ln -sf "$(PLIST_BUILT)" "$(PLIST_DST)"
 	ln -sf "$(REAPER_PLIST_BUILT)" "$(REAPER_PLIST_DST)"
@@ -397,7 +403,7 @@ uninstall:
 	@launchctl bootout "$(DOMAIN)/$(LABEL)" 2>/dev/null || true
 	@launchctl bootout "$(DOMAIN)/$(REAPER_LABEL)" 2>/dev/null || true
 	@rm -f "$(PLIST_DST)" "$(REAPER_PLIST_DST)"
-	@rm -f "$(RENDER_LINK)" "$(LOCAL_BIN)/zdevd" "$(LOCAL_BIN)/zdev-show" "$(LOCAL_BIN)/zdev-round" "$(LOCAL_BIN)/zdev-park"
+	@rm -f "$(RENDER_LINK)" "$(LOCAL_BIN)/zdevd" "$(LOCAL_BIN)/zdev-show" "$(LOCAL_BIN)/zdev-round" "$(LOCAL_BIN)/zdev-park" "$(LOCAL_BIN)/zdev-boundary"
 	@echo "uninstall: complete."
 else
 install: build $(ZDEVD_UNIT_BUILT) $(REAPER_UNIT_BUILT) $(REAPER_TIMER_BUILT)
@@ -412,6 +418,7 @@ install: build $(ZDEVD_UNIT_BUILT) $(REAPER_UNIT_BUILT) $(REAPER_TIMER_BUILT)
 	ln -sf "$(GO_SHOW)" "$(LOCAL_BIN)/zdev-show"
 	ln -sf "$(GO_ROUND)" "$(LOCAL_BIN)/zdev-round"
 	ln -sf "$(GO_PARK)" "$(LOCAL_BIN)/zdev-park"
+	ln -sf "$(GO_BOUNDARY)" "$(LOCAL_BIN)/zdev-boundary"
 	@# Symlink substituted unit files into ~/.config/systemd/user.
 	ln -sf "$(ZDEVD_UNIT_BUILT)" "$(ZDEVD_UNIT_DST)"
 	ln -sf "$(REAPER_UNIT_BUILT)" "$(REAPER_UNIT_DST)"
@@ -441,7 +448,7 @@ uninstall:
 	@systemctl --user disable --now zdev-reaper.timer 2>/dev/null || true
 	@rm -f "$(ZDEVD_UNIT_DST)" "$(REAPER_UNIT_DST)" "$(REAPER_TIMER_DST)"
 	@systemctl --user daemon-reload 2>/dev/null || true
-	@rm -f "$(RENDER_LINK)" "$(LOCAL_BIN)/zdevd" "$(LOCAL_BIN)/zdev-show" "$(LOCAL_BIN)/zdev-round" "$(LOCAL_BIN)/zdev-park"
+	@rm -f "$(RENDER_LINK)" "$(LOCAL_BIN)/zdevd" "$(LOCAL_BIN)/zdev-show" "$(LOCAL_BIN)/zdev-round" "$(LOCAL_BIN)/zdev-park" "$(LOCAL_BIN)/zdev-boundary"
 	@echo "uninstall: complete."
 endif
 
