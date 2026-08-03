@@ -163,6 +163,18 @@ func thHover() string {
 	return Bold
 }
 
+// thAnchor is the focus loop's anchor row marker hue ("▶ now", phase 3C).
+// Deliberately its own token rather than a reuse of thWorking — both read
+// as the same working-hue FAMILY today (classic: Icy for both), but the
+// anchor row is a one-of-a-kind fixture and a future palette change to
+// "working in general" must not silently retint it too.
+func thAnchor() string {
+	if ThemeMode == "rose-pine" {
+		return rpFoam.fg()
+	}
+	return Icy
+}
+
 // thUrgentBar is the urgent row's left-border ▌ accent.
 func thUrgentBar() string {
 	if ThemeMode == "rose-pine" {
