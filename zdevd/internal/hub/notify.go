@@ -20,6 +20,12 @@
 // writes excepted, which own their own fields). Safe because the hub
 // goroutine is the sole owner of state, but any future refactor that
 // splits state ownership must audit this site.
+//
+// Phase 3A (docs/design/command-centre.md — "the airlock"): tierCheck also
+// writes s.heldItems via captureHeldWait when a tier crossing is airlocked
+// (anchored, foreign project — see below), and boundary.go's checkBoundary
+// writes s.anchor directly through applyEvent(AnchorClear). Same exception,
+// same reasoning.
 package hub
 
 import (
@@ -205,6 +211,47 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 		return false
 	}
 
+	// Airlock (phase 3A, docs/design/command-centre.md "the airlock" / "the
+	// pierce list"): while anchored, a tier crossing on any project OTHER
+	// than the anchor's own is HELD — captured into the held set instead of
+	// fired, per the pierce list's one explicit behaviour change ("waits on
+	// *other* projects... speak aloud today"). The anchor's own project
+	// still fires normally (pierce list item (b)). This gate is keyed on
+	// s.anchor alone: InFocus-via-commitment (a meeting with no anchor)
+	// does NOT gate here — that's the meeting-shield the design defers to
+	// the meeting-edge boundary work (command-centre.md "Open calibration").
+	// Meeting-in-5m piercing is explicitly out of scope for this phase: no
+	// such notification kind exists yet.
+	//
+	// Tier bits were already marked above regardless of this gate — a
+	// suppressed crossing must not re-fire once the operator un-anchors.
+	// The alternative (leaving the bit unset so it fires on un-anchor)
+	// floods the operator at the exact moment they release the anchor,
+	// which is precisely the wrong moment (deliberate choice).
+	if s.anchor != nil {
+		anchorKey := ""
+		if s.anchor.Project != "" {
+			anchorKey = proto.SessionKey(s.anchor.Project)
+		}
+		var kept []tierCrossing
+		for _, c := range crossings {
+			if anchorKey != "" && c.project == anchorKey {
+				kept = append(kept, c)
+				continue
+			}
+			captureHeldWait(s, c, now)
+		}
+		crossings = kept
+		if len(crossings) == 0 {
+			// Every crossing this pass was airlocked into the held set;
+			// nothing fires, but the held-set mutation (and the tier bits
+			// marked above) both need saving — the caller (publishPass)
+			// treats a true return as "must persist" exactly like a
+			// crossing that did fire.
+			return true
+		}
+	}
+
 	// Digest leader: most urgent crossing — highest tier, then oldest
 	// wait, then name so map iteration order never decides.
 	sort.Slice(crossings, func(i, j int) bool {
@@ -222,7 +269,15 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 	if top.kind == proto.WaitKindPermission {
 		msg += " (permission)"
 	}
-	if others := eligibleWaits - 1; others > 0 {
+	// Fleet "more waiting" context: while anchored, only count OTHER
+	// eligible waits within the SAME (anchor) project — waits elsewhere are
+	// airlocked, and leaking their count into a notification that DID pierce
+	// would defeat the point of holding them silently in the first place.
+	if s.anchor != nil {
+		if others := len(crossings) - 1; others > 0 {
+			msg += fmt.Sprintf(" · %d more waiting", others)
+		}
+	} else if others := eligibleWaits - 1; others > 0 {
 		msg += fmt.Sprintf(" · %d more waiting", others)
 	}
 	fire(Notification{
@@ -233,4 +288,32 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 		AgeSec:  top.age,
 	})
 	return true
+}
+
+// captureHeldWait appends or updates a HeldItem capturing a tier crossing
+// the airlock suppressed (phase 3A). ID is stable per project
+// ("wait-<project>") so a re-escalating wait updates the SAME entry rather
+// than duplicating — the Title is refreshed to the new (higher) tier
+// message but SinceTS is preserved from the item's FIRST capture, so the
+// held set's age reflects when the airlock first caught it, not when it
+// last escalated.
+func captureHeldWait(s *state, c tierCrossing, now int64) {
+	id := "wait-" + c.project
+	msg := tiers[c.tierIdx].Message
+	if c.kind == proto.WaitKindPermission {
+		msg += " (permission)"
+	}
+	for i := range s.heldItems {
+		if s.heldItems[i].ID == id {
+			s.heldItems[i].Title = msg
+			return
+		}
+	}
+	s.heldItems = append(s.heldItems, proto.HeldItem{
+		ID:      id,
+		Kind:    "wait",
+		Title:   msg,
+		Project: c.project,
+		SinceTS: now,
+	})
 }

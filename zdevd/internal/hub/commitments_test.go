@@ -46,7 +46,7 @@ func TestDeriveInFocus(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := deriveInFocus(commitments, c.now); got != c.want {
+			if got := deriveInFocus(commitments, false, c.now); got != c.want {
 				t.Errorf("deriveInFocus(now=%d) = %v, want %v", c.now, got, c.want)
 			}
 		})
@@ -54,8 +54,21 @@ func TestDeriveInFocus(t *testing.T) {
 }
 
 func TestDeriveInFocus_EmptySet(t *testing.T) {
-	if deriveInFocus(nil, 12345) {
-		t.Error("deriveInFocus(nil) = true, want false (no commitments, no anchor)")
+	if deriveInFocus(nil, false, 12345) {
+		t.Error("deriveInFocus(nil, unanchored) = true, want false (no commitments, no anchor)")
+	}
+}
+
+// TestDeriveInFocus_Anchored confirms the anchored branch: true regardless
+// of the commitment set, including an empty one (phase 3A — deriveInFocus
+// gains the anchored branch at the site phase 2 prepared).
+func TestDeriveInFocus_Anchored(t *testing.T) {
+	if !deriveInFocus(nil, true, 12345) {
+		t.Error("deriveInFocus(nil, anchored) = false, want true")
+	}
+	commitments := []proto.Commitment{{ID: "a", At: 100000, Until: 200000}}
+	if !deriveInFocus(commitments, true, 12345) {
+		t.Error("deriveInFocus(outside any commitment, anchored) = false, want true")
 	}
 }
 

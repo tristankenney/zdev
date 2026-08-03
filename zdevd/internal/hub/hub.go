@@ -41,6 +41,8 @@ type Hub struct {
 	diagRequests   chan diagReq       // socket.Server (diag handler) → hub; ARCH-10
 	cursorRequests chan cursorReq     // socket.Server (cursor handler) → hub; zd-e6e
 	parkRequests   chan parkReq       // socket.Server (park handler) → hub; phase 1 focus loop
+	anchorRequests chan anchorReq     // socket.Server (anchor handler) → hub; phase 3A focus loop
+	heldRmRequests chan heldRmReq     // socket.Server (held-rm handler) → hub; phase 3A focus loop
 	errInc         chan struct{}      // RecordError → hub; errors_1h ticker
 	stopped        chan struct{}      // closed by Run on exit; signals Submit/Register/DiagSnapshot
 
@@ -165,6 +167,29 @@ type parkReq struct {
 	reply    chan<- struct{}
 }
 
+// anchorReq is the channel round-trip envelope for anchor set/clear
+// requests (phase 3A of the focus loop, docs/design/command-centre.md —
+// "the anchor lifecycle"). Mirrors parkReq's shape: the caller
+// (SubmitAnchorSet/SubmitAnchorClear) validates and trims on its own
+// goroutine and samples the wall clock ONCE before handing off, so
+// applyEvent stays pure and deterministic. action is "set" or "clear";
+// title/project are only meaningful for "set".
+type anchorReq struct {
+	action   string
+	title    string
+	project  string
+	nowNanos int64
+	reply    chan<- struct{}
+}
+
+// heldRmReq is the channel round-trip envelope for held-rm requests (the
+// boundary popup's consume action, phase 3A). id is the HeldItem.ID to
+// remove, or "*" to clear the whole held set.
+type heldRmReq struct {
+	id    string
+	reply chan<- struct{}
+}
+
 // Config bundles every dependency the hub needs. Pass to NewHub once;
 // fields are read-only after Run starts. Replaces the previous fluent
 // setter chain (WithSocketPath/WithEventLog/WithStatePath/WithNotifier)
@@ -233,6 +258,15 @@ type Config struct {
 	// behaviour where member panes aggregate into the session row. The hub
 	// never reads the env var — cmd/zdevd resolves it and passes it here.
 	TeamWindows bool
+
+	// AnchorExpiry mirrors ZDEV_ANCHOR_EXPIRY_MIN (phase 3A of the focus
+	// loop, docs/design/command-centre.md — "the anchor lifecycle" /
+	// "Open calibration"). checkBoundary (boundary.go) clears the anchor
+	// once now-anchor.SinceTS reaches this duration. Zero means never
+	// expire — the Config-zero-value convention every other optional knob
+	// follows. cmd/zdevd resolves the env var (default 90 minutes when
+	// unset) into this field; the hub never reads env itself.
+	AnchorExpiry time.Duration
 }
 
 // NewHub constructs a hub from a Config. Every dependency is bundled into
@@ -266,6 +300,7 @@ func NewHub(cfg Config) *Hub {
 		st.collapseExpand[k] = struct{}{}
 	}
 	st.teamWindows = cfg.TeamWindows
+	st.anchorExpirySec = int64(cfg.AnchorExpiry.Seconds())
 	return &Hub{
 		debounce:       cfg.Debounce,
 		events:         make(chan tmuxctl.Event, eventsChanCap),
@@ -274,6 +309,8 @@ func NewHub(cfg Config) *Hub {
 		diagRequests:   make(chan diagReq),
 		cursorRequests: make(chan cursorReq),
 		parkRequests:   make(chan parkReq),
+		anchorRequests: make(chan anchorReq),
+		heldRmRequests: make(chan heldRmReq),
 		errInc:         make(chan struct{}, errIncChanCap),
 		stopped:        make(chan struct{}),
 		state:          st,
@@ -481,6 +518,20 @@ func (h *Hub) Run(ctx context.Context) error {
 		// observable shape — Seq/SentAt advance every tick by design and
 		// would defeat the diff if they participated.
 		snap := buildSnapshot(h.state, 0, time.Time{}, passNow.Unix(), passNow.UnixMilli())
+		// Boundary detection (phase 3A, boundary.go): runs AFTER
+		// buildSnapshot so checkBoundary reads the FRESHLY-committed
+		// displayed Attention this pass (the anchored-project-finished
+		// check needs the value buildSnapshot just wrote, not last pass's
+		// lagging one). A fired boundary clears the anchor, which makes the
+		// `snap` built above stale (it still carries the old Anchor) —
+		// rebuild so this SAME publish carries the boundary's effect
+		// instead of lagging a full heartbeat behind (a boundary is the
+		// moment the operator explicitly wants zdev to speak; delaying its
+		// own visible effect would be a needless inconsistency).
+		boundaryFired := checkBoundary(passNow.Unix(), h.state, h.notifier)
+		if boundaryFired {
+			snap = buildSnapshot(h.state, 0, time.Time{}, passNow.Unix(), passNow.UnixMilli())
+		}
 		// Daemon health fields (zd-6e1): set before snapshotEqualsCore so
 		// an errors_1h threshold crossing triggers a publish. Both h.lastEventAt
 		// and h.errCounter are Run-owned — safe to read here without locking.
@@ -503,8 +554,11 @@ func (h *Hub) Run(ctx context.Context) error {
 		// changed AND no tier mutation needs to be captured. Restores the
 		// project's zero-idle-CPU posture under the supervisor's
 		// idempotent 1Hz polls — without this, every poll cycle triggers
-		// a marshal + socket write per subscriber forever.
-		if !snapshotChanged && !clientsChanged && !tierFired {
+		// a marshal + socket write per subscriber forever. boundaryFired
+		// participates defensively (snapshotChanged already catches the
+		// Anchor-going-nil case in practice, since Anchor is compared by
+		// snapshotEqualsCore).
+		if !snapshotChanged && !clientsChanged && !tierFired && !boundaryFired {
 			return
 		}
 		h.lastClientSessionsSeq = h.state.clientSessionsSeq
@@ -644,6 +698,50 @@ func (h *Hub) Run(ctx context.Context) error {
 			// (2026-08-04). Parks are human-keystroke rare — bypassing
 			// the debounce coalescing costs nothing.
 			publishPass()
+			close(req.reply)
+
+		case req := <-h.anchorRequests:
+			// Apply the anchor mutation (pure — no I/O). See
+			// tmuxctl.AnchorSet/AnchorClear doc comments for why applyEvent
+			// itself never fires the boundary notification: an explicit
+			// clear IS a boundary (docs/design/command-centre.md
+			// "Boundaries" lists "the anchor is released" alongside finish
+			// and expiry), so the notification is fired HERE, at the
+			// request site, using the anchor captured before the clear.
+			switch req.action {
+			case "set":
+				applyEvent(h.state, tmuxctl.AnchorSet{Title: req.title, Project: req.project, NowNanos: req.nowNanos}, nil)
+			case "clear":
+				prev := h.state.anchor
+				applyEvent(h.state, tmuxctl.AnchorClear{}, nil)
+				if prev != nil && h.notifier != nil {
+					h.notifier(boundaryNotification(prev, len(h.state.heldItems)))
+				}
+			}
+			// Publish SYNCHRONOUSLY — same durability contract as park
+			// (SubmitPark's comment above): an anchor ack means persisted,
+			// not "persisted unless the daemon dies inside the debounce
+			// window". Setting/clearing the anchor is exactly as deliberate
+			// an operator act as a park, and restart-restores-anchor is a
+			// required behavior (the brief), which only holds if every ack
+			// already reached disk.
+			publishPass()
+			close(req.reply)
+
+		case req := <-h.heldRmRequests:
+			// Apply the removal (pure — no I/O) and arm the debounce rather
+			// than publish synchronously — unlike park/anchor, a held-rm has
+			// no "ack means persisted" requirement (only "parked" kind items
+			// persist at all; a removed "wait" capture was never on disk to
+			// begin with, see persist.go's ParkedHeld). Mirrors the cursor
+			// branch's shape.
+			applyEvent(h.state, tmuxctl.HeldRemove{ID: req.id}, nil)
+			if timer == nil {
+				timer = time.NewTimer(h.debounce)
+				debounceFired = timer.C
+			} else {
+				resetDebounce(timer, h.debounce)
+			}
 			close(req.reply)
 
 		case <-h.errInc:
@@ -793,6 +891,115 @@ func (h *Hub) SubmitPark(ctx context.Context, text string) error {
 	reply := make(chan struct{}, 1)
 	select {
 	case h.parkRequests <- parkReq{text: trimmed, nowNanos: time.Now().UnixNano(), reply: reply}:
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-reply:
+		return nil
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SubmitAnchorSet sets the anchor (phase 3A of the focus loop,
+// docs/design/command-centre.md — "the anchor lifecycle") and returns once
+// the hub goroutine has applied it AND published/persisted — same
+// synchronous, ack-means-persisted contract as SubmitPark, and for the same
+// reason: picking an anchor is a deliberate operator act the trust contract
+// must not lose to a crash inside the debounce window.
+//
+// Title is trimmed and rejected here (before the channel send) if empty —
+// applyEvent's own guard is defense in depth, not the only line of defense,
+// same discipline as SubmitPark. Project is trimmed but NOT validated
+// against the project list: listless work (a phone call, an ad-hoc favour)
+// is legitimate. The wall clock is sampled exactly once, on this (the
+// caller's) goroutine, and threaded into the AnchorSet event so applyEvent
+// itself never calls time.Now().
+func (h *Hub) SubmitAnchorSet(ctx context.Context, title, project string) error {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return errors.New("hub: anchor title is empty")
+	}
+	select {
+	case <-h.stopped:
+		return ErrHubStopped
+	default:
+	}
+	reply := make(chan struct{}, 1)
+	req := anchorReq{
+		action:   "set",
+		title:    trimmed,
+		project:  strings.TrimSpace(project),
+		nowNanos: time.Now().UnixNano(),
+		reply:    reply,
+	}
+	select {
+	case h.anchorRequests <- req:
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-reply:
+		return nil
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SubmitAnchorClear releases the anchor. Idempotent — clearing an
+// already-nil anchor still replies ok (the Run loop's anchorRequests branch
+// checks h.state.anchor itself and simply skips firing a boundary
+// notification when there was nothing to release). Same synchronous,
+// ack-means-persisted contract as SubmitAnchorSet.
+func (h *Hub) SubmitAnchorClear(ctx context.Context) error {
+	select {
+	case <-h.stopped:
+		return ErrHubStopped
+	default:
+	}
+	reply := make(chan struct{}, 1)
+	req := anchorReq{action: "clear", nowNanos: time.Now().UnixNano(), reply: reply}
+	select {
+	case h.anchorRequests <- req:
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-reply:
+		return nil
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SubmitHeldRemove removes one item from the held set by ID ("*" clears the
+// whole set) — the boundary popup's consume action (phase 3A; the popup
+// itself lands in a later phase). Idempotent: removing a non-existent ID is
+// not an error. Unlike SubmitAnchorSet/SubmitAnchorClear, this does NOT
+// publish synchronously (see the heldRmRequests branch in Run) — there is
+// no "ack means persisted" requirement for a held-rm.
+func (h *Hub) SubmitHeldRemove(ctx context.Context, id string) error {
+	select {
+	case <-h.stopped:
+		return ErrHubStopped
+	default:
+	}
+	reply := make(chan struct{}, 1)
+	select {
+	case h.heldRmRequests <- heldRmReq{id: id, reply: reply}:
 	case <-h.stopped:
 		return ErrHubStopped
 	case <-ctx.Done():
@@ -1114,6 +1321,13 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	if !heldEqual(a.Held, b.Held) {
 		return false
 	}
+	// Anchor (phase 3A, phase4-v24): a set/clear/boundary must publish so
+	// the sidebar's anchor row and the airlock's gating state stay current.
+	// proto.Anchor has only value fields, so a dereferenced == is a correct
+	// field-by-field comparison once both sides are confirmed non-nil.
+	if !anchorEqual(a.Anchor, b.Anchor) {
+		return false
+	}
 	return true
 }
 
@@ -1131,6 +1345,15 @@ func heldEqual(a, b []proto.HeldItem) bool {
 		}
 	}
 	return true
+}
+
+// anchorEqual compares two *proto.Anchor pointers by value. nil counts as
+// distinct from any non-nil anchor (a set or a clear must always publish).
+func anchorEqual(a, b *proto.Anchor) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // reviewGaugeEqual deep-compares two review gauges down to each row's bucket so

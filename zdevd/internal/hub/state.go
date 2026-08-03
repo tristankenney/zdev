@@ -240,15 +240,39 @@ type state struct {
 	statusDwell time.Duration
 
 	// heldItems is the focus loop's airlock catch (phase 1 of
-	// docs/design/command-centre.md — only the M-. park prompt populates it
-	// so far; arrival kinds land here in a later phase). Append-only in this
-	// phase: nothing ever removes an entry (the boundary review, which will
-	// let the operator pick/defer, is a later phase). Chronological by
-	// SinceTS because ParkText only ever appends with a monotonically
-	// non-decreasing NowNanos in practice — buildSnapshot does not re-sort.
-	// Persisted (Kind=="parked" only — see persist.go); buildSnapshot copies
-	// it into Snapshot.Held verbatim.
+	// docs/design/command-centre.md — the M-. park prompt AND, as of phase
+	// 3A, the airlock's own wait-tier captures — see notify.go's
+	// captureHeldWait). Chronological by SinceTS for parked items (ParkText
+	// only ever appends with a monotonically non-decreasing NowNanos in
+	// practice); a "wait" item's SinceTS is fixed at FIRST capture and its
+	// Title alone updates on re-escalation (captureHeldWait), so the
+	// sequence stays append-mostly rather than strictly append-only now
+	// that HeldRemove (phase 3A) can also delete entries — see the
+	// tmuxctl.HeldRemove case below. Persisted (Kind=="parked" only — see
+	// persist.go); buildSnapshot copies it into Snapshot.Held verbatim.
 	heldItems []proto.HeldItem
+
+	// anchor is the focus loop's "now" (phase 3A, docs/design/command-
+	// centre.md — "the anchor lifecycle"): the one thing the operator
+	// explicitly chose to be on. nil means unanchored, which is the ENTIRE
+	// loop's inert default — no airlock gating, no damped sidebar, InFocus
+	// falls back to the commitment-only check phase 2 already shipped.
+	// Owned by the hub goroutine; mutated by applyEvent(AnchorSet /
+	// AnchorClear) and by boundary.go's checkBoundary (an exceptional write
+	// outside applyEvent, same discipline notify.go's tierCheck already
+	// established for WaitNotifiedTiers/DeadNotified — see that file's
+	// header comment). Persisted (persist.go) so a restart while anchored
+	// restores the tether; buildSnapshot copies a FRESH pointer onto the
+	// wire, never aliasing this field (Invariant 8 / immutable-after-
+	// publish).
+	anchor *proto.Anchor
+
+	// anchorExpirySec mirrors ZDEV_ANCHOR_EXPIRY_MIN (resolved by cmd/zdevd
+	// into seconds; the hub never reads the env var itself). 0 = never
+	// expire. checkBoundary compares now-anchor.SinceTS against this on
+	// every publishPass. Set once by NewHub from hub.Config.AnchorExpiry;
+	// read-only throughout Run.
+	anchorExpirySec int64
 }
 
 // maxConsecutiveCaptureFailures is the eviction threshold. Three attempts
@@ -1189,6 +1213,50 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			Title:   text,
 			SinceTS: e.NowNanos / int64(time.Second),
 		})
+
+	case tmuxctl.AnchorSet:
+		// Phase 3A (command-centre.md, "the anchor lifecycle"). Defense in
+		// depth: Hub.SubmitAnchorSet already trims and rejects an empty
+		// title on the caller's goroutine, but applyEvent must never trust
+		// that as its only guard — same discipline as ParkText.
+		title := strings.TrimSpace(e.Title)
+		if title == "" {
+			return
+		}
+		s.anchor = &proto.Anchor{
+			Title:   title,
+			Project: strings.TrimSpace(e.Project),
+			SinceTS: e.NowNanos / int64(time.Second),
+		}
+
+	case tmuxctl.AnchorClear:
+		// Idempotent: clearing an already-nil anchor is a no-op. The
+		// boundary NOTIFICATION (when there was something to release) is
+		// fired by the caller — hub.go's anchorRequests branch for an
+		// explicit clear, or boundary.go's checkBoundary for the two
+		// passive causes — never here, so this case stays pure.
+		s.anchor = nil
+
+	case tmuxctl.HeldRemove:
+		// The boundary popup's consume action (phase 3A; the popup itself
+		// lands later). "*" clears the whole held set; otherwise remove the
+		// single matching ID. Both are idempotent — removing an ID that
+		// isn't present (a popup race against a refresh) is a no-op.
+		if e.ID == "*" {
+			s.heldItems = nil
+			return
+		}
+		kept := make([]proto.HeldItem, 0, len(s.heldItems))
+		for _, item := range s.heldItems {
+			if item.ID != e.ID {
+				kept = append(kept, item)
+			}
+		}
+		if len(kept) == 0 {
+			s.heldItems = nil
+		} else {
+			s.heldItems = kept
+		}
 
 	case tmuxctl.TeamsChanged:
 		// Pure map swap: the watcher produces a fresh map per emission and
