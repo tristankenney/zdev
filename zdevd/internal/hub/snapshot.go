@@ -309,11 +309,13 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 	}
 
 	// Commitments/InFocus/FreeUntil (phase 2, docs/design/command-centre.md
-	// "the time spine"): pure derivations over st.commitments, threaded
-	// `now` — see commitments.go. commitmentsToday is chronological and is
-	// a fresh copy (sortedCommitments never aliases st.commitments), so
-	// mutating it here would be safe but unnecessary; buildSnapshot doesn't.
-	commitmentsToday := sortedCommitments(st.commitments)
+	// "the time spine"; generalized to multi-source by "The scheduled
+	// anchor and the push surface"): pure derivations over st.commitments
+	// (now keyed by source), threaded `now` — see commitments.go.
+	// commitmentsToday is chronological and is a fresh copy (mergedCommitments
+	// never aliases any source's stored slice), so mutating it here would be
+	// safe but unnecessary; buildSnapshot doesn't.
+	commitmentsToday := mergedCommitments(st.commitments)
 
 	// Anchor (phase 3A, phase4-v24): a FRESH pointer copy, never an alias of
 	// st.anchor — the hub may clear/replace its own field on the next pass

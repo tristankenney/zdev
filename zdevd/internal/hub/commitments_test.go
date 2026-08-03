@@ -164,30 +164,30 @@ func TestCommitmentsEqual(t *testing.T) {
 func TestApplyEvent_CommitmentsRefresh_ReplacesWholesale(t *testing.T) {
 	s := newState()
 	first := []proto.Commitment{{ID: "a", Source: "ics", At: 100}}
-	applyEvent(s, tmuxctl.CommitmentsRefresh{Commitments: first}, nil)
-	if len(s.commitments) != 1 || s.commitments[0].ID != "a" {
-		t.Fatalf("after first refresh: commitments = %+v", s.commitments)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "ics", Commitments: first}, nil)
+	if got := s.commitments["ics"]; len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("after first refresh: commitments[ics] = %+v", got)
 	}
 	if s.commitmentsLastOK.IsZero() {
 		t.Error("commitmentsLastOK not stamped on success")
 	}
 
 	second := []proto.Commitment{{ID: "b", Source: "ics", At: 200}, {ID: "c", Source: "ics", At: 300}}
-	applyEvent(s, tmuxctl.CommitmentsRefresh{Commitments: second}, nil)
-	if len(s.commitments) != 2 || s.commitments[0].ID != "b" || s.commitments[1].ID != "c" {
-		t.Fatalf("after second refresh: commitments = %+v, want wholesale replacement", s.commitments)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "ics", Commitments: second}, nil)
+	if got := s.commitments["ics"]; len(got) != 2 || got[0].ID != "b" || got[1].ID != "c" {
+		t.Fatalf("after second refresh: commitments[ics] = %+v, want wholesale replacement", got)
 	}
 }
 
 func TestApplyEvent_CommitmentsRefresh_FailureKeepsLastKnown(t *testing.T) {
 	s := newState()
 	good := []proto.Commitment{{ID: "a", Source: "ics", At: 100}}
-	applyEvent(s, tmuxctl.CommitmentsRefresh{Commitments: good}, nil)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "ics", Commitments: good}, nil)
 
-	applyEvent(s, tmuxctl.CommitmentsRefresh{FetchErr: "fetch: connection refused"}, nil)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "ics", FetchErr: "fetch: connection refused"}, nil)
 
-	if len(s.commitments) != 1 || s.commitments[0].ID != "a" {
-		t.Fatalf("commitments after failed refresh = %+v, want unchanged from last-known good set", s.commitments)
+	if got := s.commitments["ics"]; len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("commitments[ics] after failed refresh = %+v, want unchanged from last-known good set", got)
 	}
 	if s.commitmentsLastErr != "fetch: connection refused" {
 		t.Errorf("commitmentsLastErr = %q, want the fetch error recorded", s.commitmentsLastErr)
@@ -199,16 +199,143 @@ func TestApplyEvent_CommitmentsRefresh_FailureKeepsLastKnown(t *testing.T) {
 
 func TestApplyEvent_CommitmentsRefresh_RecoveryClearsError(t *testing.T) {
 	s := newState()
-	applyEvent(s, tmuxctl.CommitmentsRefresh{FetchErr: "boom"}, nil)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "ics", FetchErr: "boom"}, nil)
 	if s.commitmentsLastErr == "" {
 		t.Fatal("setup: expected an error recorded before recovery")
 	}
-	applyEvent(s, tmuxctl.CommitmentsRefresh{Commitments: []proto.Commitment{{ID: "a"}}}, nil)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "ics", Commitments: []proto.Commitment{{ID: "a"}}}, nil)
 	if s.commitmentsLastErr != "" {
 		t.Errorf("commitmentsLastErr = %q after a successful refresh, want cleared", s.commitmentsLastErr)
 	}
 	if !s.commitmentsLastErrAt.IsZero() {
 		t.Errorf("commitmentsLastErrAt not cleared after a successful refresh")
+	}
+}
+
+// --- multi-source: empty Source back-compat, per-source replace, merge,
+// clear-via-empty-push (docs/design/command-centre.md — "The scheduled
+// anchor and the push surface") ---
+
+func TestApplyEvent_CommitmentsRefresh_EmptySourceIsIcsBackCompat(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Commitments: []proto.Commitment{{ID: "a", At: 100}}}, nil)
+	if got := s.commitments["ics"]; len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("commitments[ics] = %+v, want the empty-Source emission filed under \"ics\"", got)
+	}
+	if got := s.commitments["ics"][0].Source; got != "ics" {
+		t.Errorf("stored record's own Source = %q, want stamped \"ics\"", got)
+	}
+	if s.commitmentsLastOK.IsZero() {
+		t.Error("commitmentsLastOK not stamped for an empty-Source (back-compat ics) success")
+	}
+}
+
+func TestApplyEvent_CommitmentsRefresh_PerSourceReplaceDoesNotTouchOthers(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "ics", Commitments: []proto.Commitment{{ID: "a", At: 100}}}, nil)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "plan", Commitments: []proto.Commitment{{ID: "x", At: 200}}}, nil)
+
+	if got := s.commitments["ics"]; len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("commitments[ics] = %+v, want untouched by the \"plan\" emission", got)
+	}
+	if got := s.commitments["plan"]; len(got) != 1 || got[0].ID != "x" {
+		t.Fatalf("commitments[plan] = %+v, want the pushed set", got)
+	}
+
+	// A second "plan" emission replaces ONLY "plan", wholesale.
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "plan", Commitments: []proto.Commitment{{ID: "y", At: 300}}}, nil)
+	if got := s.commitments["ics"]; len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("commitments[ics] = %+v, want STILL untouched by a second \"plan\" emission", got)
+	}
+	if got := s.commitments["plan"]; len(got) != 1 || got[0].ID != "y" {
+		t.Fatalf("commitments[plan] = %+v, want wholesale-replaced by the second push", got)
+	}
+}
+
+// A pushed source's records get their Source field stamped with the
+// request's own source, overwriting whatever the caller sent — "one
+// authority" (the design amendment's push-validation rule; applyEvent
+// repeats it as defense in depth, same discipline as every other guard in
+// this file).
+func TestApplyEvent_CommitmentsRefresh_StampsSourceOntoEveryRecord(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "plan", Commitments: []proto.Commitment{
+		{ID: "x", Source: "somebody-else-entirely", At: 100},
+	}}, nil)
+	if got := s.commitments["plan"][0].Source; got != "plan" {
+		t.Errorf("stored record's Source = %q, want overwritten to the request's own source %q", got, "plan")
+	}
+}
+
+// Non-"ics" sources carry no fetch-health: a FetchErr on a non-ics source
+// (not reachable via the push verb in practice, but applyEvent must not
+// crash or misbehave if it ever happens) neither mutates the ics health
+// fields nor touches that source's stored commitments.
+func TestApplyEvent_CommitmentsRefresh_NonIcsSourceHasNoHealthTracking(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "plan", Commitments: []proto.Commitment{{ID: "a", At: 100}}}, nil)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "plan", FetchErr: "irrelevant"}, nil)
+
+	if !s.commitmentsLastOK.IsZero() || s.commitmentsLastErr != "" {
+		t.Errorf("a non-ics source's FetchErr leaked into ics-scoped health: lastOK=%v lastErr=%q",
+			s.commitmentsLastOK, s.commitmentsLastErr)
+	}
+	if got := s.commitments["plan"]; len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("commitments[plan] = %+v, want unchanged (last known set retained)", got)
+	}
+}
+
+// Empty commitments array is VALID — it's how a source clears itself.
+func TestApplyEvent_CommitmentsRefresh_EmptyPushClearsSource(t *testing.T) {
+	s := newState()
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "plan", Commitments: []proto.Commitment{{ID: "a", At: 100}}}, nil)
+	applyEvent(s, tmuxctl.CommitmentsRefresh{Source: "plan", Commitments: []proto.Commitment{}}, nil)
+
+	if got := s.commitments["plan"]; len(got) != 0 {
+		t.Errorf("commitments[plan] = %+v after an empty push, want cleared", got)
+	}
+}
+
+func TestMergedCommitments_ChronologicalAcrossSources(t *testing.T) {
+	bySource := map[string][]proto.Commitment{
+		"ics":  {{ID: "b", Source: "ics", At: 200}},
+		"plan": {{ID: "a", Source: "plan", At: 100}, {ID: "c", Source: "plan", At: 300}},
+	}
+	got := mergedCommitments(bySource)
+	if len(got) != 3 {
+		t.Fatalf("mergedCommitments = %+v, want 3 entries merged across sources", got)
+	}
+	wantIDs := []string{"a", "b", "c"}
+	for i, want := range wantIDs {
+		if got[i].ID != want {
+			t.Errorf("merged[%d].ID = %q, want %q (chronological across sources): %+v", i, got[i].ID, want, got)
+		}
+	}
+}
+
+func TestMergedCommitments_Empty(t *testing.T) {
+	if got := mergedCommitments(nil); got != nil {
+		t.Errorf("mergedCommitments(nil) = %#v, want nil", got)
+	}
+	if got := mergedCommitments(map[string][]proto.Commitment{"ics": nil, "plan": {}}); got != nil {
+		t.Errorf("mergedCommitments(all-empty sources) = %#v, want nil", got)
+	}
+}
+
+// Two sources sharing the exact same At must still merge into a
+// DETERMINISTIC order (tie-broken on Source then ID) regardless of map
+// iteration order — otherwise commitmentsEqual's positional comparison
+// would flap between structurally-identical merges across repeated calls.
+func TestMergedCommitments_DeterministicTieBreak(t *testing.T) {
+	bySource := map[string][]proto.Commitment{
+		"zzz": {{ID: "z1", Source: "zzz", At: 1000}},
+		"aaa": {{ID: "a1", Source: "aaa", At: 1000}},
+	}
+	for i := 0; i < 20; i++ {
+		got := mergedCommitments(bySource)
+		if len(got) != 2 || got[0].Source != "aaa" || got[1].Source != "zzz" {
+			t.Fatalf("iteration %d: mergedCommitments = %+v, want [aaa, zzz] tie-broken by Source", i, got)
+		}
 	}
 }
 

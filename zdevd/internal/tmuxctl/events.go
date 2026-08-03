@@ -388,27 +388,43 @@ func (TeamsChanged) isEvent() {}
 
 // --- Phase 2 focus-loop time spine (docs/design/command-centre.md) ---
 
-// CommitmentsRefresh carries the calendar probe's result for a source's
-// TODAY window (probes.CalendarProbe for the "ics" source; future MCP/exec
-// sources emit the same event). Commitments is the FULL replacement set for
-// the source — the hub does not merge, it replaces wholesale (Commitment is
-// keyed (source, id) per the design note).
+// CommitmentsRefresh carries a source's TODAY window (probes.CalendarProbe
+// for the "ics" source; the "schedule" socket verb — Hub.SubmitSchedulePush
+// — for any push source; future MCP/exec sources emit the same event too).
+// Commitments is the FULL replacement set for THIS source only — the hub
+// does not merge across sources here, it replaces one source's slice
+// wholesale (see docs/design/command-centre.md — "The scheduled anchor and
+// the push surface": commitments are keyed (source, id), generalized from
+// the single-set v1 the design note originally shipped).
 //
-// FetchErr is the load-bearing field: when non-empty, Commitments MUST be
-// nil and applyEvent must KEEP the previously-stored set rather than
-// blanking it. A silently-broken calendar that reports "you are free" is
-// worse than no calendar at all (command-centre.md, "Sources") — the
-// alternative (clearing Commitments on error) would make InFocus/FreeUntil
-// lie the instant a feed hiccups. The hub also records FetchErr + its
-// timestamp as source health, surfaced by `zdev-show time`.
+// Source names the emitting provider ("ics", "plan", "mcp:<server>", …).
+// Empty is the back-compat default: "ics", so the calendar probe's
+// historical zero-value emissions (and any pre-multi-source test/caller)
+// keep behaving exactly as before this field existed. "ics" is otherwise
+// RESERVED for the calendar probe — SubmitSchedulePush rejects a push
+// claiming it, so a pushed source can never fight the probe's own replace
+// cycle.
+//
+// FetchErr is the load-bearing field for the "ics" source: when non-empty,
+// Commitments MUST be nil and applyEvent must KEEP the previously-stored
+// set rather than blanking it. A silently-broken calendar that reports
+// "you are free" is worse than no calendar at all (command-centre.md,
+// "Sources") — the alternative (clearing Commitments on error) would make
+// InFocus/FreeUntil lie the instant a feed hiccups. The hub records
+// FetchErr + its timestamp as source health, surfaced by `zdev-show time`
+// — but ONLY for "ics": a pushed source carries no fetch-health of its own
+// (SubmitSchedulePush never sets FetchErr; validation failures are
+// rejected before this event is ever constructed), so its freshness story
+// is simply "last push wins" — documented, not tracked as a health metric.
 type CommitmentsRefresh struct {
+	Source      string
 	Commitments []proto.Commitment
 	FetchErr    string
-	// NowNanos is the probe-side wall-clock sample for the health
-	// timestamps (commitmentsLastOK/ErrAt). Threaded like ParkText's so
-	// applyEvent never touches the clock itself — the invariants review
-	// caught the first version sampling time.Now() inside the mutation
-	// path, one case below the sibling that got it right.
+	// NowNanos is the probe/push-side wall-clock sample for the health
+	// timestamps (commitmentsLastOK/ErrAt, "ics" only). Threaded like
+	// ParkText's so applyEvent never touches the clock itself — the
+	// invariants review caught the first version sampling time.Now() inside
+	// the mutation path, one case below the sibling that got it right.
 	NowNanos int64
 }
 
