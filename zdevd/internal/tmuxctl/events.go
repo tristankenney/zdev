@@ -390,3 +390,48 @@ type CommitmentsRefresh struct {
 }
 
 func (CommitmentsRefresh) isEvent() {}
+
+// --- Phase 3A focus-loop core (docs/design/command-centre.md — "the anchor
+// lifecycle", "the airlock", "Boundaries") ---
+
+// AnchorSet is submitted by the "zdevd anchor set" subcommand (and, in a
+// later phase, the boundary-review/command-centre picks) via the socket
+// protocol. Title is required — Hub.SubmitAnchorSet rejects an
+// empty/whitespace-only title on the CALLER's goroutine before this event is
+// ever constructed, but applyEvent still guards defensively (same discipline
+// as ParkText). Project is optional and canonical slash-form; it is
+// deliberately NOT validated against the project list — listless work (a
+// phone call, an ad-hoc favour) is legitimate per the design note. NowNanos
+// is sampled once by the caller so applyEvent stays pure and deterministic
+// in tests, mirroring ParkText's threaded-time discipline.
+type AnchorSet struct {
+	Title    string
+	Project  string
+	NowNanos int64
+}
+
+func (AnchorSet) isEvent() {}
+
+// AnchorClear releases the anchor — submitted by "zdevd anchor clear" (the
+// explicit release) or applied internally by the hub's own boundary
+// detection (anchored work finishes, or the expiry elapses — see
+// checkBoundary in boundary.go). Idempotent: clearing an already-nil anchor
+// is a no-op. Carries no boundary-notification payload itself — the caller
+// (hub.go's anchorRequests branch, or checkBoundary) is responsible for
+// firing the one boundary notification the design calls for, since
+// applyEvent must stay pure I/O-free state mutation.
+type AnchorClear struct{}
+
+func (AnchorClear) isEvent() {}
+
+// HeldRemove is submitted by the "held-rm" socket verb — the boundary
+// review popup's consume action (the popup itself lands in a later phase;
+// the verb lands now per the phase 3A brief). ID "*" clears the whole held
+// set; any other ID removes that single entry. Removing a non-existent ID
+// is a no-op — idempotent, because the popup may race a refresh and try to
+// consume an item that's already gone.
+type HeldRemove struct {
+	ID string
+}
+
+func (HeldRemove) isEvent() {}
