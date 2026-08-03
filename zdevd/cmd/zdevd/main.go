@@ -70,6 +70,16 @@ const statusDwellDefault = 250 * time.Millisecond
 // claude/opencode path) bypass this entirely and display instantly.
 const waitingDwellDefault = 7 * time.Second
 
+// anchorExpiryDefaultMin is the default anchor lifetime in minutes (phase
+// 3A of the focus loop, docs/design/command-centre.md — "Open calibration":
+// "a settable expiry (45/90m) that forces a review"). 90 minutes is the
+// longer of the two calibration values named in the design note — the
+// failure mode being designed against is a stale anchor teaching the
+// operator to ignore the tether, so erring toward the longer default until
+// dogfood says otherwise. Override with ZDEV_ANCHOR_EXPIRY_MIN; 0 disables
+// expiry entirely (anchor never auto-releases on age alone).
+const anchorExpiryDefaultMin = 90
+
 // version is injected at build time via -ldflags="-X main.version=…".
 // Falls back to "dev" for `go build` / `go install` without ldflags.
 var version = "dev"
@@ -97,6 +107,8 @@ func main() {
 			os.Exit(cursorSubcmd(os.Args[2:]))
 		case "park":
 			os.Exit(parkSubcmd(os.Args[2:]))
+		case "anchor":
+			os.Exit(anchorSubcmd(os.Args[2:]))
 		case "notify-mute":
 			os.Exit(notifyMuteSubcmd(os.Args[2:]))
 		case "layout":
@@ -115,7 +127,7 @@ func main() {
 			// is a usage error — the daemon takes flags only.
 			if !strings.HasPrefix(os.Args[1], "-") {
 				fmt.Fprintf(os.Stderr,
-					"zdevd: unknown subcommand %q (expected: cursor, demo, diag, history, layout, mcp, notify-mute, park, version, or no args for daemon)\n",
+					"zdevd: unknown subcommand %q (expected: anchor, cursor, demo, diag, history, layout, mcp, notify-mute, park, version, or no args for daemon)\n",
 					os.Args[1])
 				os.Exit(2)
 			}
@@ -175,6 +187,11 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "zdevd: ZDEVD_WAITING_DWELL_MS: %v\n", err)
 		return err
 	}
+	anchorExpiry, err := parseAnchorExpiryMin(os.Getenv("ZDEV_ANCHOR_EXPIRY_MIN"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd: ZDEV_ANCHOR_EXPIRY_MIN: %v\n", err)
+		return err
+	}
 
 	tmuxSocket := os.Getenv("ZDEVD_TMUX_SOCKET")
 
@@ -226,6 +243,9 @@ func run() error {
 		// Agent Teams slice B: ZDEV_TEAM_WINDOWS=1 de-aggregates teammate
 		// panes out of the lead's session row (the hub never reads env itself).
 		TeamWindows: os.Getenv("ZDEV_TEAM_WINDOWS") == "1",
+		// AnchorExpiry (phase 3A focus loop): ZDEV_ANCHOR_EXPIRY_MIN,
+		// default 90 minutes, 0 = never (the hub never reads env itself).
+		AnchorExpiry: anchorExpiry,
 	}
 
 	// Wait-tier notifications: opt-out via ZDEV_NOTIFY=0; otherwise resolve
@@ -626,6 +646,26 @@ func parseDwellMS(raw string, def time.Duration, envName string) (time.Duration,
 		return 0, fmt.Errorf("%s=%d: must be >= 0", envName, n)
 	}
 	return time.Duration(n) * time.Millisecond, nil
+}
+
+// parseAnchorExpiryMin honors ZDEV_ANCHOR_EXPIRY_MIN (phase 3A of the focus
+// loop): empty string → anchorExpiryDefaultMin; 0 → never expire; positive
+// integer → that many minutes; negative / non-integer → error. Mirrors
+// parseDwellMS's shape, in minutes rather than milliseconds since an
+// anchor's lifetime is measured in the tens-of-minutes the design note
+// calibrates against (45/90m), not sub-second dwell windows.
+func parseAnchorExpiryMin(raw string) (time.Duration, error) {
+	if raw == "" {
+		return anchorExpiryDefaultMin * time.Minute, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid ZDEV_ANCHOR_EXPIRY_MIN=%q: must be a non-negative integer (minutes)", raw)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("ZDEV_ANCHOR_EXPIRY_MIN=%d: must be >= 0", n)
+	}
+	return time.Duration(n) * time.Minute, nil
 }
 
 // tmuxVersion runs `tmux -V` once at startup and returns the trimmed output.
