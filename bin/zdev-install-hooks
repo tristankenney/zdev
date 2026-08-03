@@ -9,12 +9,14 @@
 #   zdev-install-hooks            # install / upgrade
 #   zdev-install-hooks --dry-run  # show what would change, write nothing
 #
-# Claude Code (automated): merges four entries into ~/.claude/settings.json:
+# Claude Code (automated): merges entries into ~/.claude/settings.json:
 #
 #   Stop                              → zdev-notify claude done
 #   Notification  permission_prompt   → zdev-notify claude needs-permission
 #   Notification  (catch-all)         → zdev-notify claude waiting
-#   UserPromptSubmit                  → zdev-notify claude clear
+#   UserPromptSubmit                  → zdev-notify claude working
+#   SessionEnd                        → zdev-notify claude session-end
+#   SessionStart                      → zdev-notify claude alive
 #
 # The permission_prompt matcher is what powers the ⚡ triage class —
 # permission waits rank first regardless of age. Both Notification
@@ -22,6 +24,14 @@
 # untagged-never-erases-a-tag rule makes the pair converge to tagged).
 # Hook config is read at session start: running agents keep their old
 # hooks until restarted.
+#
+# UserPromptSubmit used to map to "clear" (a compat/manual release, no
+# real signal) — phase 3E (docs/design/command-centre.md, "hook-informed
+# focus") needs a genuine working signal at prompt-submit time, so an
+# existing "clear" mapping is migrated to "working --json" in place (see
+# migrate_userpromptsubmit_clear_to_working below); a fresh install gets
+# "working --json" directly. This does not change the pane title (both
+# map to a bare "$TOOL"); it only changes what the notif channel reports.
 #
 # Other agents (guidance only — their hook formats are their own):
 # printed at the end for any agent config dirs detected on this machine.
@@ -105,14 +115,42 @@ install_claude() {
     ensure_entry "Stop"             ""                  "done"             "json"
     ensure_entry "Notification"     "permission_prompt" "needs-permission" "json"
     ensure_entry "Notification"     ""                  "waiting"          "json"
-    ensure_entry "UserPromptSubmit" ""                  "clear"
+
+    # migrate_userpromptsubmit_clear_to_working (phase 3E): upgrade any
+    # EXISTING "zdev-notify claude clear" command under UserPromptSubmit to
+    # "zdev-notify claude working --json" IN PLACE — a targeted command-
+    # string edit, not a new array entry, so a companion hook in the same
+    # event (e.g. a hand-rolled prompt-history.sh) is left untouched and
+    # the two don't race each other writing/deleting the same notif file.
+    # Safe on every run: a no-op once migrated (no "clear" command left to
+    # match), and a machine with NO prior UserPromptSubmit mapping at all
+    # falls straight through to ensure_entry below, which installs
+    # "working --json" fresh.
+    if jq -e --arg needle "zdev-notify claude clear" '
+        [(.hooks.UserPromptSubmit // [])[] | .hooks[]? | .command // ""]
+        | any(contains($needle))
+    ' <<<"$doc" >/dev/null; then
+        doc=$(jq --arg needle "zdev-notify claude clear" '
+            .hooks.UserPromptSubmit = [(.hooks.UserPromptSubmit // [])[]
+                | .hooks = [.hooks[]?
+                    | if (.command // "" | contains($needle))
+                      then .command = ((.command | sub($needle; "zdev-notify claude working")) + " --json")
+                      else . end]]
+        ' <<<"$doc")
+        echo "claude: ~ UserPromptSubmit → 'zdev-notify claude clear' migrated to 'working --json' (phase 3E hook-informed focus)"
+        changed=1
+    fi
+    ensure_entry "UserPromptSubmit" ""                  "working"          "json"
+
     # Death detection (NOW#3): SessionEnd reports WHY the session ended;
     # zdev-notify maps clean reasons to "done" and everything else to the
     # daemon's ✗ dead state, which tops the triage queue and fires a
     # presence-bypassing notification. SessionStart declares liveness so
-    # a restarted/resumed agent clears its death record immediately.
+    # a restarted/resumed agent clears its death record immediately, and
+    # (phase 3E, with --json) queries the daemon for anchor/held context to
+    # print back to the fresh session via the SessionStart hook contract.
     ensure_entry "SessionEnd"       ""                  "session-end"      "json"
-    ensure_entry "SessionStart"     ""                  "alive"
+    ensure_entry "SessionStart"     ""                  "alive"            "json"
 
     if [[ "$changed" -eq 0 ]]; then
         echo "claude: all hooks present — nothing to do."
