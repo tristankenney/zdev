@@ -257,6 +257,8 @@ Usage:
   zdev triage                    Show the ranked attention queue
   zdev review [--json|--tsv]      Show the landing-readiness queue
                                  (per-repo ready/fix/rot, longest-rotting first)
+  zdev initiatives [--json]      Digest of workspace initiatives (intent,
+                                 decisions, members, bd work; local-only)
   zdev ack [--all|<project>]     Acknowledge statuses — like "read all"
                                  (tmux: bind -n M-r run-shell "zdev ack --all")
   zdev notify {mute [DUR]|unmute|toggle|status}
@@ -764,6 +766,14 @@ case "$1" in
         # daemon snapshot.
         shift
         exec zdev-show review "$@"
+        ;;
+    initiatives)
+        # Machine/human digest of workspace initiatives. Subargs (--json)
+        # pass through to zdev-show. Never dials the daemon — pure local
+        # derivation (workspace layout + INITIATIVE.md + local git + bd),
+        # so it works even before zdevd has ever been launched.
+        shift
+        exec zdev-show initiatives "$@"
         ;;
     ack)
         shift
