@@ -42,6 +42,17 @@ func newTestParkModel(parkFn func(context.Context, string) (bool, error)) (*park
 	return m, &calls
 }
 
+// newTestAnchorModel is newTestParkModel's -anchor-mode sibling.
+func newTestAnchorModel(anchorFn func(context.Context, string) (bool, error)) (*parkModel, *[]string) {
+	var calls []string
+	wrapped := func(ctx context.Context, text string) (bool, error) {
+		calls = append(calls, text)
+		return anchorFn(ctx, text)
+	}
+	m := newAnchorModel(context.Background(), wrapped)
+	return m, &calls
+}
+
 // ---- tests ----
 
 // TestTyping verifies plain character input reaches the embedded textinput —
@@ -191,5 +202,95 @@ func TestInitReturnsFocusCmd(t *testing.T) {
 	m, _ := newTestParkModel(func(context.Context, string) (bool, error) { return true, nil })
 	if m.Init() == nil {
 		t.Error("Init() returned nil, want the textinput focus/blink Cmd")
+	}
+}
+
+// ---- -anchor mode (phase 3B) ----
+
+// TestAnchorMode_EnterCallsAnchorFnNotParkFn is the seam-injection proof the
+// brief asks for: -anchor mode's enter must call the injected anchor-set
+// function, never the park one — verified here by newAnchorModel's fake
+// recording the exact text it was called with, with no separate park path
+// anywhere in reach to accidentally hit.
+func TestAnchorMode_EnterCallsAnchorFnNotParkFn(t *testing.T) {
+	m, calls := newTestAnchorModel(func(context.Context, string) (bool, error) { return true, nil })
+	m.input.SetValue("call the dentist")
+
+	model, cmd := m.Update(keyType(tea.KeyEnter))
+	m = model.(*parkModel)
+
+	if !m.parked {
+		t.Error("parked = false after enter with non-empty text, want true")
+	}
+	if cmd == nil {
+		t.Fatal("enter with non-empty text returned a nil Cmd")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("submitFn called during Update (%v) — Update must stay I/O-free", *calls)
+	}
+
+	msg := cmd()
+	result, ok := msg.(parkResultMsg)
+	if !ok {
+		t.Fatalf("cmd() produced %T, want parkResultMsg", msg)
+	}
+	if result.err != nil {
+		t.Fatalf("parkResultMsg.err = %v, want nil", result.err)
+	}
+	if len(*calls) != 1 || (*calls)[0] != "call the dentist" {
+		t.Fatalf("anchorFn calls = %v, want exactly [\"call the dentist\"]", *calls)
+	}
+
+	model, cmd = m.Update(result)
+	m = model.(*parkModel)
+	if !isQuitCmd(cmd) {
+		t.Fatal("parkResultMsg (ok) did not produce tea.Quit")
+	}
+}
+
+// TestAnchorMode_LabelAndKeysDifferFromParkMode confirms the two modes
+// share everything except the box label and the Enter key's help text —
+// "extend cmd/zdev-park, do not fork a third prompt binary" per the brief.
+func TestAnchorMode_LabelAndKeysDifferFromParkMode(t *testing.T) {
+	park, _ := newTestParkModel(func(context.Context, string) (bool, error) { return true, nil })
+	anchor, _ := newTestAnchorModel(func(context.Context, string) (bool, error) { return true, nil })
+
+	if park.label != "park" {
+		t.Errorf("park.label = %q, want %q", park.label, "park")
+	}
+	if anchor.label != "anchor" {
+		t.Errorf("anchor.label = %q, want %q", anchor.label, "anchor")
+	}
+	if park.keys.Enter.Help().Desc != "park" {
+		t.Errorf("park Enter help = %q, want %q", park.keys.Enter.Help().Desc, "park")
+	}
+	if anchor.keys.Enter.Help().Desc != "anchor" {
+		t.Errorf("anchor Enter help = %q, want %q", anchor.keys.Enter.Help().Desc, "anchor")
+	}
+}
+
+// TestAnchorMode_EscQuitsWithoutAnchoring mirrors TestEscQuitsWithoutParking
+// for -anchor mode — dropping a by-hand anchor attempt is silent and
+// instant, no daemon involved, same as park mode's esc.
+func TestAnchorMode_EscQuitsWithoutAnchoring(t *testing.T) {
+	for _, key := range []tea.KeyMsg{keyType(tea.KeyEsc), keyType(tea.KeyCtrlC)} {
+		m, calls := newTestAnchorModel(func(context.Context, string) (bool, error) {
+			t.Fatal("anchorFn must not be called on esc/ctrl+c")
+			return false, nil
+		})
+		m.input.SetValue("a thought that should be dropped")
+
+		model, cmd := m.Update(key)
+		m = model.(*parkModel)
+
+		if !isQuitCmd(cmd) {
+			t.Fatalf("key %v: expected an immediate tea.Quit", key)
+		}
+		if m.parked {
+			t.Errorf("key %v: parked = true, want false (nothing was sent)", key)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("key %v: anchorFn calls = %v, want none", key, *calls)
+		}
 	}
 }

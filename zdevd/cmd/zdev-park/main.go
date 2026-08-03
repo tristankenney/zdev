@@ -10,16 +10,24 @@
 //
 //	bind -n M-. display-popup -E -w 60 -h 5 "$HOME/.local/bin/zdev-park"
 //
+// Phase 3B adds a second mode, `-anchor` (docs/design/command-centre.md's
+// anchor lifecycle path 3, "by hand" — for work that lives in no list, a
+// phone call, an ad-hoc favour): same popup, enter calls DialAnchorSet
+// instead of DialPark. Bound to M-,:
+//
+//	bind -n M-, display-popup -E -w 60 -h 5 "$HOME/.local/bin/zdev-park -anchor"
+//
 // zdev-park dials the daemon directly over its socket (internal/socket's
-// DialPark) rather than shelling out to `zdevd park` — the same "Go binary
-// talks straight to the socket" shape cmd/zdev-round already uses for
-// socket.Subscribe, and the shape docs/design/command-centre.md itself
-// describes for the anchor lifecycle ("the popup's pick Cmd sends `anchor
-// set` over the socket").
+// DialPark/DialAnchorSet) rather than shelling out to `zdevd park` — the
+// same "Go binary talks straight to the socket" shape cmd/zdev-round
+// already uses for socket.Subscribe, and the shape
+// docs/design/command-centre.md itself describes for the anchor lifecycle
+// ("the popup's pick Cmd sends `anchor set` over the socket").
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -32,9 +40,10 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/socket"
 )
 
-// parkDialTimeout bounds one park round-trip. The socket is a localhost UDS
-// (sub-millisecond in practice); 2s is a generous ceiling that catches a
-// wedged/dead daemon without making an already-typed thought feel stuck.
+// parkDialTimeout bounds one park/anchor round-trip. The socket is a
+// localhost UDS (sub-millisecond in practice); 2s is a generous ceiling
+// that catches a wedged/dead daemon without making an already-typed
+// thought feel stuck.
 const parkDialTimeout = 2 * time.Second
 
 func main() {
@@ -48,14 +57,30 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	anchorMode := flag.Bool("anchor", false, "anchor mode: enter sets the anchor (docs/design/command-centre.md's 'by hand' path) instead of parking")
+	flag.Parse()
+
 	socketPath := platform.ResolveSocketPath()
-	parkFn := func(callCtx context.Context, text string) (bool, error) {
-		dctx, dcancel := context.WithTimeout(callCtx, parkDialTimeout)
-		defer dcancel()
-		return socket.DialPark(dctx, socketPath, text)
+
+	var model *parkModel
+	if *anchorMode {
+		// Listless work per the design note: project is always "" — a
+		// by-hand anchor never claims to map to a session.
+		anchorFn := func(callCtx context.Context, text string) (bool, error) {
+			dctx, dcancel := context.WithTimeout(callCtx, parkDialTimeout)
+			defer dcancel()
+			return socket.DialAnchorSet(dctx, socketPath, text, "")
+		}
+		model = newAnchorModel(ctx, anchorFn)
+	} else {
+		parkFn := func(callCtx context.Context, text string) (bool, error) {
+			dctx, dcancel := context.WithTimeout(callCtx, parkDialTimeout)
+			defer dcancel()
+			return socket.DialPark(dctx, socketPath, text)
+		}
+		model = newParkModel(ctx, parkFn)
 	}
 
-	model := newParkModel(ctx, parkFn)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
 
 	finalModel, runErr := p.Run()

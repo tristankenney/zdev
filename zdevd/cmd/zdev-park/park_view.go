@@ -32,7 +32,7 @@ const boxWidth = 56
 // (park_model.go) in the fixed relationship boxWidth == textInputWidth + 4
 // (border char + gutter space on each side) and place the input verbatim.
 func (m *parkModel) View() string {
-	label := " park "
+	label := " " + m.label + " "
 	fill := boxWidth - 4 - len(label) // 4 = the two corner-adjacent dashes on each end
 	if fill < 0 {
 		fill = 0
