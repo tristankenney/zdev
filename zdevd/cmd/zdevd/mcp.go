@@ -17,6 +17,14 @@ package main
 //   triage       -> zdev-show triage --json
 //   review       -> zdev-show review --json
 //   run          -> zdev run <project> "<prompt>"   (the actuator verb)
+//
+// The focus-loop tools (zdev_park / zdev_anchor* / zdev_held* —
+// docs/design/command-centre.md) are the exception: there is no
+// `zdev-show anchor --json` to shell to, so they call the daemon's socket
+// client directly (internal/socket) — the same one-shot round trips
+// `zdevd park` / `zdevd anchor` / `zdevd held-rm` already use. This exposes
+// the focus loop to any MCP client (a Claude Code skill's morning /plan
+// flow first) without inventing a second wire protocol.
 
 import (
 	"bufio"
@@ -31,6 +39,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tristankenney/zdev/zdevd/internal/platform"
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	socketpkg "github.com/tristankenney/zdev/zdevd/internal/socket"
 )
 
 // mcpProtocolVersion is the fallback MCP version advertised when the client
@@ -51,6 +63,86 @@ func defaultMCPExec(ctx context.Context, bin string, args ...string) ([]byte, er
 	cctx, cancel := context.WithTimeout(ctx, mcpToolTimeout)
 	defer cancel()
 	return exec.CommandContext(cctx, path, args...).Output()
+}
+
+// --- focus-loop socket seam (swappable in tests, mirrors mcpExec above) ---
+//
+// The park/anchor/held tools talk to the daemon's unix socket directly via
+// internal/socket, not through a CLI subprocess. Each daemon round trip goes
+// through one of these vars so tests can stub the daemon out entirely (no
+// live zdevd needed), exactly as mcpExec stubs the exec seam.
+var (
+	mcpDialPark        = socketpkg.DialPark
+	mcpDialAnchorSet   = socketpkg.DialAnchorSet
+	mcpDialAnchorClear = socketpkg.DialAnchorClear
+	mcpDialHeldRemove  = socketpkg.DialHeldRemove
+	mcpSnapshot        = defaultMCPSnapshot
+)
+
+// mcpSocketTimeout bounds one focus-loop tool's daemon round trip. The
+// client's own Dial is already bounded (~1s, socket.dialTimeout) regardless
+// of context, but wrapping the whole call the way mcpToolTimeout wraps
+// subprocess tools keeps a wedged daemon from hanging the MCP server's
+// single-threaded stdio loop.
+const mcpSocketTimeout = 5 * time.Second
+
+// mcpSocketPath resolves the daemon socket the same way every other zdevd
+// subcommand does (zdevd anchor, zdevd park, zdevd cursor, zdevd diag):
+// platform.ResolveSocketPath(), which honors a ZDEVD_SOCKET override before
+// falling back to the computed path / daemon discovery file.
+func mcpSocketPath() string { return platform.ResolveSocketPath() }
+
+// defaultMCPSnapshot takes exactly one snapshot off the daemon socket and
+// closes the connection — the same one-shot read anchorPrintSubcmd (above,
+// zdevd anchor with no action word) already uses, because there is no
+// dedicated "get anchor" / "get held" wire verb: the snapshot carries both
+// Anchor and Held on every connect.
+func defaultMCPSnapshot(ctx context.Context, socketPath string) (*proto.Snapshot, error) {
+	snap, conn, err := socketpkg.Subscribe(ctx, socketPath, "", "")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return snap, nil
+}
+
+// anchorSnapshotJSON renders the zdev_anchor tool's reply from a snapshot.
+// Pure — now is passed in (unix seconds) rather than sampled, per repo
+// convention, so it's table-testable without a clock.
+func anchorSnapshotJSON(snap *proto.Snapshot, now int64) (string, error) {
+	out := map[string]any{
+		"in_focus":   snap.InFocus,
+		"free_until": snap.FreeUntil,
+	}
+	if snap.Anchor == nil {
+		out["anchored"] = false
+	} else {
+		out["anchored"] = true
+		out["title"] = snap.Anchor.Title
+		out["project"] = snap.Anchor.Project
+		out["since_ts"] = snap.Anchor.SinceTS
+		out["elapsed_sec"] = now - snap.Anchor.SinceTS
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
+}
+
+// heldSnapshotJSON renders the zdev_held tool's reply from a snapshot: the
+// held set, chronological (Snapshot.Held already is), each item's age
+// computed against the passed-in now rather than time.Now().
+func heldSnapshotJSON(snap *proto.Snapshot, now int64) (string, error) {
+	items := make([]map[string]any, 0, len(snap.Held))
+	for _, h := range snap.Held {
+		items = append(items, map[string]any{
+			"id":      h.ID,
+			"kind":    h.Kind,
+			"title":   h.Title,
+			"project": h.Project,
+			"age_sec": now - h.SinceTS,
+		})
+	}
+	b, err := json.Marshal(items)
+	return string(b), err
 }
 
 // resolveZdevBin finds a zdev CLI: an explicit env override (ZDEV_SHOW_BIN /
@@ -163,6 +255,130 @@ func mcpTools() []mcpTool {
 					return "", fmt.Errorf("zdev run: %w", err)
 				}
 				return string(out), nil
+			},
+		},
+		{
+			Name:        "zdev_park",
+			Description: "Park a thought into the held set (docs/design/command-centre.md — the focus loop). Use this instead of interrupting the operator with a question or a suggestion mid-focus: capture it and move on, and it gets a guaranteed hearing at the next boundary review. The reply only confirms the park succeeded — it does NOT return the created item's id. The daemon assigns one internally (convention: \"parked-<nanos>\") but that id is not echoed on this call; call zdev_held afterwards if you need it (e.g. to remove the item you just parked).",
+			InputSchema: objectSchema(map[string]any{
+				"text": map[string]any{"type": "string", "description": "The thought to park, one line."},
+			}, "text"),
+			run: func(ctx context.Context, args map[string]any) (string, error) {
+				text, _ := args["text"].(string)
+				if strings.TrimSpace(text) == "" {
+					return "", fmt.Errorf("zdev_park requires non-empty 'text'")
+				}
+				cctx, cancel := context.WithTimeout(ctx, mcpSocketTimeout)
+				defer cancel()
+				ok, err := mcpDialPark(cctx, mcpSocketPath(), text)
+				if err != nil {
+					return "", fmt.Errorf("zdev_park: %w", err)
+				}
+				if !ok {
+					return "", fmt.Errorf("zdev_park: daemon rejected the request")
+				}
+				return "parked", nil
+			},
+		},
+		{
+			Name:        "zdev_anchor_set",
+			Description: "Set the anchor — the ONE thing the operator is on right now (docs/design/command-centre.md — \"the anchor lifecycle\"). This REPLACES any current anchor; there is only ever one, and picking a new one is the design's boundary-pick semantics, not an addition. Setting it engages the airlock: while anchored, new arrivals are held silently for the next boundary review instead of interrupting immediately. 'project' is the canonical slash-form zdev project name (e.g. \"zitcha/backend\") when this work maps to a zdev session; leave it empty for listless work (a phone call, an ad-hoc favour) — it does not need to map to anything. Only call this when the operator has actually chosen what to work on next; never guess or infer an anchor on their behalf — a wrong guess destroys the tether's credibility.",
+			InputSchema: objectSchema(map[string]any{
+				"title":   map[string]any{"type": "string", "description": "What the operator picked, e.g. \"IMP-97 validate deploy\"."},
+				"project": map[string]any{"type": "string", "description": "Optional: canonical slash-form zdev project name this maps to; empty for listless work."},
+			}, "title"),
+			run: func(ctx context.Context, args map[string]any) (string, error) {
+				title, _ := args["title"].(string)
+				if strings.TrimSpace(title) == "" {
+					return "", fmt.Errorf("zdev_anchor_set requires non-empty 'title'")
+				}
+				project, _ := args["project"].(string)
+				cctx, cancel := context.WithTimeout(ctx, mcpSocketTimeout)
+				defer cancel()
+				ok, err := mcpDialAnchorSet(cctx, mcpSocketPath(), title, project)
+				if err != nil {
+					return "", fmt.Errorf("zdev_anchor_set: %w", err)
+				}
+				if !ok {
+					return "", fmt.Errorf("zdev_anchor_set: daemon rejected the request")
+				}
+				return "anchored: " + title, nil
+			},
+		},
+		{
+			Name:        "zdev_anchor_clear",
+			Description: "Explicitly clear the anchor — the boundary the focus loop is built around (docs/design/command-centre.md). Fires the daemon's boundary notification so the held set gets its hearing. Call this only when the operator says they're done with the anchored thing (or explicitly asks to unanchor); it is a deliberate release, not a side effect of picking something else (anchoring a new thing replaces the anchor on its own via zdev_anchor_set).",
+			InputSchema: objectSchema(map[string]any{}),
+			run: func(ctx context.Context, _ map[string]any) (string, error) {
+				cctx, cancel := context.WithTimeout(ctx, mcpSocketTimeout)
+				defer cancel()
+				ok, err := mcpDialAnchorClear(cctx, mcpSocketPath())
+				if err != nil {
+					return "", fmt.Errorf("zdev_anchor_clear: %w", err)
+				}
+				if !ok {
+					return "", fmt.Errorf("zdev_anchor_clear: daemon rejected the request")
+				}
+				return "unanchored", nil
+			},
+		},
+		{
+			Name:        "zdev_anchor",
+			Description: "Read the operator's current focus state in one call: the anchor (title/project/since/elapsed) or \"unanchored\" when there is none, plus in_focus (anchored or inside a calendar commitment) and free_until (unix time of the next commitment, 0 if the rest of the day is clear). Use this before deciding whether to interrupt vs. park — e.g. prefer zdev_park over speaking up when anchored is true. Returns JSON.",
+			InputSchema: objectSchema(map[string]any{}),
+			run: func(ctx context.Context, _ map[string]any) (string, error) {
+				cctx, cancel := context.WithTimeout(ctx, mcpSocketTimeout)
+				defer cancel()
+				snap, err := mcpSnapshot(cctx, mcpSocketPath())
+				if err != nil {
+					return "", fmt.Errorf("zdev_anchor: %w", err)
+				}
+				out, err := anchorSnapshotJSON(snap, time.Now().Unix())
+				if err != nil {
+					return "", fmt.Errorf("zdev_anchor: marshal: %w", err)
+				}
+				return out, nil
+			},
+		},
+		{
+			Name:        "zdev_held",
+			Description: "Read the held set: everything captured while the operator was anchored, awaiting its hearing at the next boundary review — arrivals (waits, finishes) and parked thoughts alike, chronological (oldest first). Returns a JSON array of {id, kind, title, project, age_sec}. Use this to reason over what's queued (e.g. shutdown reconciliation asking \"what's still held\"); it does not consume anything — see zdev_held_remove for that.",
+			InputSchema: objectSchema(map[string]any{}),
+			run: func(ctx context.Context, _ map[string]any) (string, error) {
+				cctx, cancel := context.WithTimeout(ctx, mcpSocketTimeout)
+				defer cancel()
+				snap, err := mcpSnapshot(cctx, mcpSocketPath())
+				if err != nil {
+					return "", fmt.Errorf("zdev_held: %w", err)
+				}
+				out, err := heldSnapshotJSON(snap, time.Now().Unix())
+				if err != nil {
+					return "", fmt.Errorf("zdev_held: marshal: %w", err)
+				}
+				return out, nil
+			},
+		},
+		{
+			Name:        "zdev_held_remove",
+			Description: "Remove one item from the held set by id, or \"*\" to clear the whole set. Consuming an item is the OPERATOR'S act, normally made at the boundary review — only call this for an item a skill created itself (e.g. a park it just made and no longer needs) or one the operator explicitly asked to consume/clear. Never remove held items as a guess on the operator's behalf; that undermines the airlock's one guarantee (nothing deferred is lost until it's shown).",
+			InputSchema: objectSchema(map[string]any{
+				"id": map[string]any{"type": "string", "description": "The held item's id, or \"*\" to clear the entire held set."},
+			}, "id"),
+			run: func(ctx context.Context, args map[string]any) (string, error) {
+				id, _ := args["id"].(string)
+				if strings.TrimSpace(id) == "" {
+					return "", fmt.Errorf("zdev_held_remove requires non-empty 'id' (or \"*\" for all)")
+				}
+				cctx, cancel := context.WithTimeout(ctx, mcpSocketTimeout)
+				defer cancel()
+				ok, err := mcpDialHeldRemove(cctx, mcpSocketPath(), id)
+				if err != nil {
+					return "", fmt.Errorf("zdev_held_remove: %w", err)
+				}
+				if !ok {
+					return "", fmt.Errorf("zdev_held_remove: daemon rejected the request")
+				}
+				return "removed: " + id, nil
 			},
 		},
 	}
