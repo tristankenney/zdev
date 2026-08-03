@@ -86,6 +86,7 @@ printf '\n%sDRIVE FROM CLAUDE%s %s(MCP — registered as a connector)%s\n' "$BOL
 printf '  In any Claude Code session, just ask — Claude calls zdev'\''s tools:\n'
 printf '  %s"check the zdev fleet" . "what is in triage" . "what is ready to review"%s\n' "$DIM" "$RESET"
 printf '  %s"run /rigorous-review on backend"%s\n' "$DIM" "$RESET"
+printf '  %s"park this: check webhook retries" . "what is my anchor" . "clear my anchor"%s\n' "$DIM" "$RESET"
 
 # --- initiatives ---
 printf '\n%sINITIATIVES%s %s(cross-repo units of value — the disk is the registry)%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
