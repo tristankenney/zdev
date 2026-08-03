@@ -22,13 +22,15 @@
 //	zdev-show time --json      # structured time-spine surface
 //	zdev-show held             # the focus loop's held set (M-. parks land here)
 //	zdev-show held --json      # structured held set
+//	zdev-show initiatives      # per-initiative digest, human-readable
+//	zdev-show initiatives --json  # versioned machine contract (docs/initiatives-digest.md)
 //
 // zdev-show dials the daemon's unix socket, reads one snapshot, and exits.
 // It never subscribes to the stream — the connection is closed immediately
 // after the snapshot is received. Schema mismatch and dial errors go to
-// stderr with exit code 1; "no context" cases exit 0. --legend and `agents`
-// never dial — both read local config only so bin/zdev can use them when
-// the daemon hasn't been launched yet.
+// stderr with exit code 1; "no context" cases exit 0. --legend, `agents`,
+// and `initiatives` never dial — they read local state only so bin/zdev
+// can use them when the daemon hasn't been launched yet.
 package main
 
 import (
@@ -92,6 +94,33 @@ func run() int {
 			return 1
 		}
 		fmt.Print(out)
+		return 0
+	}
+
+	// `initiatives` never dials the daemon: the digest is pure local
+	// derivation — the workspace layout (the same on-disk registry
+	// bin/zdev's discovery walks), INITIATIVE.md, local git state, and an
+	// optional bd subprocess. ApplyUserEnv gap-fills ZDEV_WORKSPACE from
+	// ~/.config/zdev/env for direct `zdev-show initiatives` invocations
+	// (the `zdev initiatives` passthrough already exported it), mirroring
+	// zdevd's own workspace resolution.
+	if len(os.Args) >= 2 && os.Args[1] == "initiatives" {
+		config.ApplyUserEnv()
+		digest, err := newInitiativesRunner().collect(time.Now().Unix())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+			return 1
+		}
+		if len(os.Args) >= 3 && os.Args[2] == "--json" {
+			out, err := formatInitiativesJSON(digest)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+				return 1
+			}
+			fmt.Println(out)
+			return 0
+		}
+		fmt.Print(formatInitiatives(digest, time.Now().Unix()))
 		return 0
 	}
 
