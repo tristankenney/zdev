@@ -567,3 +567,253 @@ func TestAutoAnchor_EndToEnd_ArmsThenAwayBoundary(t *testing.T) {
 		t.Fatalf("got %+v, want exactly 1 boundary notification (away)", recs)
 	}
 }
+
+// --- phase 3E: instant anchor (mechanism 1) ---
+
+func TestHandleWorkingSignal_InstantAnchor_AttendedUnanchored(t *testing.T) {
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	s.clientSessions["c1"] = "example-backend"
+	s.autoAnchorMinSec = 600 // dwell threshold irrelevant to the instant path — only the master switch matters
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 1000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.anchor == nil {
+		t.Fatal("instant-anchor did not arm for an attended, unanchored project on a prompt signal")
+	}
+	if want := "example/backend (auto)"; s.anchor.Title != want {
+		t.Errorf("Title = %q, want %q", s.anchor.Title, want)
+	}
+	if s.anchor.Project != "example/backend" {
+		t.Errorf("Project = %q, want example/backend", s.anchor.Project)
+	}
+	if s.anchor.SinceTS != 1000 {
+		t.Errorf("SinceTS = %d, want 1000 (the notif's own timestamp)", s.anchor.SinceTS)
+	}
+	if !isAutoAnchor(s.anchor) {
+		t.Error("isAutoAnchor = false for an instant-armed anchor, want true (same Title convention as dwell)")
+	}
+	if s.lastEngagedTS != 1000 {
+		t.Errorf("lastEngagedTS = %d after instant-anchor, want 1000 (AnchorSet refreshes it)", s.lastEngagedTS)
+	}
+}
+
+func TestHandleWorkingSignal_PromptUnattended_DoesNothing(t *testing.T) {
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	// No client attends "example-backend" — this is exactly the "zdev run" /
+	// orchestrator scenario the brief calls out: a prompt hook can fire on a
+	// session the operator never looks at.
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 1000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.anchor != nil {
+		t.Errorf("instant-anchored an UNATTENDED session: %+v — the attendance guard must refuse this", s.anchor)
+	}
+}
+
+func TestHandleWorkingSignal_Heartbeat_NeverInstantAnchors(t *testing.T) {
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	s.clientSessions["c1"] = "example-backend"
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 1000, Kind: proto.WaitKindWorking, Src: "heartbeat"})
+
+	if s.anchor != nil {
+		t.Errorf("a heartbeat (PreToolUse) signal instant-anchored: %+v, want never", s.anchor)
+	}
+}
+
+func TestHandleWorkingSignal_EmptySrc_NeverInstantAnchors(t *testing.T) {
+	// Back-compat: an older zdev-notify (or a non-Claude agent) writes a
+	// working marker with no 4th line at all — Src decodes as "". This must
+	// behave exactly like a heartbeat, never like a prompt.
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	s.clientSessions["c1"] = "example-backend"
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 1000, Kind: proto.WaitKindWorking, Src: ""})
+
+	if s.anchor != nil {
+		t.Errorf("an empty-Src (legacy) working signal instant-anchored: %+v, want never (back-compat)", s.anchor)
+	}
+}
+
+func TestHandleWorkingSignal_NeverOverridesExistingAnchor(t *testing.T) {
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	s.clientSessions["c1"] = "example-backend"
+	s.anchor = &proto.Anchor{Title: "IMP-97 something else", Project: "example/other", SinceTS: 5}
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 1000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.anchor.Title != "IMP-97 something else" || s.anchor.Project != "example/other" {
+		t.Errorf("existing anchor mutated by an instant-anchor attempt: %+v", s.anchor)
+	}
+}
+
+func TestHandleWorkingSignal_UnmanagedSession_DoesNothing(t *testing.T) {
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	s.clientSessions["c1"] = "some-unmanaged-session"
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "some-unmanaged-session", Timestamp: 1000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.anchor != nil {
+		t.Errorf("instant-anchored an unmanaged session: %+v", s.anchor)
+	}
+}
+
+func TestTryInstantAnchor_ZeroAutoAnchorMinDisablesEntirely(t *testing.T) {
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	s.clientSessions["c1"] = "example-backend"
+	s.autoAnchorMinSec = 0 // the SAME master switch that disables the dwell path
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 1000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.anchor != nil {
+		t.Error("instant-anchored with autoAnchorMinSec=0, want disabled (one knob, one feature)")
+	}
+}
+
+// --- phase 3E: engagement refresh (mechanism 2b) ---
+
+func TestHandleWorkingSignal_PromptOnAnchorProject_RefreshesEngagement(t *testing.T) {
+	s := newState()
+	s.anchor = &proto.Anchor{Title: "example/backend (auto)", Project: "example/backend", SinceTS: 0}
+	s.lastEngagedTS = 0
+	s.clientSessions["c1"] = "example-backend"
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 5000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.lastEngagedTS != 5000 {
+		t.Errorf("lastEngagedTS = %d, want 5000 (refreshed by the prompt on the anchor's own project)", s.lastEngagedTS)
+	}
+	if s.anchor == nil || s.anchor.SinceTS != 0 {
+		t.Errorf("anchor mutated by an engagement refresh, want SinceTS untouched: %+v", s.anchor)
+	}
+}
+
+func TestHandleWorkingSignal_Heartbeat_NeverRefreshesEngagement(t *testing.T) {
+	s := newState()
+	s.anchor = &proto.Anchor{Title: "example/backend (auto)", Project: "example/backend", SinceTS: 0}
+	s.lastEngagedTS = 0
+	s.clientSessions["c1"] = "example-backend"
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 5000, Kind: proto.WaitKindWorking, Src: "heartbeat"})
+
+	if s.lastEngagedTS != 0 {
+		t.Errorf("lastEngagedTS = %d, want unchanged 0 — a PreToolUse heartbeat is not engagement (an agent grinding while the operator is at lunch)", s.lastEngagedTS)
+	}
+}
+
+func TestHandleWorkingSignal_ForeignPrompt_DoesNotRefreshEngagement(t *testing.T) {
+	// Anchored on "example/backend", but the prompt landed on a DIFFERENT
+	// attended session — this says nothing about whether the ANCHORED work
+	// is still being engaged with.
+	s := newState()
+	s.anchor = &proto.Anchor{Title: "example/backend (auto)", Project: "example/backend", SinceTS: 0}
+	s.lastEngagedTS = 0
+	s.clientSessions["c1"] = "example-frontend"
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-frontend", Timestamp: 5000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.lastEngagedTS != 0 {
+		t.Errorf("lastEngagedTS = %d after a FOREIGN prompt, want unchanged 0", s.lastEngagedTS)
+	}
+}
+
+func TestHandleWorkingSignal_UnattendedPromptOnAnchorProject_DoesNotRefresh(t *testing.T) {
+	// The attendance guard applies uniformly to both mechanisms — a prompt
+	// hook firing on the anchor's own session while the operator isn't
+	// even looking at it (a supervised loop continuing unattended) must not
+	// refresh engagement either.
+	s := newState()
+	s.anchor = &proto.Anchor{Title: "example/backend (auto)", Project: "example/backend", SinceTS: 0}
+	s.lastEngagedTS = 0
+
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 5000, Kind: proto.WaitKindWorking, Src: "prompt"})
+
+	if s.lastEngagedTS != 0 {
+		t.Errorf("lastEngagedTS = %d after an UNATTENDED prompt, want unchanged 0", s.lastEngagedTS)
+	}
+}
+
+// --- phase 3E: idle-based expiry reads lastEngagedTS, not SinceTS ---
+
+func TestCheckBoundary_ContinuousEngagementOutlivesExpiryWindow(t *testing.T) {
+	s := newState()
+	s.anchor = &proto.Anchor{Title: "example/backend (auto)", Project: "example/backend", SinceTS: 0}
+	s.lastEngagedTS = 0
+	s.anchorExpirySec = 100
+	s.clientSessions["c1"] = "example-backend"
+	rec := &fullNotifRecorder{}
+
+	// A prompt every 60s — each one lands well inside the 100s window and
+	// refreshes engagement, so the anchor must survive far past SinceTS+100.
+	for _, ts := range []int64{60, 120, 180, 240} {
+		handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: ts, Kind: proto.WaitKindWorking, Src: "prompt"})
+		if fired := checkBoundary(ts, s, rec.fire); fired {
+			t.Fatalf("checkBoundary fired at t=%d despite continuous engagement (lastEngagedTS=%d)", ts, s.lastEngagedTS)
+		}
+	}
+	if s.anchor == nil {
+		t.Fatal("anchor expired despite continuous engagement — the old SinceTS-based expiry would have fired at t=100")
+	}
+}
+
+func TestCheckBoundary_AbandonedAnchorExpiresFromLastEngaged(t *testing.T) {
+	s := newState()
+	s.anchor = &proto.Anchor{Title: "example/backend (auto)", Project: "example/backend", SinceTS: 0}
+	s.anchorExpirySec = 100
+	rec := &fullNotifRecorder{}
+
+	// One early prompt refreshes engagement to t=10, then the operator
+	// wanders off — no further prompts. The anchor must expire measured
+	// from t=10 (last engagement), not from t=0 (the original SinceTS).
+	s.clientSessions["c1"] = "example-backend"
+	handleWorkingSignal(s, tmuxctl.NotifSeen{Session: "example-backend", Timestamp: 10, Kind: proto.WaitKindWorking, Src: "prompt"})
+	delete(s.clientSessions, "c1")
+
+	if fired := checkBoundary(109, s, rec.fire); fired { // 109-10=99 < 100
+		t.Fatal("expired 1s early — must measure from lastEngagedTS (10), not SinceTS (0)")
+	}
+	if !checkBoundary(110, s, rec.fire) { // 110-10=100 >= 100
+		t.Fatal("did not expire at lastEngagedTS + expiry window")
+	}
+	if s.anchor != nil {
+		t.Error("anchor not cleared by the idle-expiry boundary")
+	}
+	recs := rec.snapshot()
+	if len(recs) != 1 || recs[0].Kind != "boundary" {
+		t.Fatalf("got %+v, want exactly 1 boundary notification", recs)
+	}
+}
+
+// --- phase 3E: restart sets engagement = SinceTS ---
+
+func TestApplyPersistedState_RestoresAnchor_EngagementSetToSinceTS(t *testing.T) {
+	s := newState()
+	ps := &persistedState{
+		V:      stateSchemaV,
+		Anchor: &proto.Anchor{Title: "IMP-97 validate deploy", Project: "example/backend", SinceTS: 12345},
+	}
+	applyPersistedState(s, ps)
+
+	if s.anchor == nil || s.anchor.SinceTS != 12345 {
+		t.Fatalf("anchor not restored: %+v", s.anchor)
+	}
+	if s.lastEngagedTS != 12345 {
+		t.Errorf("lastEngagedTS = %d after restart, want 12345 (== restored SinceTS)", s.lastEngagedTS)
+	}
+}
+
+func TestApplyPersistedState_NoAnchor_EngagementLeftZero(t *testing.T) {
+	s := newState()
+	applyPersistedState(s, &persistedState{V: stateSchemaV})
+
+	if s.lastEngagedTS != 0 {
+		t.Errorf("lastEngagedTS = %d with no persisted anchor, want 0", s.lastEngagedTS)
+	}
+}

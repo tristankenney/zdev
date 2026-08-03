@@ -356,5 +356,17 @@ func applyPersistedState(s *state, ps *persistedState) {
 	if ps.Anchor != nil {
 		a := *ps.Anchor
 		s.anchor = &a
+		// Phase 3E (docs/design/command-centre.md — "hook-informed focus",
+		// mechanism 2): lastEngagedTS is NEVER persisted (state.go's doc
+		// comment on the field), so a restart must re-derive it here rather
+		// than leave it at zero — zero would read as "unengaged since the
+		// unix epoch," which combined with a live anchorExpirySec would
+		// expire a just-restored anchor on the very first post-restart
+		// pass. SinceTS is the best available approximation: the daemon has
+		// no memory of any prompts that happened before it died, so
+		// "engaged as of when we last knew about this anchor" is exactly
+		// right — neither resurrecting a stale engagement moment nor
+		// falsely treating the restart itself as abandonment.
+		s.lastEngagedTS = a.SinceTS
 	}
 }

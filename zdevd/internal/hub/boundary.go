@@ -64,7 +64,22 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 
 	// Expiry: ZDEV_ANCHOR_EXPIRY_MIN resolved by cmd/zdevd into
 	// s.anchorExpirySec (0 = never — the hub never reads the env itself).
-	if s.anchorExpirySec > 0 && now-a.SinceTS >= s.anchorExpirySec {
+	//
+	// Phase 3E (docs/design/command-centre.md — "hook-informed focus",
+	// mechanism 2 "idle-based expiry"): measured from s.lastEngagedTS, NOT
+	// from a.SinceTS (the ORIGINAL pick time) as phase 3A shipped it. A
+	// long, continuously-prompted session would otherwise expire on
+	// schedule from the moment it was anchored regardless of how much real
+	// engagement followed — exactly the "stale anchor teaches the operator
+	// to ignore the tether" failure mode the design note's expiry exists
+	// to prevent, just triggered by success (a long focused session) rather
+	// than failure (an abandoned one). lastEngagedTS starts equal to
+	// a.SinceTS at anchor-set (state.go's AnchorSet case) and is refreshed
+	// by a prompt on the anchor's own project while attended
+	// (autoanchor.go's handleWorkingSignal) — so a genuinely abandoned
+	// anchor (no prompts after the operator wandered off) still expires on
+	// schedule, measured from the LAST real engagement.
+	if s.anchorExpirySec > 0 && now-s.lastEngagedTS >= s.anchorExpirySec {
 		fireBoundary(now, s, a, fire)
 		return true
 	}

@@ -19,6 +19,19 @@
 // that must distinguish auto from explicit — auto-anchors are never
 // persisted) reuses this exact same convention rather than inventing a
 // second one.
+//
+// Phase 3E (docs/design/command-centre.md — "hook-informed focus") adds a
+// SECOND arming path onto this same machinery: handleWorkingSignal, called
+// from applyEvent's NotifSeen case (state.go) rather than from the
+// publishPass heartbeat, because its whole point is "instant" — no dwell
+// wait. It reuses isAutoAnchor's Title convention (an instant-anchor IS a
+// dwell-auto-anchor by another arming path, not a third kind) and the same
+// applyEvent(AnchorSet) call checkAutoAnchorArm makes, so persistence
+// exemption, away-boundary, re-arm hygiene, and the airlock all apply to it
+// for free. It is gated on the SAME s.autoAnchorMinSec>0 master switch as
+// the dwell path (see handleWorkingSignal) — one knob disables auto-
+// anchoring by either arming path, rather than adding a second knob for a
+// mechanism that is, at its core, the same feature.
 package hub
 
 import (
@@ -203,5 +216,104 @@ func checkAutoAnchorAway(now int64, s *state, fire func(Notification)) bool {
 	a := s.anchor
 	fireBoundary(now, s, a, fire)
 	s.autoAwaySinceTS = 0
+	return true
+}
+
+// handleWorkingSignal implements phase 3E's two hook-informed refinements
+// on top of a NotifSeen carrying Kind == proto.WaitKindWorking, called
+// inline from applyEvent's NotifSeen case (state.go) — NOT from the
+// publishPass heartbeat, because mechanism 1 below is explicitly "instant":
+// waiting for the next pass would reintroduce the ceremony-adjacent lag the
+// dwell auto-anchor already accepts, but a real-time hook signal need not.
+//
+//  1. Instant anchor (mechanism 1): a prompt landing on an ATTENDED,
+//     UNANCHORED managed project auto-anchors it immediately — same
+//     Title convention, same applyEvent(AnchorSet) path, same
+//     never-overrides guard as the dwell arm (checkAutoAnchorArm).
+//  2. Engagement refresh (mechanism 2b): a prompt landing on the ANCHOR's
+//     OWN project while attended refreshes state.lastEngagedTS, so a
+//     deeply-worked anchor never spuriously expires (boundary.go's
+//     expiry check reads lastEngagedTS, not the anchor's original
+//     SinceTS). See lastEngagedTS's doc comment (state.go) for mechanism
+//     2a (anchor-set itself refreshing engagement) — that half lives in
+//     applyEvent's AnchorSet case since it's common to every arming path.
+//
+// Both branches share one gate, checked first and commented ONCE: ev.Src
+// must be EXACTLY "prompt" — the hub's own extraction (bin/zdev-notify) of
+// the hook payload's `.hook_event_name == "UserPromptSubmit"`. Anything
+// else — "heartbeat" (a PreToolUse mid-turn signal, once one exists), the
+// empty string (an OLDER zdev-notify that predates Src, or any non-Claude
+// agent), or any unrecognized value — does NOTHING here. This is the
+// brief's explicit, load-bearing requirement: "an agent grinding for an
+// hour while the operator is at lunch is not engagement," and a background
+// loop's own heartbeat must never be mistaken for the operator's hand on
+// the keyboard. The empty-string case is ALSO the back-compat contract
+// (tmuxctl.NotifSeen.Src's doc comment): a daemon fed the old three-line
+// notif format never instant-anchors and never refreshes engagement from
+// it — it behaves exactly as it did before phase 3E existed.
+func handleWorkingSignal(s *state, ev tmuxctl.NotifSeen) {
+	if ev.Src != "prompt" {
+		return
+	}
+	if !isClientAttended(s, ev.Session) {
+		return // "zdev run" / an orchestrator firing prompts unattended — never anchor or refresh from these
+	}
+	if s.anchor == nil {
+		tryInstantAnchor(s, ev)
+		return
+	}
+	// Engagement refresh (mechanism 2b): only when the prompt landed on
+	// the ANCHOR's OWN project — a prompt elsewhere (a different attended
+	// session while anchored) says nothing about whether the ANCHORED work
+	// is still being engaged with, so it must not reset that clock.
+	if s.anchor.Project != "" && proto.SessionKey(s.anchor.Project) == ev.Session {
+		s.lastEngagedTS = ev.Timestamp
+	}
+}
+
+// tryInstantAnchor is mechanism 1's arming step, split out of
+// handleWorkingSignal for the same reason checkAutoAnchorArm is its own
+// function: one guard chain, one applyEvent call, independently testable.
+// Preconditions (attended, Src=="prompt") are the caller's job; this
+// function only re-checks what IT owns:
+//
+//   - s.anchor == nil — never overrides an existing anchor, explicit or
+//     auto, same discipline as checkAutoAnchorArm.
+//   - s.autoAnchorMinSec > 0 — the SAME master switch that disables the
+//     dwell path also disables the instant path (see file header): one
+//     knob for one feature, not two.
+//   - ev.Session resolves to a MANAGED project (mirrors
+//     soleAttendedManagedProject's resolution) — an unmanaged/synthetic
+//     session names nothing to anchor to.
+//
+// On arming, sets Anchor{Title: "<project> (auto)", Project: <project>,
+// SinceTS: ev.Timestamp} via the identical tmuxctl.AnchorSet path
+// checkAutoAnchorArm uses — ev.Timestamp (the hook's own wall-clock
+// reading, already captured by zdev-notify at prompt-submit time) stands
+// in for `now` here, the same way PaneTitleChanged's handling elsewhere in
+// applyEvent uses an already-sampled timestamp rather than re-reading the
+// clock. Returns true when it armed.
+func tryInstantAnchor(s *state, ev tmuxctl.NotifSeen) bool {
+	if s.anchor != nil {
+		return false
+	}
+	if s.autoAnchorMinSec <= 0 {
+		return false
+	}
+	var project string
+	for _, n := range s.projectListNames {
+		if proto.SessionKey(n) == ev.Session {
+			project = n
+			break
+		}
+	}
+	if project == "" {
+		return false // attended session isn't a managed project
+	}
+	applyEvent(s, tmuxctl.AnchorSet{
+		Title:    project + autoAnchorSuffix,
+		Project:  project,
+		NowNanos: ev.Timestamp * int64(1e9),
+	}, nil)
 	return true
 }
