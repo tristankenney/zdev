@@ -613,3 +613,106 @@ func TestNoPersist_EmptyPath(t *testing.T) {
 	}
 	unsub()
 }
+
+// TestSaveState_ParkedHeldRoundTrip verifies phase 1 of the focus loop's
+// trust contract at the persistence layer (docs/design/command-centre.md —
+// "nothing deferred is lost"): parked items survive a save/load cycle,
+// intact and in order.
+func TestSaveState_ParkedHeldRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state-held.json")
+
+	s := newState()
+	applyEvent(s, tmuxctl.ParkText{Text: "first", NowNanos: 100 * int64(time.Second)}, nil)
+	applyEvent(s, tmuxctl.ParkText{Text: "second", NowNanos: 200 * int64(time.Second)}, nil)
+
+	if err := saveState(path, s); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+	ps, err := loadState(path)
+	if err != nil {
+		t.Fatalf("loadState: %v", err)
+	}
+	if ps == nil {
+		t.Fatal("loadState returned nil, want the persisted parked items")
+	}
+	if len(ps.ParkedHeld) != 2 {
+		t.Fatalf("ParkedHeld = %+v, want 2 items", ps.ParkedHeld)
+	}
+
+	s2 := newState()
+	applyPersistedState(s2, ps)
+	if len(s2.heldItems) != 2 {
+		t.Fatalf("heldItems after restore = %+v, want 2 items", s2.heldItems)
+	}
+	if s2.heldItems[0].Title != "first" || s2.heldItems[1].Title != "second" {
+		t.Errorf("restored order = %+v, want [first, second]", s2.heldItems)
+	}
+	if s2.heldItems[0].Kind != "parked" {
+		t.Errorf("restored Kind = %q, want parked", s2.heldItems[0].Kind)
+	}
+}
+
+// TestSaveState_HeldOnlyPersistsParkedKind confirms the opt-in persistence
+// discipline (persist.go doc comment, project-conventions): a non-"parked"
+// Held entry (a future arrival kind) is NOT written to disk — only "parked"
+// items participate in the trust contract this phase ships.
+func TestSaveState_HeldOnlyPersistsParkedKind(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state-held-mixed.json")
+
+	s := newState()
+	s.heldItems = append(s.heldItems,
+		proto.HeldItem{ID: "parked-1", Kind: "parked", Title: "keep me", SinceTS: 1},
+		proto.HeldItem{ID: "wait-example", Kind: "wait", Title: "drop me", SinceTS: 2},
+	)
+
+	if err := saveState(path, s); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+	ps, err := loadState(path)
+	if err != nil {
+		t.Fatalf("loadState: %v", err)
+	}
+	if len(ps.ParkedHeld) != 1 {
+		t.Fatalf("ParkedHeld = %+v, want exactly the 1 parked item", ps.ParkedHeld)
+	}
+	if ps.ParkedHeld[0].Title != "keep me" {
+		t.Errorf("ParkedHeld[0].Title = %q, want %q", ps.ParkedHeld[0].Title, "keep me")
+	}
+}
+
+// TestLoadState_OldFileWithoutParkedHeld verifies the additive-field
+// tolerance persist.go's doc comment promises: a state file written before
+// this phase (no "parkedHeld" key at all) loads cleanly with an empty held
+// set rather than erroring or losing the rest of the file's content.
+func TestLoadState_OldFileWithoutParkedHeld(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state-old.json")
+	// A canonical pre-phase-1 v2 payload — no parkedHeld key at all.
+	payload := `{"v":2,"lastVisitTS":{"alpha":1000},"waitStartedTS":{"alpha":900}}`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	ps, err := loadState(path)
+	if err != nil {
+		t.Fatalf("loadState: %v", err)
+	}
+	if ps == nil {
+		t.Fatal("loadState returned nil for an old-format file")
+	}
+	if len(ps.ParkedHeld) != 0 {
+		t.Errorf("ParkedHeld = %+v, want empty for a pre-phase-1 file", ps.ParkedHeld)
+	}
+
+	s := newState()
+	applyPersistedState(s, ps)
+	if len(s.heldItems) != 0 {
+		t.Errorf("heldItems = %+v, want empty after restoring an old file", s.heldItems)
+	}
+	// The rest of the old file's content still restores normally.
+	if got, want := s.lastVisitTS["alpha"], int64(1000); got != want {
+		t.Errorf("lastVisitTS[alpha] = %d, want %d (old-file fields still restore)", got, want)
+	}
+}

@@ -21,6 +21,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os/exec"
 	"strconv"
@@ -218,6 +219,17 @@ type state struct {
 	// statusDwellDefault (overridable via ZDEVD_STATUS_DWELL_MS). See
 	// applyDwell in attention.go.
 	statusDwell time.Duration
+
+	// heldItems is the focus loop's airlock catch (phase 1 of
+	// docs/design/command-centre.md — only the M-. park prompt populates it
+	// so far; arrival kinds land here in a later phase). Append-only in this
+	// phase: nothing ever removes an entry (the boundary review, which will
+	// let the operator pick/defer, is a later phase). Chronological by
+	// SinceTS because ParkText only ever appends with a monotonically
+	// non-decreasing NowNanos in practice — buildSnapshot does not re-sort.
+	// Persisted (Kind=="parked" only — see persist.go); buildSnapshot copies
+	// it into Snapshot.Held verbatim.
+	heldItems []proto.HeldItem
 }
 
 // maxConsecutiveCaptureFailures is the eviction threshold. Three attempts
@@ -1121,6 +1133,24 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		if e.Delta != 0 {
 			s.cursorRow = ((s.cursorRow+e.Delta)%n + n) % n
 		}
+
+	case tmuxctl.ParkText:
+		// M-. park prompt (phase 1, command-centre.md). Defense in depth:
+		// Hub.SubmitPark already trims and rejects empty/whitespace-only text
+		// on the caller's goroutine before this event is ever sent, but
+		// applyEvent must never trust that as its ONLY guard — a future
+		// caller that skips SubmitPark (a test, a different socket verb)
+		// must not be able to park a blank line.
+		text := strings.TrimSpace(e.Text)
+		if text == "" {
+			return
+		}
+		s.heldItems = append(s.heldItems, proto.HeldItem{
+			ID:      fmt.Sprintf("parked-%d", e.NowNanos),
+			Kind:    "parked",
+			Title:   text,
+			SinceTS: e.NowNanos / int64(time.Second),
+		})
 
 	case tmuxctl.TeamsChanged:
 		// Pure map swap: the watcher produces a fresh map per emission and

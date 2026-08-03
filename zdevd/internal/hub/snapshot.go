@@ -332,6 +332,13 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// TeamRows: the daemon's knob is the single row-order authority —
 		// the renderer reads this, not its own env (see proto.Snapshot).
 		TeamRows: st.teamWindows,
+		// Held (phase4-v24, phase 1 focus loop): the airlock's catch, copied
+		// verbatim in chronological append order. A fresh backing array (not
+		// an alias of st.heldItems) per the immutable-after-publish contract
+		// (Invariant 8 / snapshotEqualsCore) — the hub keeps mutating its own
+		// slice on the next park while a previously-published snapshot must
+		// never change out from under a subscriber that's still holding it.
+		Held: heldItemsCopy(st),
 		// ReviewGauge (phase4-v21): the S3 landing-readiness gauge, computed
 		// from the rows just assembled and grouped by resolved repo. nil when
 		// the fleet carries no review debt.
@@ -898,6 +905,19 @@ func projectNameAtRow(st *state, row int) string {
 		return ""
 	}
 	return rows[row].SwitchTo
+}
+
+// heldItemsCopy returns a fresh-backing-array copy of st.heldItems, or nil
+// when empty — mirrors teamMemberPaneIDs' "nil when nothing to report"
+// convention so an inert fleet allocates nothing. See buildSnapshot's Held
+// field comment for why the copy (not an alias) matters.
+func heldItemsCopy(st *state) []proto.HeldItem {
+	if len(st.heldItems) == 0 {
+		return nil
+	}
+	out := make([]proto.HeldItem, len(st.heldItems))
+	copy(out, st.heldItems)
+	return out
 }
 
 // emitPortDiff fires one eventlog.Event per port that opened (in `now`
