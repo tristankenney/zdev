@@ -284,7 +284,9 @@ merged &gt;2 weeks ago is rot — delete it, don't nurse it. The
 </div>
 
 <h2 id="sidebar">Reading the sidebar</h2>
-<pre><code><span class="g-dim">  ─────────────────</span>          mood divider (color = fleet mood)
+<pre><code>▶ now  IMP-97 validate deploy · 32m  anchor row (ZDEV_SIDEBAR_FOCUS=1) — what you're on
+  ┊ holding 2                 held arrivals, awaiting their hearing at the next boundary
+<span class="g-dim">  ─────────────────</span>          mood divider (color = fleet mood)
 <span class="g-init">╭ ai-at-pay</span>                  initiative home row — IS its group header
 <span class="g-init">│</span>  · pay-app                 member clone (leaf name; gutter = belonging)
 ▌ · dotfiles                 ▌ = your current session
@@ -399,6 +401,7 @@ per keypress.</p>
 <tr><td class="k">ZDEV_SIDEBAR_DEMOTE</td><td>dim</td><td><code>fold</code> sinks stale rows below a divider; <code>off</code> disables</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_FOOTER</td><td>full</td><td><code>compact</code> glyph tally · <code>off</code></td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_REVIEW</td><td>0</td><td>1 = landing-readiness gauge in the sidebar</td></tr>
+<tr><td class="k">ZDEV_SIDEBAR_FOCUS</td><td>0</td><td>1 = the focus loop's sidebar half (docs/design/command-centre.md): an anchor row (<code>▶ now</code>) pinning what you picked at the last boundary, a dim <code>┊ holding N</code> counter proving the airlock is catching arrivals, and damped rendering — every other row recedes (dim, animation frozen) except the anchor's own project and FIRES (a dead agent, or a wait past the urgent tier). Off ⇒ byte-identical to today; inert until something sets an anchor</td></tr>
 <tr><td class="k">ZDEV_TRIAGE_ROUND</td><td>0</td><td>1 = M-a opens the Round (Bubble Tea burn-down popup) instead of the classic fzf triage popup, when <code>zdev-round</code> is on PATH</td></tr>
 <tr><td class="k">ZDEV_SIDEBAR_UNMANAGED</td><td>hide-ish</td><td><code>show</code> = dim unmanaged sessions below the managed block</td></tr>
 <tr><td class="k">ZDEV_TEAM_WINDOWS</td><td>0</td><td>1 = Agent Teams member windows + nested rows</td></tr>

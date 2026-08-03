@@ -422,6 +422,13 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 	// readiness gauge in the freed strip slot. Off ⇒ byte-identical to today.
 	render.ReviewGaugeEnabled = os.Getenv("ZDEV_SIDEBAR_REVIEW") == "1"
 
+	// Focus loop opt-in (default off — phase 3C, docs/design/command-centre.md):
+	// the anchor row (▶ now), the ┊ holding N counter, and damped rendering
+	// while anchored. Off ⇒ byte-identical to today even once the daemon
+	// starts setting Anchor/Held — the loop must win by being picked, never
+	// by being default.
+	render.FocusEnabled = os.Getenv("ZDEV_SIDEBAR_FOCUS") == "1"
+
 	// Initiative home metadata opt-in (default off, phase4-v23): the Intent
 	// sentence + member rollup rows shown when the current session IS an
 	// initiative home. Independent of ZDEV_SIDEBAR_GROUP — it applies

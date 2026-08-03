@@ -186,11 +186,27 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	}
 	buf.WriteString(CursorHome)
 
-	// Mood divider: the frame's first row. The "  zdev projects" header
+	// Anchor row + holding counter (phase 3C, ZDEV_SIDEBAR_FOCUS,
+	// docs/design/command-centre.md): the frame's FIRST line(s), above the
+	// mood divider — cheap re-entry after any micro-distraction ("what was
+	// I doing?"). Writes nothing when the knob is off or nothing is
+	// anchored, so an unanchored/knob-off sidebar stays byte-identical to
+	// today; the goldens (which carry no Anchor) prove it.
+	if ref, ok := renderAnchorRow(&buf, snap, width, nowFn, lineOf); ok {
+		rows = append(rows, ref)
+	}
+
+	// Mood divider: the frame's first row absent an anchor. The "  zdev projects" header
 	// text was dropped (dogfood: it added nothing — the pane border
 	// already names the pane); the divider carries the fleet mood as its
 	// COLOR (grey idle / green active / orange waiting / red urgent),
 	// preserving the at-a-glance signal in zero extra rows.
+	//
+	// Damped mode (phase 3C) deliberately does NOT dim this line: it is one
+	// quiet row, and losing the fleet-mood signal entirely while anchored
+	// would blind the operator to a building fire behind the airlock — the
+	// one ambient read the design keeps ON during the loop, everything else
+	// recedes around it.
 	buf.WriteString("  ")
 	buf.WriteString(thDivider(MoodFor(snap, nowFn), 17))
 	buf.WriteString(Reset)
@@ -303,6 +319,40 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			}
 		}
 	}
+	// Focus loop damped mode (phase 3C, ZDEV_SIDEBAR_FOCUS): while anchored,
+	// every row recedes except the anchor's own project and the FIRES list
+	// (dead, or a wait past the urgent tier — see focus.go's focusReceded).
+	// groupFull tracks, per group key, whether ANY project in that group
+	// (home or member, visible or collapsed) is the anchor or a fire — a
+	// group's header keeps its hue when something inside deserves
+	// attention, even when the header row itself is neither. damped is
+	// false whenever the knob is off or nothing is anchored, in which case
+	// groupFull stays empty and every focusReceded call below returns false
+	// regardless — byte-identical to pre-focus-loop output.
+	damped := FocusEnabled && snap.Anchor != nil
+	var anchorProject string
+	if snap.Anchor != nil {
+		anchorProject = snap.Anchor.Project
+	}
+	groupFull := map[string]bool{}
+	if damped && GroupMode == "prefix" {
+		now := nowFn()
+		for i := range snap.Projects {
+			key := groupKeys[i]
+			if key == "" {
+				continue
+			}
+			pp := &snap.Projects[i]
+			if anchorProject != "" && pp.Name == anchorProject {
+				groupFull[key] = true
+				continue
+			}
+			if isUrgent(pp, now) || projectAttention(pp) == proto.AttDead {
+				groupFull[key] = true
+			}
+		}
+	}
+
 	// lastInGroup[i]: row i is its group's last VISIBLE member — its gutter
 	// closes the frame (╰). Computed on snapshot order; the opt-in fold
 	// mode re-partitions rendering and may place the closer mid-block,
@@ -362,6 +412,12 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 		rowY := lineOf()
 		isCurrent := p.Name == snap.CurrentSession && snap.CurrentSession != ""
 		urgent := isUrgent(&p, nowFn())
+		// receded (phase 3C damped mode): this row is peripheral vision
+		// while anchored elsewhere — see focus.go's focusReceded. Always
+		// false when the knob is off or unanchored (damped is false), so
+		// every render*Row/groupGutter call below takes its pre-focus-loop
+		// branch and the frame is byte-identical.
+		receded := focusReceded(damped, anchorProject, &p, urgent)
 		isCursor := cursorFlatRow == projBase[i] && !isCurrent
 		// Hover highlight (ZDEV_SIDEBAR_HOVER, tea engine only): opts.Hover
 		// is always "" outside a hover-enabled tea sidebar, so this is a
@@ -380,12 +436,16 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// session, the metadata row still follows — the current-project
 			// two-row contract (and projBase math) is glyph-agnostic. The
 			// metadata rows hang inside the frame on the group's gutter.
-			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent, hovered,
+			// recededHeader (phase 3C): the GROUP's aggregate, not this row's
+			// own receded flag — a header dims only when NOTHING inside its
+			// group (home or member) is the anchor or a fire (groupFull).
+			recededHeader := damped && !groupFull[groupKeys[i]]
+			renderHomeRow(&buf, &p, width, animator, nowFn, isCursor, isCurrent, hovered, recededHeader,
 				collapsedN[groupKeys[i]],
 				collapsedN[groupKeys[i]] > 0 && visibleMembers[groupKeys[i]] == 0)
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-					groupGutter(groupKeys[i], true, "│",
+					groupGutter(groupKeys[i], !recededHeader, "│",
 						rowMargin(&p, animator, urgent, true, false, hovered)),
 					snap, true)
 			}
@@ -399,15 +459,15 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if lastInGroup[i] {
 				g, mg = "╰", " "
 			}
-			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
-				groupGutter(groupKeys[i], true, g,
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, receded, teamsByLead[p.Name], teamRows,
+				groupGutter(groupKeys[i], !receded, g,
 					rowMargin(&p, animator, urgent, true, false, hovered)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-				groupGutter(groupKeys[i], true, mg,
+				groupGutter(groupKeys[i], !receded, mg,
 					rowMargin(&p, animator, urgent, true, false, hovered)),
 				snap, false)
 		case isCurrent:
-			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows, "")
+			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, receded, teamsByLead[p.Name], teamRows, "")
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width, animator, nowFn, urgent, "", snap, homes[p.Name])
 		case grouped:
 			// Member row: a │ gutter hangs under the group's header —
@@ -415,16 +475,18 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// groups, Dim for synthetic ones (projects/) — so belonging
 			// reads as a frame, not just an indent. Width shrinks with
 			// the gutter so truncation still respects the pane edge.
-			// The last visible member closes the frame.
+			// The last visible member closes the frame. !receded (phase
+			// 3C): a receded member's gutter loses its hue along with its
+			// marker and name — the frame stays, the color doesn't.
 			g := "│"
 			if lastInGroup[i] {
 				g = "╰"
 			}
-			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
-				groupGutter(groupKeys[i], true, g,
+			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, receded, teamsByLead[p.Name], teamRows,
+				groupGutter(groupKeys[i], !receded, g,
 					rowMargin(&p, animator, urgent, false, isCursor, hovered)))
 		default:
-			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows, "")
+			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, hovered, receded, teamsByLead[p.Name], teamRows, "")
 		}
 		// Every line just written belongs to this project — the compact or
 		// project row plus, for the current session, its metadata rows.
@@ -473,8 +535,9 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				// interleaves them and the tree mirrors the disk.
 				if g != "" && !isHome[i] {
 					headerY := lineOf()
+					recededHeader := damped && !groupFull[g]
 					writeGroupHeader(&buf, g, width, collapsedN[g],
-						collapsedN[g] > 0 && visibleMembers[g] == 0)
+						collapsedN[g] > 0 && visibleMembers[g] == 0, recededHeader)
 					// The synthetic header IS clickable: it targets the
 					// group's first project, mirroring the M-p header
 					// contract. Essential for a FOLDED drawer — the
@@ -644,7 +707,16 @@ func displayName(name string) string {
 // width, or a bare dim "  ──────" separator for the unprefixed block
 // (name == ""). Groups WITH a home row get renderHomeRow instead — the
 // home project row IS the header there.
-func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int, folded bool) {
+//
+// receded (phase 3C damped mode): true when the group has nothing inside it
+// worth the operator's attention while anchored elsewhere (frame.go's
+// groupFull — neither the anchor's project nor a fire lives in this group).
+// The header keeps its STRUCTURE (the ╭/▸ glyph, the Bold weight, the
+// rollup) but loses its identity hue to thDim() — "headers keep structure,
+// lose hue", same rule as every receded row's marker+name. Always false
+// when the knob is off or unanchored, so the byte-identical branch is
+// exactly today's.
+func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int, folded, receded bool) {
 	buf.WriteString("  ")
 	{
 		// A group is a group: this header renders exactly like an
@@ -663,14 +735,18 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 		// A collapsed drawer shows its rollup here — this line is its only
 		// remaining trace. No spinner: working rows pierce per-row, so a
 		// folded row is by definition quiet.
-		buf.WriteString(thPalette(name))
+		hue := thPalette(name)
+		if receded {
+			hue = thDim()
+		}
+		buf.WriteString(hue)
 		if folded {
 			buf.WriteString("▸ ")
 		} else {
 			buf.WriteString("╭ ")
 		}
 		buf.WriteString(Bold)
-		buf.WriteString(thPalette(name))
+		buf.WriteString(hue)
 		buf.WriteString(name)
 		buf.WriteString(Reset)
 		if collapsedN > 0 {
@@ -696,7 +772,15 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 // identity-hue coloring with thHover() — foreground-only, so it layers
 // safely regardless of isCurrent/isCursor, which own the MARGIN column
 // (▌/▶) and are untouched here.
-func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent, hovered bool, collapsedN int, folded bool) {
+//
+// receded (phase 3C damped mode): the GROUP's aggregate receded state
+// (frame.go's recededHeader — true only when neither the anchor's project
+// nor a fire lives anywhere in this group). Dims the corner/marker to
+// thDim() and, for a real attention glyph, freezes its animation via
+// dampMarker — same "keeps structure, loses hue" treatment as
+// writeGroupHeader, since this row IS the header for marked groups. Always
+// false when the knob is off or unanchored.
+func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent, hovered, receded bool, collapsedN int, folded bool) {
 	switch {
 	case isCurrent:
 		// Same breath-pulsing ▌ the current project row carries — without
@@ -723,8 +807,13 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// decoration. The split keys on ATTENTION, not the glyph — the
 	// waiting pulse's off-phase frame is itself "·".
 	name := p.Name
-	if att := projectAttention(p); att == "" || att == proto.AttIdle || p.Status == "absent" {
-		buf.WriteString(thPalette(name))
+	att := projectAttention(p)
+	if att == "" || att == proto.AttIdle || p.Status == "absent" {
+		hue := thPalette(name)
+		if receded {
+			hue = thDim()
+		}
+		buf.WriteString(hue)
 		// ╭ promises a frame below it; a fully folded group has none, so
 		// it opens with the disclosure triangle instead.
 		if folded {
@@ -734,6 +823,9 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 		}
 	} else {
 		glyph, color := MarkerFor(*p, animator, nowFn())
+		if receded {
+			glyph, color = dampMarker(att, glyph)
+		}
 		buf.WriteString(color)
 		buf.WriteString(glyph)
 	}
@@ -745,9 +837,13 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// dash fill and no glyph+dash combo: live dogfood showed both read
 	// as clutter (a pane half-full of ragged rules; "◐─ name" noise) —
 	// the corner/marker, hue, and Bold carry "this is a header" alone.
-	if hovered {
+	switch {
+	case hovered:
 		buf.WriteString(thHover())
-	} else {
+	case receded:
+		buf.WriteString(Bold)
+		buf.WriteString(thDim())
+	default:
 		buf.WriteString(Bold)
 		buf.WriteString(thPalette(name))
 	}
@@ -958,7 +1054,15 @@ func joinNonEmpty(dst *bytes.Buffer, subs []*bytes.Buffer, sep string) {
 // coloring with thHover() — the margin/prefix dispatch above (urgent/
 // current/gutter) is untouched, so a hovered row that is also current or
 // urgent keeps its ▌ and just gains the name treatment.
-func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent, hovered bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
+//
+// receded (phase 3C damped mode): dims the MARKER (glyph+color) and the
+// NAME to thDim() and, for waiting/working, freezes the marker's animation
+// via dampMarker — "no pulsing, no spinners in peripheral vision". The
+// margin (▌/gutter) above is untouched; focusReceded already guarantees
+// urgent (and thus this row's own red ▌) is never true when receded is —
+// urgency always wins that row before it gets here. Always false when the
+// knob is off or unanchored.
+func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, animator *Animator, nowFn func() int64, urgent, hovered, receded bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
 	// gutter: the grouped sidebar's frame prefix ("  │" in the group's
 	// color) so a current row no longer punches a hole through its frame
 	// ("the indentation is kinda off" — live review 2026-07-30). Empty
@@ -1003,6 +1107,9 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	if (DemoteMode != "off" && isStaleRow(p, nowFn())) || p.Unmanaged {
 		color = thDim()
 	}
+	if receded {
+		glyph, color = dampMarker(projectAttention(&pForMarker), glyph)
+	}
 	buf.WriteString(color)
 	buf.WriteString(glyph)
 	buf.WriteString(Reset)
@@ -1011,12 +1118,14 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	switch {
 	case hovered:
 		buf.WriteString(thHover())
+	case receded:
+		buf.WriteString(thDim())
 	case isCurrent:
 		buf.WriteString(Bold)
 		buf.WriteString(thPalette(p.Name))
 	}
 	buf.WriteString(displayName(p.Name))
-	if hovered || isCurrent {
+	if hovered || isCurrent || receded {
 		buf.WriteString(Reset)
 	}
 	// Agent Teams badge (phase4-v16, slice 4) — same placement as the
@@ -1144,7 +1253,16 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 // dim treatment — the live pointer signal wins. The prefix dispatch above
 // (gutter/urgent/cursor) is untouched, so the ▶ cursor marker survives a
 // hover exactly as the spec requires.
-func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent, isCursor, hovered bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
+//
+// receded (phase 3C damped mode): folds into the same dim-name branch as
+// stale/absent/unmanaged, and additionally overrides the marker glyph via
+// dampMarker so a receded row's waiting pulse / working spinner freezes
+// (only the color changes for stale/absent, which already carry no
+// animation to speak of). hovered still wins — the live pointer signal is
+// feedback, not attention, and stays visible even in peripheral vision.
+// focusReceded guarantees urgent is never true alongside receded, so the
+// prefix dispatch above never needs to know about damping.
+func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, urgent, isCursor, hovered, receded bool, teamGroups []*proto.TeamGroup, teamRows bool, gutter string) {
 	buf.WriteString(gutter)
 	rowStart := buf.Len()
 	switch {
@@ -1177,15 +1295,18 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	if stale || p.Unmanaged {
 		color = thDim()
 	}
+	if receded {
+		glyph, color = dampMarker(projectAttention(&pForMarker), glyph)
+	}
 	buf.WriteString(color)
 	buf.WriteString(glyph)
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
 
-	// Name (truncated to width budget). Stale, absent, and unmanaged rows
-	// recede whole-row. Unmanaged sessions are dim by design (they're not
-	// tracked projects — just adopted polecat/scratch sessions). The name
-	// carries the dimming where the eye actually rests.
+	// Name (truncated to width budget). Stale, absent, unmanaged, and
+	// receded rows recede whole-row. Unmanaged sessions are dim by design
+	// (they're not tracked projects — just adopted polecat/scratch
+	// sessions). The name carries the dimming where the eye actually rests.
 	nameCap := width - 14
 	if nameCap < 10 {
 		nameCap = 10
@@ -1195,7 +1316,7 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 		buf.WriteString(thHover())
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 		buf.WriteString(Reset)
-	case stale || p.Status == "absent" || p.Unmanaged:
+	case stale || p.Status == "absent" || p.Unmanaged || receded:
 		buf.WriteString(thDim())
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 		buf.WriteString(Reset)

@@ -23,7 +23,7 @@ func TestThemeClassicIsPassthrough(t *testing.T) {
 		t.Error("thPalette must pass through PaletteFor")
 	}
 	if thDim() != Dim || thWorking() != Icy || thDone() != Yellow ||
-		thDead() != RedPulse || thUrgentBar() != RedBorder {
+		thDead() != RedPulse || thUrgentBar() != RedBorder || thAnchor() != Icy {
 		t.Error("classic tokens must equal the raw constants")
 	}
 	for _, age := range []int64{0, int64(WaitWarnSec), int64(WaitUrgentSec) + 1} {
