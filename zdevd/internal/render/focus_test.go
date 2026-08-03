@@ -82,6 +82,31 @@ func TestAnchorRowRendersFirstWithElapsed(t *testing.T) {
 	}
 }
 
+// An auto-anchor (phase 3D, docs/design/command-centre.md — "the dwell
+// auto-anchor") is encoded as a Title-naming convention with NO schema
+// field (see zdevd/internal/hub/autoanchor.go's isAutoAnchor) — the
+// renderer needs no code change at all, since it already draws Title
+// verbatim. This test exists to VERIFY that at a representative sidebar
+// width (50 cols) the "(auto)" suffix reads fine and never gets truncated
+// away, which would silently misrepresent an inferred anchor as an
+// explicit pick.
+func TestAnchorRowRendersAutoSuffixAtStandardWidth(t *testing.T) {
+	withFocus(t, true)
+
+	snap := &proto.Snapshot{
+		Anchor:   &proto.Anchor{Title: "example/backend (auto)", Project: "example/backend", SinceTS: fixedNow - 18*60},
+		Projects: []proto.Project{{Name: "example/backend", Status: "alive"}},
+	}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	lines := strings.Split(out, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("empty frame")
+	}
+	if want := "▶ now  example/backend (auto) · 18m"; lines[0] != want {
+		t.Errorf("anchor row = %q, want %q", lines[0], want)
+	}
+}
+
 // A title too long for the pane truncates with an ellipsis — the elapsed
 // time is the one thing that must never be pushed off the edge.
 func TestAnchorRowTitleTruncatesAtNarrowWidth(t *testing.T) {
