@@ -9,9 +9,11 @@
 #          "waiting" / "needs-input" → ●  (untagged wait; triage treats as decision)
 #          "done" / "idle" / "finished" → ◆  (turn ended; clears the working
 #          heartbeat + any wait — fired by the Stop hook)
-#          "working" → ◐  (turn in progress; fired by UserPromptSubmit and the
-#          PreToolUse heartbeat so the daemon shows working even when the pane
-#          title parks at a bare "claude" during a blocking hook)
+#          "working" → ◐  (turn in progress; fired by UserPromptSubmit —
+#          zdev-install-hooks maps it here as of phase 3E, superseding an
+#          older "clear" mapping — and, once wired, a PreToolUse heartbeat.
+#          With --json, the hub_event_name field in the piped payload tags
+#          WHICH of the two fired: see the Src line below.)
 #          "clear" → no marker (explicit release; compat/manual)
 #          "session-end" (with --json) → reads .reason from the SessionEnd
 #          hook payload: clean exits (clear/logout/exit/prompt_input_exit)
@@ -26,6 +28,24 @@
 #   triage queue shows what the agent actually wants instead of scraped
 #   pane noise. Requires jq; silently degrades to no-summary without it.
 #   Only meaningful when invoked FROM a hook (hooks always pipe JSON).
+#
+#   For "working" specifically, --json also extracts the payload's
+#   `hook_event_name` field (phase 3E, docs/design/command-centre.md —
+#   "hook-informed focus") and writes it as a 4th notif-file line: "prompt"
+#   when hook_event_name == "UserPromptSubmit", "heartbeat" for anything
+#   else (a PreToolUse mid-turn signal, once one is ever wired up). The
+#   daemon uses this to distinguish the operator actually typing a prompt
+#   from an agent's own tool-use heartbeat — the former can instant-anchor
+#   an attended project; the latter never does. Without jq, or on any
+#   payload without the field, this defaults to "heartbeat" — the
+#   conservative, never-instant-anchors value.
+#
+#   For "alive" (the SessionStart hook) with --json, a SEPARATE side
+#   effect: query the daemon's anchor + held set (zdev-show held --json,
+#   hard 1s timeout) and, if there's anything to say, print Claude Code's
+#   SessionStart hook contract on stdout so the fresh session opens knowing
+#   what zdev thinks "now" is. Fail-silent: no zdev-show/jq on PATH, no
+#   daemon, a timeout, or nothing anchored/held all print nothing.
 #
 # Wire Claude Code hooks to pass the cost-class and summary through
 # (zdev-install-hooks does this automatically), e.g.:
@@ -44,6 +64,12 @@ STATE="${2:-waiting}"
 # chars. Any failure → empty.
 SUMMARY=""
 REASON=""
+# SRC (phase 3E): meaningful only for STATE=working — see the "working"
+# case below. Defaults to "heartbeat", the conservative value that never
+# instant-anchors (tmuxctl.NotifSeen.Src's doc comment) — this covers no
+# jq, no --json, and a payload lacking hook_event_name, all with one
+# default rather than three special cases.
+SRC="heartbeat"
 if [ "${3:-}" = "--json" ] && command -v jq >/dev/null 2>&1; then
     PAYLOAD=$(cat 2>/dev/null || echo "")
     SUMMARY=$(printf '%s' "$PAYLOAD" | jq -r '(.last_assistant_message // .message // "")
@@ -51,6 +77,8 @@ if [ "${3:-}" = "--json" ] && command -v jq >/dev/null 2>&1; then
         | tr '\t' ' ' | cut -c1-160) || SUMMARY=""
     REASON=$(printf '%s' "$PAYLOAD" | jq -r '.reason // ""' 2>/dev/null \
         | tr '\t\n' '  ' | sed 's/[[:space:]]*$//') || REASON=""
+    HOOK_EVENT=$(printf '%s' "$PAYLOAD" | jq -r '.hook_event_name // ""' 2>/dev/null) || HOOK_EVENT=""
+    [ "$HOOK_EVENT" = "UserPromptSubmit" ] && SRC="prompt"
 fi
 
 # session-end (roadmap NOW#3): the SessionEnd hook reports WHY the
@@ -90,6 +118,101 @@ TS_DIR="${TMP_PARENT}zdevd-notif"
 TS_FILE="${TS_DIR}/zdev-notif-${SESSION}.ts"
 mkdir -p "$TS_DIR" 2>/dev/null || true
 
+# run_with_timeout SECS CMD... (phase 3E helper)
+#
+# macOS ships no `timeout`/`gtimeout` by default, so this is a portable
+# bash-3.2 substitute: run CMD in the background, race it against a
+# sleep-then-kill watchdog, and print CMD's captured stdout ONLY if it
+# exited before the watchdog fired. Non-zero return (killed, or CMD itself
+# failed) means "print nothing" — the caller's job is to treat that as
+# silent failure, never partial output.
+run_with_timeout() {
+    secs="$1"; shift
+    outfile=$(mktemp 2>/dev/null) || return 1
+    "$@" >"$outfile" 2>/dev/null &
+    cmd_pid=$!
+    ( sleep "$secs"; kill -TERM "$cmd_pid" 2>/dev/null ) &
+    watchdog_pid=$!
+    if wait "$cmd_pid" 2>/dev/null; then
+        kill "$watchdog_pid" 2>/dev/null; wait "$watchdog_pid" 2>/dev/null
+        cat "$outfile" 2>/dev/null
+        rm -f "$outfile"
+        return 0
+    fi
+    kill "$watchdog_pid" 2>/dev/null; wait "$watchdog_pid" 2>/dev/null
+    rm -f "$outfile"
+    return 1
+}
+
+# format_elapsed FROM_TS NOW_TS → "Ns" / "Nm" / "Nh" (phase 3E helper).
+format_elapsed() {
+    delta=$(( ${2:-0} - ${1:-0} ))
+    [ "$delta" -lt 0 ] && delta=0
+    if [ "$delta" -lt 60 ]; then
+        printf '%ds' "$delta"
+    elif [ "$delta" -lt 3600 ]; then
+        printf '%dm' $(( delta / 60 ))
+    else
+        printf '%dh' $(( delta / 3600 ))
+    fi
+}
+
+# emit_focus_context SESSION (phase 3E, docs/design/command-centre.md —
+# "hook-informed focus", mechanism 3 "sessions know the focus"): called
+# ONLY from the SessionStart hook's "alive" --json path. Queries the
+# daemon's anchor + held set with a hard 1s timeout and, if there is
+# anything to report, prints Claude Code's SessionStart hook JSON contract
+# on stdout so the fresh session opens already knowing what zdev thinks
+# "now" is. Fail-silent and fast is the law here: ANY failure (no
+# zdev-show/jq on PATH, no daemon, a timeout, malformed output) or nothing
+# anchored/held prints NOTHING and returns 0 — a dead daemon must cost no
+# more than the 1s cap and never make SessionStart itself fail.
+emit_focus_context() {
+    sess="$1"
+    command -v zdev-show >/dev/null 2>&1 || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+
+    out=$(run_with_timeout 1 zdev-show held --json) || return 0
+    [ -n "$out" ] || return 0
+    printf '%s' "$out" | jq -e . >/dev/null 2>&1 || return 0
+
+    anchor_title=$(printf '%s' "$out" | jq -r '.anchor.title // empty' 2>/dev/null) || anchor_title=""
+    anchor_since=$(printf '%s' "$out" | jq -r '.anchor.since_ts // 0' 2>/dev/null) || anchor_since=0
+    held_count=$(printf '%s' "$out" | jq '(.held // []) | length' 2>/dev/null) || held_count=0
+    mine_titles=$(printf '%s' "$out" | jq -r --arg s "$sess" \
+        '[(.held // [])[] | select(.project == $s) | .title] | join(", ")' 2>/dev/null) || mine_titles=""
+    mine_count=$(printf '%s' "$out" | jq --arg s "$sess" \
+        '[(.held // [])[] | select(.project == $s)] | length' 2>/dev/null) || mine_count=0
+
+    # Nothing to say — the common case for an ordinary, focus-loop-unused
+    # session start. Stay silent; do not manufacture a JSON envelope with
+    # empty additionalContext.
+    if [ -z "$anchor_title" ] && { [ -z "$held_count" ] || [ "$held_count" = "0" ]; }; then
+        return 0
+    fi
+
+    ctx=""
+    if [ -n "$anchor_title" ]; then
+        elapsed=$(format_elapsed "$anchor_since" "$(date +%s)")
+        ctx="zdev focus: anchored on ${anchor_title} (${elapsed})."
+    fi
+    if [ -n "$mine_titles" ]; then
+        ctx="${ctx}${ctx:+ }Parked items for this project: ${mine_titles}."
+    fi
+    if [ -n "$held_count" ] && [ "$held_count" != "0" ]; then
+        rest=$(( held_count - mine_count ))
+        if [ "$rest" -gt 0 ]; then
+            ctx="${ctx}${ctx:+ }Full held set: M-; or zdev_held (${rest} more)."
+        else
+            ctx="${ctx}${ctx:+ }Full held set: M-; or zdev_held."
+        fi
+    fi
+    [ -n "$ctx" ] || return 0
+
+    jq -n --arg ctx "$ctx" \
+        '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null
+}
+
 # Map the state to a wait cost-class (triage slice 1). The kind is the
 # notif file's optional second line; zdevd ranks "permission" waits first
 # (seconds of the user's time unblocks an agent) and treats untagged
@@ -109,9 +232,13 @@ case "$STATE" in
         # delete: fsnotify deletions don't wake the daemon's watcher (see the
         # alive branch). Re-fired per tool call; each write refreshes the
         # daemon's freshness stamp.
+        #
+        # 4th line (phase 3E): $SRC ("prompt" / "heartbeat", computed above
+        # from the payload's hook_event_name) — the empty 3rd line is the
+        # summary slot, unused for working; see tmuxctl.NotifSeen.Src.
         TITLE="$TOOL"
         if [ -n "$SESSION" ]; then
-            printf '%s\nworking\n' "$(date +%s)" > "$TS_FILE" 2>/dev/null || true
+            printf '%s\nworking\n\n%s\n' "$(date +%s)" "$SRC" > "$TS_FILE" 2>/dev/null || true
         fi
         ;;
     clear)
@@ -142,6 +269,16 @@ case "$STATE" in
         TITLE="$TOOL"
         if [ -n "$SESSION" ]; then
             printf '%s\nalive\n' "$(date +%s)" > "$TS_FILE" 2>/dev/null || true
+        fi
+        # SessionStart focus context (phase 3E) — gated on --json (only the
+        # real SessionStart hook registration passes it; a bare manual
+        # `zdev-notify claude alive` never does) AND STATE=="alive"
+        # specifically (not the started/resumed manual aliases, which are
+        # not hooks). Failure inside emit_focus_context must never abort
+        # the rest of this script (the tmux title update and timeline
+        # append below still need to run), hence the `|| true`.
+        if [ "$STATE" = "alive" ] && [ "${3:-}" = "--json" ]; then
+            emit_focus_context "$SESSION" 2>/dev/null || true
         fi
         ;;
     died|dead)
