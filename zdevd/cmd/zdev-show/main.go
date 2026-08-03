@@ -16,6 +16,10 @@
 //	zdev-show triage --json    # structured queue (phone Shortcuts, widgets)
 //	zdev-show list --json      # every project row as structured JSON
 //	zdev-show teams            # live team members as TSV for the M-p switcher
+//	zdev-show review           # human-readable landing-readiness queue
+//	zdev-show review --json    # structured review gauge
+//	zdev-show time             # today's commitments, InFocus, FreeUntil, calendar health
+//	zdev-show time --json      # structured time-spine surface
 //
 // zdev-show dials the daemon's unix socket, reads one snapshot, and exits.
 // It never subscribes to the stream — the connection is closed immediately
@@ -35,6 +39,7 @@ import (
 
 	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/config"
+	"github.com/tristankenney/zdev/zdevd/internal/diag"
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
@@ -198,6 +203,36 @@ func run() int {
 			return 1
 		}
 		fmt.Println(out)
+		return 0
+	}
+
+	// `time` (phase 2, docs/design/command-centre.md) is the focus-loop time
+	// spine's acceptance surface: today's commitments, InFocus, FreeUntil,
+	// and calendar SOURCE HEALTH. Health doesn't live on the snapshot (see
+	// diag.Reply's phase-2 comment) so this is the one zdev-show subcommand
+	// that dials the daemon TWICE — the normal snapshot subscription above,
+	// plus a diag round-trip. A diag failure degrades to "health unknown"
+	// rather than failing the whole command — the commitments/InFocus/
+	// FreeUntil data the operator asked for is still valid and worth
+	// printing even if the health side-channel is unreachable.
+	if os.Args[1] == "time" {
+		diagCtx, diagCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		reply, diagErr := socket.DialDiag(diagCtx, defaultSocketPath())
+		diagCancel()
+		now := time.Now().Unix()
+		if len(os.Args) >= 3 && os.Args[2] == "--json" {
+			out, err := formatTimeJSON(snap, reply)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "zdev-show: %v\n", err)
+				return 1
+			}
+			fmt.Println(out)
+			return 0
+		}
+		fmt.Print(formatTime(snap, reply, now))
+		if diagErr != nil {
+			fmt.Fprintf(os.Stderr, "zdev-show: calendar health unavailable: %v\n", diagErr)
+		}
 		return 0
 	}
 
@@ -661,6 +696,134 @@ func reviewCounts(r proto.ReviewRepo) string {
 		parts = append(parts, fmt.Sprintf("%s%d rot%s", yellow, r.WillRot, reset))
 	}
 	return strings.Join(parts, dim+" · "+reset)
+}
+
+// formatTime renders the focus-loop time spine (phase 2,
+// docs/design/command-centre.md): the InFocus/FreeUntil headline, one line
+// per today's commitment in chronological order (verbatim from
+// snap.Commitments — this never re-derives or re-sorts), and the calendar
+// source's health. Commitments come straight off the wire; InFocus/FreeUntil
+// are the hub's derivations, not recomputed here — this command is a
+// window onto the daemon's view, never a second opinion on it.
+func formatTime(snap *proto.Snapshot, health *diag.Reply, now int64) string {
+	var b strings.Builder
+	switch {
+	case snap.InFocus:
+		fmt.Fprintf(&b, "%s%sIn focus%s\n", bold, cyan, reset)
+	case snap.FreeUntil > 0:
+		until := time.Unix(snap.FreeUntil, 0).Local()
+		fmt.Fprintf(&b, "Free until %s%s%s %s(in %s)%s\n",
+			bold, until.Format("15:04"), reset, dim, formatAge(snap.FreeUntil-now), reset)
+	default:
+		fmt.Fprintf(&b, "%sFree — nothing else today%s\n", dim, reset)
+	}
+
+	if len(snap.Commitments) == 0 {
+		b.WriteString("(no commitments today)\n")
+	} else {
+		for i, c := range snap.Commitments {
+			start := time.Unix(c.At, 0).Local().Format("15:04")
+			end := "-"
+			if c.Until > 0 {
+				end = time.Unix(c.Until, 0).Local().Format("15:04")
+			}
+			kind := c.Kind
+			if kind == "" {
+				kind = "meeting"
+			}
+			fmt.Fprintf(&b, "%d. %s-%s  %-28s %s[%s]%s\n", i+1, start, end, c.Title, dim, kind, reset)
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(formatCalendarHealth(health, now))
+	return b.String()
+}
+
+// formatCalendarHealth renders the calendar source's health line(s):
+// unreachable diag, unconfigured feed, a healthy last-fetch age, or an
+// active error with how long ago the last KNOWN-GOOD fetch was (0 known-good
+// fetches ever is called out explicitly — "never fetched successfully" is a
+// materially different situation from "was fine 3 minutes ago").
+func formatCalendarHealth(h *diag.Reply, now int64) string {
+	if h == nil {
+		return dim + "calendar: (health unavailable — daemon diag unreachable)" + reset + "\n"
+	}
+	if h.CalendarLastOK == "" && h.CalendarLastErr == "" {
+		return dim + "calendar: (not configured — set ZDEV_CALENDAR_ICS)" + reset + "\n"
+	}
+	var b strings.Builder
+	if h.CalendarLastErr != "" {
+		fmt.Fprintf(&b, "%scalendar: ERROR%s %s\n", red, reset, h.CalendarLastErr)
+		if okAge, ok := calendarAgeSince(h.CalendarLastOK, now); ok {
+			fmt.Fprintf(&b, "%s  last ok %s ago%s\n", dim, formatAge(okAge), reset)
+		} else {
+			fmt.Fprintf(&b, "%s  never fetched successfully%s\n", dim, reset)
+		}
+		return b.String()
+	}
+	if okAge, ok := calendarAgeSince(h.CalendarLastOK, now); ok {
+		fmt.Fprintf(&b, "%scalendar: ok%s %s(fetched %s ago)%s\n", green, reset, dim, formatAge(okAge), reset)
+	}
+	return b.String()
+}
+
+// calendarAgeSince parses an RFC3339Nano diag timestamp and returns its age
+// relative to now. ok=false when raw is empty or unparsable.
+func calendarAgeSince(raw string, now int64) (age int64, ok bool) {
+	if raw == "" {
+		return 0, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return 0, false
+	}
+	return now - t.Unix(), true
+}
+
+// timeJSONOut is the structured form behind `zdev-show time --json` — a
+// small, stable consumer contract (like triageJSONEntry), not a dump of
+// proto.Snapshot.
+type timeJSONOut struct {
+	Commitments []proto.Commitment `json:"commitments"`
+	InFocus     bool               `json:"in_focus"`
+	FreeUntil   int64              `json:"free_until,omitempty"`
+	Calendar    timeHealthJSON     `json:"calendar"`
+}
+
+type timeHealthJSON struct {
+	// Configured is false only when the daemon has never observed
+	// ZDEV_CALENDAR_ICS set (no last-ok timestamp AND no error ever
+	// recorded) — distinct from Configured=true, LastErr!="" (configured
+	// but currently broken).
+	Configured bool   `json:"configured"`
+	LastOK     string `json:"last_ok,omitempty"`
+	LastErr    string `json:"last_err,omitempty"`
+	LastErrAt  string `json:"last_err_at,omitempty"`
+}
+
+// formatTimeJSON marshals the time-spine surface. Commitments is always a
+// `[]`, never `null`, on the wire — an empty day is a real, valid answer,
+// not the absence of one.
+func formatTimeJSON(snap *proto.Snapshot, health *diag.Reply) (string, error) {
+	out := timeJSONOut{
+		Commitments: snap.Commitments,
+		InFocus:     snap.InFocus,
+		FreeUntil:   snap.FreeUntil,
+	}
+	if out.Commitments == nil {
+		out.Commitments = []proto.Commitment{}
+	}
+	if health != nil {
+		out.Calendar = timeHealthJSON{
+			Configured: health.CalendarLastOK != "" || health.CalendarLastErr != "",
+			LastOK:     health.CalendarLastOK,
+			LastErr:    health.CalendarLastErr,
+			LastErrAt:  health.CalendarLastErrAt,
+		}
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
 }
 
 // reviewAge formats a repo's longest-rotting age, or "-" when unknown.

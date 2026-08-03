@@ -640,7 +640,7 @@ func (h *Hub) Run(ctx context.Context) error {
 // without an edit here.
 func (h *Hub) buildDiagReply() *diag.Reply {
 	now := time.Now()
-	return &diag.Reply{
+	r := &diag.Reply{
 		Type:            "diag-reply",
 		V:               1,
 		UptimeSec:       now.Sub(h.startedAt).Seconds(),
@@ -652,6 +652,18 @@ func (h *Hub) buildDiagReply() *diag.Reply {
 		Errors1h:        h.errCounter.Sum(now),
 		Socket:          h.socketPath,
 	}
+	// Calendar source health (phase 2): populated only once the probe has
+	// run at least once. Zero-value h.state.commitmentsLastOK formats to
+	// "0001-01-01…", which is a worse "never fetched" signal than an empty
+	// string, so the zero time is left as "" explicitly.
+	if !h.state.commitmentsLastOK.IsZero() {
+		r.CalendarLastOK = h.state.commitmentsLastOK.UTC().Format(time.RFC3339Nano)
+	}
+	r.CalendarLastErr = h.state.commitmentsLastErr
+	if !h.state.commitmentsLastErrAt.IsZero() {
+		r.CalendarLastErrAt = h.state.commitmentsLastErrAt.UTC().Format(time.RFC3339Nano)
+	}
+	return r
 }
 
 // DiagSnapshot returns a current ARCH-10 diag.Reply via a chan round-trip
@@ -1003,6 +1015,23 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 	// ReviewGauge (phase4-v21): a bucket flip, a new/removed ready PR, or a
 	// genuine reorder must publish so the gauge surface stays correct.
 	if !reviewGaugeEqual(a.ReviewGauge, b.ReviewGauge) {
+		return false
+	}
+	// Commitments/InFocus/FreeUntil (phase 2, docs/design/command-centre.md):
+	// a calendar refresh, a commitment starting, or the "next" commitment
+	// changing must all publish so the airlock/fits-verdict inputs stay
+	// current. This is SAFE against the idempotent 1Hz heartbeat because
+	// none of the three is a function of `now` alone between events:
+	// FreeUntil is an absolute timestamp that only moves when the set
+	// changes or a boundary is actually crossed (see deriveFreeUntil's doc
+	// comment in commitments.go), and InFocus only flips at those same
+	// boundaries. A ticking clock with no boundary crossed compares equal
+	// on every field below, so this cannot reintroduce the publish storm
+	// DaemonLastEventTS/ReviewGauge age fields were excluded to prevent.
+	if a.InFocus != b.InFocus || a.FreeUntil != b.FreeUntil {
+		return false
+	}
+	if !commitmentsEqual(a.Commitments, b.Commitments) {
 		return false
 	}
 	return true

@@ -343,7 +343,19 @@ func run() error {
 	branchProbe := probes.NewBranchProbe(submitEvent, workspaceDir)
 	initiativeProbe := probes.NewInitiativeProbe(submitEvent, workspaceDir)
 
-	// Share ONE probe runtime across all five probes so the global subprocess
+	// CalendarProbe (phase 2, docs/design/command-centre.md "the time
+	// spine"): only constructed when ZDEV_CALENDAR_ICS is set (gap-filled
+	// from ~/.config/zdev/env by config.ApplyUserEnv above, same as every
+	// other ZDEV_/ZDEVD_ knob). A nil calendarProbe means the feature is
+	// entirely inert — no dispatch, no diag fields populated — rather than
+	// probing an empty URL every cycle for an operator who never configured
+	// one.
+	var calendarProbe *probes.CalendarProbe
+	if icsURL := os.Getenv("ZDEV_CALENDAR_ICS"); icsURL != "" {
+		calendarProbe = probes.NewCalendarProbe(submitEvent, icsURL)
+	}
+
+	// Share ONE probe runtime across all probes so the global subprocess
 	// concurrency cap (ZDEVD_PROBE_MAX_CONCURRENT, default 2) and per-key
 	// failure backoff are fleet-wide. Without this each probe would enforce
 	// the cap independently — the pre-consolidation bug where branch+gh+ci
@@ -354,6 +366,17 @@ func run() error {
 	lsofProbe.SetRuntime(probeRuntime)
 	branchProbe.SetRuntime(probeRuntime)
 	initiativeProbe.SetRuntime(probeRuntime)
+	if calendarProbe != nil {
+		calendarProbe.SetRuntime(probeRuntime)
+		// Initial warm-up refresh: don't wait for the first SessionChanged
+		// (which may be seconds away, or never arrive on a headless
+		// daemon-only start) before the operator's day is known. Mirrors
+		// lister.Refresh(ctx)'s initial-refresh-before-the-event-loop
+		// pattern just above; errors are non-fatal (RefreshIfStale/Refresh
+		// already records source health for the debug surface, and the
+		// 5-minute staleness cadence below retries regardless).
+		sched.RefreshIfStale(ctx, calendarProbe, "", 5*time.Minute)
+	}
 
 	// fsnotify watchers (D3-05 + D3-06).
 	//
@@ -450,6 +473,17 @@ func run() error {
 			sched.RefreshIfStale(ctx, branchProbe, probeKey, 180*time.Second)
 			sched.RefreshIfStale(ctx, ghProbe, probeKey, 5*time.Minute)
 			sched.RefreshIfStale(ctx, ciProbe, probeKey, 5*time.Minute)
+			// CalendarProbe (phase 2): piggybacks on the same "a session
+			// changed" liveness signal as gh/ci purely as a convenient,
+			// already-firing heartbeat — the feed itself is daemon-wide, not
+			// per-project, hence the fixed "" key (RefreshIfStale de-dupes
+			// on (class,key), so every SessionChanged across every project
+			// collapses onto the same single staleness gate). 5-minute
+			// cadence matches gh/ci; INITIATIVE.md-style content that
+			// rarely changes faster than that.
+			if calendarProbe != nil {
+				sched.RefreshIfStale(ctx, calendarProbe, "", 5*time.Minute)
+			}
 			// InitiativeProbe (phase4-v23): only for initiative-HOME
 			// projects — a bare name that is also another project's
 			// GroupKey (proto.HomeSet). INITIATIVE.md rarely changes, so
