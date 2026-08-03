@@ -102,23 +102,23 @@ func (p *CalendarProbe) Refresh(ctx context.Context, _ string) error {
 	return p.rt.Run(ctx, p.Class(), "calendar", calendarProbeTimeout, func(ctx context.Context) error {
 		resp, err := p.httpGet(ctx, p.icsURL)
 		if err != nil {
-			p.submit(tmuxctl.CommitmentsRefresh{FetchErr: fmt.Sprintf("fetch: %v", err)})
+			p.submit(tmuxctl.CommitmentsRefresh{FetchErr: fmt.Sprintf("fetch: %v", err), NowNanos: p.now().UnixNano()})
 			return fmt.Errorf("calendar fetch: %w", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			errMsg := fmt.Sprintf("fetch: unexpected HTTP status %d", resp.StatusCode)
-			p.submit(tmuxctl.CommitmentsRefresh{FetchErr: errMsg})
+			p.submit(tmuxctl.CommitmentsRefresh{FetchErr: errMsg, NowNanos: p.now().UnixNano()})
 			return fmt.Errorf("calendar %s", errMsg)
 		}
 		cal, err := ics.ParseCalendar(resp.Body)
 		if err != nil {
 			errMsg := fmt.Sprintf("parse: %v", err)
-			p.submit(tmuxctl.CommitmentsRefresh{FetchErr: errMsg})
+			p.submit(tmuxctl.CommitmentsRefresh{FetchErr: errMsg, NowNanos: p.now().UnixNano()})
 			return fmt.Errorf("calendar parse: %w", err)
 		}
 		commitments := commitmentsForToday(cal, p.now(), p.loc)
-		p.submit(tmuxctl.CommitmentsRefresh{Commitments: commitments})
+		p.submit(tmuxctl.CommitmentsRefresh{Commitments: commitments, NowNanos: p.now().UnixNano()})
 		return nil
 	})
 }

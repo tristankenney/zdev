@@ -6,6 +6,10 @@
 package hub
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,4 +157,35 @@ func TestSnapshotEqualsCore_HeldGatesPublish(t *testing.T) {
 	if snapshotEqualsCore(&withOne, &withOneDiff) {
 		t.Error("snapshotEqualsCore(same-length differing Held) = true, want false")
 	}
+}
+
+// The park reply must mean PERSISTED, not just applied: SubmitPark's ack
+// closes only after publishPass has run saveState, so a daemon killed the
+// instant after ok:true cannot lose the park. This is the trust contract's
+// sharpest edge ('nothing deferred is lost') and the exact gap the
+// invariants review flagged — every other mutation tolerates the debounce
+// window; a park may not.
+func TestSubmitPark_AckMeansPersisted(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	h := NewHub(Config{Debounce: time.Hour, StatePath: statePath}) // debounce can never fire in-test
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { _ = h.Run(ctx); close(done) }()
+
+	if err := h.SubmitPark(ctx, "must survive"); err != nil {
+		t.Fatalf("SubmitPark: %v", err)
+	}
+	// The ack has returned; the state file must ALREADY hold the park —
+	// no polling, no waiting for a debounce that is an hour away.
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("state file not written by ack time: %v", err)
+	}
+	if !strings.Contains(string(raw), "must survive") {
+		t.Errorf("state file does not contain the parked text:\n%s", raw)
+	}
+	cancel()
+	<-done
 }

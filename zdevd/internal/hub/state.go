@@ -829,12 +829,12 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// `zdev-show time` / diag can surface it.
 		if e.FetchErr == "" {
 			s.commitments = e.Commitments
-			s.commitmentsLastOK = time.Now()
+			s.commitmentsLastOK = time.Unix(0, e.NowNanos)
 			s.commitmentsLastErr = ""
 			s.commitmentsLastErrAt = time.Time{}
 		} else {
 			s.commitmentsLastErr = e.FetchErr
-			s.commitmentsLastErrAt = time.Now()
+			s.commitmentsLastErrAt = time.Unix(0, e.NowNanos)
 		}
 
 	case tmuxctl.PRRefresh:

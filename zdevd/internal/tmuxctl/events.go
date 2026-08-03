@@ -381,6 +381,12 @@ func (TeamsChanged) isEvent() {}
 type CommitmentsRefresh struct {
 	Commitments []proto.Commitment
 	FetchErr    string
+	// NowNanos is the probe-side wall-clock sample for the health
+	// timestamps (commitmentsLastOK/ErrAt). Threaded like ParkText's so
+	// applyEvent never touches the clock itself — the invariants review
+	// caught the first version sampling time.Now() inside the mutation
+	// path, one case below the sibling that got it right.
+	NowNanos int64
 }
 
 func (CommitmentsRefresh) isEvent() {}

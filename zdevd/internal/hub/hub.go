@@ -634,14 +634,16 @@ func (h *Hub) Run(ctx context.Context) error {
 			// here, so applyEvent stays deterministic and testable without
 			// touching the wall clock itself.
 			applyEvent(h.state, tmuxctl.ParkText{Text: req.text, NowNanos: req.nowNanos}, nil)
-			// Arm debounce so subscribers see the updated held set promptly —
-			// same pattern as the cursor branch above.
-			if timer == nil {
-				timer = time.NewTimer(h.debounce)
-				debounceFired = timer.C
-			} else {
-				resetDebounce(timer, h.debounce)
-			}
+			// Publish SYNCHRONOUSLY — not via the debounce the cursor
+			// branch arms. publishPass persists state before the reply
+			// closes, so the ok:true the popup shows means ON DISK, not
+			// "will be on disk unless the daemon dies inside the debounce
+			// window". Every other mutation tolerates that window; a park
+			// is the one place the product's stated contract is 'nothing
+			// deferred is lost', and the invariants review called the gap
+			// (2026-08-04). Parks are human-keystroke rare — bypassing
+			// the debounce coalescing costs nothing.
+			publishPass()
 			close(req.reply)
 
 		case <-h.errInc:
