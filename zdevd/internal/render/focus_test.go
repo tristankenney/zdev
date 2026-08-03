@@ -155,8 +155,17 @@ func TestHoldingCounterOnlyWhenHeld(t *testing.T) {
 	}
 	out2 := stripAnsi(Render(held, 50, NewAnimator(), fixedNowFn))
 	lines := strings.Split(out2, "\n")
-	if len(lines) < 2 || lines[1] != "  ┊ holding 2" {
-		t.Errorf("holding counter must be the second line \"  ┊ holding 2\", got %+v", lines)
+	// Hue-coded counter (calibration 2026-08-03): held WAITS get their own
+	// accented count — one parked + one wait renders "┊ holding 2 · ●1".
+	if len(lines) < 2 || lines[1] != "  ┊ holding 2 · ●1" {
+		t.Errorf("holding counter must be \"  ┊ holding 2 · ●1\", got %+v", lines)
+	}
+	// And a parked-only held set stays a flat dim count — no accent.
+	parkedOnly := base()
+	parkedOnly.Held = []proto.HeldItem{{ID: "a", Kind: "parked", Title: "t1", SinceTS: fixedNow}}
+	out3 := stripAnsi(Render(parkedOnly, 50, NewAnimator(), fixedNowFn))
+	if !strings.Contains(out3, "┊ holding 1\n") || strings.Contains(out3, "●") {
+		t.Errorf("parked-only counter must have no wait accent, got:\n%s", out3)
 	}
 }
 
@@ -247,12 +256,15 @@ func TestDampedModeRecedesQuietRowsAndFiresKeepColor(t *testing.T) {
 
 	out := Render(focusDampSnapshot(), 50, NewAnimator(), fixedNowFn)
 
+	// Recalibrated 2026-08-03 ("I do like multi tasking"): damping kills
+	// MOTION, never information. A waiting row keeps its hue and shows the
+	// pulse PEAK, frozen — legible at a glance, grabbing nothing.
 	alpha := rawLineWithName(out, "alpha")
-	if !strings.Contains(alpha, Dim) {
-		t.Errorf("receded row (alpha, fresh wait) must carry Dim, got %q", alpha)
+	if !strings.Contains(stripAnsi([]byte(alpha)), "●") {
+		t.Errorf("receded waiting row must freeze at the pulse peak ●, got %q", alpha)
 	}
-	if !strings.Contains(stripAnsi([]byte(alpha)), "·") {
-		t.Errorf("receded waiting row's marker must freeze to the resting glyph ·, got %q", alpha)
+	if !strings.Contains(alpha, thWaiting(0)) {
+		t.Errorf("receded waiting row keeps its waiting hue (static), got %q", alpha)
 	}
 
 	beta := rawLineWithName(out, "beta")

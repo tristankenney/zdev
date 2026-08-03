@@ -186,7 +186,17 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 	// The alternative (leaving the bit unset so it fires on un-anchor)
 	// floods the operator at the exact moment they release the anchor,
 	// which is precisely the wrong moment (deliberate choice).
-	if s.anchor != nil {
+	// The airlock gates on EXPLICIT anchors only (calibration, 2026-08-03,
+	// "I do like multi tasking"): an auto-anchor is zdev noticing where the
+	// operator happens to be — a tether for cheap return, not a declared
+	// deep-work session. For a fleet operator, foreign waits ARE the work
+	// queue, and hopping to service them is the job, not self-distraction.
+	// The system's confidence in intent scales with the evidence: a
+	// deliberate act (M-,, a boundary pick, /plan) earns the full shield;
+	// inferred presence earns only quiet visuals (render damping). This is
+	// also the trust play — un-asked-for silence is how the operator ends
+	// up checking manually, the design's terminal failure mode.
+	if s.anchor != nil && !isAutoAnchor(s.anchor) {
 		anchorKey := ""
 		if s.anchor.Project != "" {
 			anchorKey = proto.SessionKey(s.anchor.Project)
@@ -248,7 +258,7 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 		// partition, so it would count waits being held silently. The
 		// surviving (pierced) crossings are the only honest number.
 		waitCount := eligibleWaits
-		if s.anchor != nil {
+		if s.anchor != nil && !isAutoAnchor(s.anchor) {
 			waitCount = len(crossings)
 		}
 		if waitCount > 0 {

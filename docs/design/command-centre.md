@@ -301,6 +301,28 @@ from an earlier iteration. For this operator that is the distraction engine
 wearing a helpful hat. "What else can I do" is answered only at boundaries
 or when the command centre is opened by hand.
 
+### Calibration: the tether and the shield (2026-08-03)
+
+Living with the ambient anchor for an afternoon surfaced a miscalibration:
+damping was designed for occasional deliberate focus, and the auto-anchor
+made it the sidebar's default condition — the fleet went dim and silent
+for most of the day. The operator's correction: **"I do like multi
+tasking."** For a fleet operator, hopping to service a wait IS the job;
+what ADHD costs is not leaving but LOSING THE WAY BACK. So:
+
+- **The anchor is a tether, not a wall.** Its job is cheap re-entry.
+- **Auto-anchor = tether only**: damped visuals, full notifications. The
+  airlock gates on `!isAutoAnchor` — inferred presence earns quiet, never
+  silence. Un-asked-for silence is how the operator ends up checking
+  manually, the terminal failure mode.
+- **Explicit anchor = the deep shield, opt-in** (`M-,`, a boundary pick,
+  `/plan`): full airlock, exactly as originally designed. Confidence in
+  intent scales with the evidence.
+- **Damping kills motion, never information**: waiting rows freeze at the
+  pulse peak in their full hue; working freezes its spinner in hue;
+  finished keeps its glyph and hue; only genuinely idle rows dim. The
+  holding counter hue-codes person-shaped items ("┊ holding 3 · ●2").
+
 ## The surfaces
 
 ### Sidebar (ambient — contracts, never grows)

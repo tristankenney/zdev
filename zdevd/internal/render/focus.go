@@ -91,9 +91,24 @@ func renderAnchorRow(buf *bytes.Buffer, snap *proto.Snapshot, width int, nowFn f
 	// something — its entire job is proof the airlock works, so an empty
 	// held set draws nothing rather than a permanent "holding 0".
 	if len(snap.Held) > 0 {
+		// Hue-coded (calibration 2026-08-03): a held WAIT is a
+		// person-shaped item — the counter says so in the waiting hue
+		// ("┊ holding 3 · ●2") instead of hiding it in a flat dim number.
+		waits := 0
+		for i := range snap.Held {
+			if snap.Held[i].Kind == "wait" {
+				waits++
+			}
+		}
 		buf.WriteString("  ")
 		buf.WriteString(thDim())
 		fmt.Fprintf(buf, "┊ holding %d", len(snap.Held))
+		if waits > 0 {
+			buf.WriteString(" · ")
+			buf.WriteString(Reset)
+			buf.WriteString(thWaiting(0))
+			fmt.Fprintf(buf, "●%d", waits)
+		}
 		buf.WriteString(Reset)
 		buf.WriteString(ClearLineEnd)
 		buf.WriteByte('\n')
@@ -122,20 +137,28 @@ func focusReceded(damped bool, anchorProject string, p *proto.Project, urgent bo
 	return !(urgent || projectAttention(p) == proto.AttDead)
 }
 
-// dampMarker overrides a receded row's attention glyph per the design's "no
-// pulsing, no spinners in peripheral vision": the waiting pulse freezes at
-// its resting frame (PulseFrames[0], "·") and the working spinner freezes at
-// its first frame (WorkFrames[0], "◐") — both already the calmest glyph in
-// their own cycle, so freezing there reads as "quiet", not "broken".
-// Finished/idle/absent markers have no animation to freeze, so only their
-// color changes. Only called when focusReceded is true — dead/urgent rows
-// never reach here; they pierce with their normal animated glyph and color.
+// dampMarker overrides a receded row's attention glyph. Recalibrated
+// 2026-08-03 ("I do like multi tasking"): damping kills MOTION, never
+// information. For a fleet operator the peripheral fleet state IS the work
+// queue — hopping to service a wait is the job, so a wait must stay
+// legible at a glance even while anchored. What changes per attention:
+//
+//	waiting  → frozen at the pulse PEAK ("●"), full waiting hue — visible,
+//	           motionless. (The first cut froze it to the resting "·" in
+//	           dim, which erased the information along with the motion.)
+//	working  → frozen spinner frame, its normal hue — "busy, fine".
+//	finished → its normal glyph and hue, static as always.
+//	idle/absent → dim; genuinely quiet rows are the only ones that recede.
+//
+// Dead/urgent rows never reach here — they pierce fully animated.
 func dampMarker(att proto.Attention, glyph string) (newGlyph, color string) {
 	switch att {
 	case proto.AttWaiting:
-		return PulseFrames[0], thDim()
+		return "●", thWaiting(0)
 	case proto.AttWorking:
-		return WorkFrames[0], thDim()
+		return WorkFrames[0], thWorking()
+	case proto.AttFinished:
+		return glyph, thDone()
 	default:
 		return glyph, thDim()
 	}
