@@ -33,16 +33,22 @@ func TestNewLoadsFrames(t *testing.T) {
 	if d.frames[0].DelaySeconds != 0 {
 		t.Errorf("frame[0].DelaySeconds = %d, want 0", d.frames[0].DelaySeconds)
 	}
-	// Last frame must have AttDead somewhere in it (the death frame).
-	last := d.frames[len(d.frames)-1]
+	// Some frame in the sequence must have AttDead somewhere in it (the
+	// death beat) — not necessarily the LAST frame. The marketplace/
+	// ai-at-pay fixture rebuild ends on a recovery epilogue (the dead
+	// member relaunched, waits cleared) so the GIF loops on a calm frame
+	// instead of freezing on the death; the death frame is second-to-last.
+	// Scan every frame rather than assume position.
 	hasDead := false
-	for _, p := range last.Snapshot.Projects {
-		if p.Attention == proto.AttDead {
-			hasDead = true
+	for _, f := range d.frames {
+		for _, p := range f.Snapshot.Projects {
+			if p.Attention == proto.AttDead {
+				hasDead = true
+			}
 		}
 	}
 	if !hasDead {
-		t.Error("final frame has no AttDead project; want a death in the demo sequence")
+		t.Error("no frame has an AttDead project; want a death in the demo sequence")
 	}
 }
 

@@ -1,7 +1,11 @@
 {
-    "delay_seconds": 4,
+    "delay_seconds": 5,
     "wait_start_age_sec": {
-        "marketplace/pay-app": 0
+        "marketplace/pay-app": 1200,
+        "marketplace/catalog-api": 400
+    },
+    "dead_since_age_sec": {
+        "marketplace/webhooks": 45
     },
     "snapshot": {
         "v": 1,
@@ -35,20 +39,16 @@
             {
                 "name": "ai-at-pay/agent-sdk",
                 "status": "alive",
-                "branch": "feature/tool-router",
-                "attention": "finished",
-                "dirty_count": 3,
-                "pr_open": 1,
-                "ci_status": "in_progress"
+                "branch": "feature/tool-router"
             },
             {
                 "name": "ai-at-pay/eval-harness",
                 "status": "alive",
                 "branch": "feature/regression-suite",
-                "attention": "working",
-                "agent_states": {
-                    "claude": "working"
-                }
+                "attention": "",
+                "pr_open": 1,
+                "ci_status": "completed",
+                "ci_conclusion": "success"
             },
             {
                 "name": "dotfiles",
@@ -65,17 +65,20 @@
                 "name": "marketplace/catalog-api",
                 "status": "alive",
                 "branch": "feat/expand-contract-migration",
-                "attention": "working",
+                "attention": "waiting",
                 "agent_states": {
-                    "claude": "working"
-                }
+                    "claude": "waiting"
+                },
+                "wait_kind": "decision",
+                "wait_started_ts": 0,
+                "wait_summary": "Which migration strategy \u2014 expand-contract or big-bang?"
             },
             {
                 "name": "marketplace/checkout-svc",
                 "status": "alive",
                 "branch": "feat/split-tender",
-                "ahead": 3,
-                "dirty_count": 2,
+                "ahead": 4,
+                "dirty_count": 0,
                 "pr_open": 1,
                 "ci_status": "completed",
                 "ci_conclusion": "success"
@@ -100,7 +103,10 @@
             {
                 "name": "marketplace/webhooks",
                 "status": "alive",
-                "branch": "feat/retry-backoff"
+                "branch": "feat/retry-backoff",
+                "attention": "dead",
+                "wait_started_ts": 0,
+                "wait_summary": "SessionEnd: uncaught panic \u2014 pane closed unexpectedly"
             },
             {
                 "name": "projects/backend-legacy",
@@ -131,7 +137,9 @@
         ],
         "current_session": "marketplace/checkout-svc",
         "triage": [
-            "marketplace/pay-app"
+            "marketplace/webhooks",
+            "marketplace/pay-app",
+            "marketplace/catalog-api"
         ]
     }
 }
