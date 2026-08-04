@@ -62,6 +62,18 @@ type parkModel struct {
 	// one View().
 	label string
 
+	// compact is set from the popup's own geometry: when tmux opens this
+	// as a thin bottom-edge strip (display-popup -h 2 -y S -B), a boxed
+	// prompt cannot fit and — more to the point — should not be there. A
+	// centred box makes capture feel like a MODE the operator entered,
+	// which is the derailment the park exists to prevent (live feedback,
+	// 2026-08-04). Short popup ⇒ one line, no border. Tall popup ⇒ the
+	// original box, still correct for a hand-run `zdev-park`.
+	compact bool
+	// width is the terminal's column count, used only in compact mode to
+	// size the input so the key legend stays on the same line.
+	width int
+
 	ctx context.Context
 	// submitFn is the injectable seam for the actual daemon round-trip —
 	// production wires it to socket.DialPark in park mode, or a
@@ -153,6 +165,26 @@ func (m *parkModel) Init() tea.Cmd {
 //     capture the thought.
 func (m *parkModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Geometry decides the form. Two lines or fewer is the bottom-edge
+		// strip; anything taller keeps the box.
+		m.width = msg.Width
+		m.compact = msg.Height > 0 && msg.Height <= 2
+		if m.compact {
+			// Reserve the prefix ("  park › ") and the key legend so the
+			// whole prompt stays on ONE line; textinput pads to its Width,
+			// so this is what stops it shoving the legend off the edge.
+			reserve := len(m.label) + 6 + len(m.help.ShortHelpView(m.keys.ShortHelp())) + 4
+			w := msg.Width - reserve
+			if w < 12 {
+				w = 12
+			}
+			m.input.Width = w
+		} else {
+			m.input.Width = textInputWidth
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Esc):

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -293,4 +295,58 @@ func TestAnchorMode_EscQuitsWithoutAnchoring(t *testing.T) {
 			t.Errorf("key %v: anchorFn calls = %v, want none", key, *calls)
 		}
 	}
+}
+
+// Geometry chooses the form (live feedback, 2026-08-04 — capture must not
+// feel like entering a mode): a thin bottom-edge popup renders ONE
+// borderless line; a taller one keeps the box. Also pins that the compact
+// input is sized so the key legend stays on the same line.
+func TestCompactFormFollowsPopupGeometry(t *testing.T) {
+	m, _ := newTestParkModel(func(context.Context, string) (bool, error) { return true, nil })
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 2})
+	if !m.compact {
+		t.Fatal("a 2-line popup must select the compact form")
+	}
+	v := m.View()
+	if strings.Count(v, "\n") != 0 {
+		t.Errorf("compact form must be exactly one line, got %q", v)
+	}
+	if strings.ContainsAny(v, "╭╮╰╯│") {
+		t.Errorf("compact form must draw no border, got %q", v)
+	}
+	if !strings.Contains(v, "park") || !strings.Contains(v, "›") {
+		t.Errorf("compact form must show the label and prompt glyph, got %q", v)
+	}
+	// The whole line has to fit the terminal, legend included.
+	if got := visibleLen(v); got > 120 {
+		t.Errorf("compact line is %d cols, must fit 120: %q", got, v)
+	}
+
+	// A tall popup keeps the original bordered box.
+	m2, _ := newTestParkModel(func(context.Context, string) (bool, error) { return true, nil })
+	m2.Update(tea.WindowSizeMsg{Width: 60, Height: 5})
+	if m2.compact {
+		t.Fatal("a 5-line popup must keep the boxed form")
+	}
+	if v2 := m2.View(); !strings.Contains(v2, "╭") || strings.Count(v2, "\n") < 3 {
+		t.Errorf("boxed form must draw its border across multiple lines, got %q", v2)
+	}
+}
+
+// visibleLen counts columns, ignoring ANSI escapes.
+func visibleLen(s string) int {
+	var n, i int
+	for i < len(s) {
+		if s[i] == 0x1b {
+			for i < len(s) && !(s[i] >= 'a' && s[i] <= 'z') && !(s[i] >= 'A' && s[i] <= 'Z') {
+				i++
+			}
+			i++ // the final letter
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		n++
+	}
+	return n
 }
