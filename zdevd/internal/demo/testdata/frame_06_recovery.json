@@ -1,8 +1,5 @@
 {
-    "delay_seconds": 4,
-    "wait_start_age_sec": {
-        "marketplace/pay-app": 0
-    },
+    "delay_seconds": 5,
     "snapshot": {
         "v": 1,
         "type": "snapshot",
@@ -35,20 +32,16 @@
             {
                 "name": "ai-at-pay/agent-sdk",
                 "status": "alive",
-                "branch": "feature/tool-router",
-                "attention": "finished",
-                "dirty_count": 3,
-                "pr_open": 1,
-                "ci_status": "in_progress"
+                "branch": "feature/tool-router"
             },
             {
                 "name": "ai-at-pay/eval-harness",
                 "status": "alive",
                 "branch": "feature/regression-suite",
-                "attention": "working",
-                "agent_states": {
-                    "claude": "working"
-                }
+                "attention": "",
+                "pr_open": 1,
+                "ci_status": "completed",
+                "ci_conclusion": "success"
             },
             {
                 "name": "dotfiles",
@@ -65,17 +58,17 @@
                 "name": "marketplace/catalog-api",
                 "status": "alive",
                 "branch": "feat/expand-contract-migration",
-                "attention": "working",
-                "agent_states": {
-                    "claude": "working"
-                }
+                "attention": "finished",
+                "wait_started_ts": 0,
+                "wait_kind": "",
+                "wait_summary": ""
             },
             {
                 "name": "marketplace/checkout-svc",
                 "status": "alive",
                 "branch": "feat/split-tender",
-                "ahead": 3,
-                "dirty_count": 2,
+                "ahead": 4,
+                "dirty_count": 0,
                 "pr_open": 1,
                 "ci_status": "completed",
                 "ci_conclusion": "success"
@@ -89,18 +82,18 @@
                 "name": "marketplace/pay-app",
                 "status": "alive",
                 "branch": "feat/deploy-script",
-                "attention": "waiting",
-                "agent_states": {
-                    "claude": "waiting"
-                },
-                "wait_kind": "permission",
+                "attention": "finished",
                 "wait_started_ts": 0,
-                "wait_summary": "Run the deploy script? [y/n]"
+                "wait_kind": "",
+                "wait_summary": ""
             },
             {
                 "name": "marketplace/webhooks",
                 "status": "alive",
-                "branch": "feat/retry-backoff"
+                "branch": "feat/retry-backoff",
+                "attention": "",
+                "wait_started_ts": 0,
+                "wait_summary": ""
             },
             {
                 "name": "projects/backend-legacy",
@@ -129,9 +122,6 @@
                 "ci_conclusion": "success"
             }
         ],
-        "current_session": "marketplace/checkout-svc",
-        "triage": [
-            "marketplace/pay-app"
-        ]
+        "current_session": "marketplace/checkout-svc"
     }
 }

@@ -7,34 +7,115 @@
         "seq": 0,
         "sent_at": "2024-01-01T00:00:00Z",
         "sessions": [
-            "myorg/backend",
-            "myorg/api",
-            "myorg/tools"
+            "ai-at-pay",
+            "ai-at-pay/agent-sdk",
+            "ai-at-pay/eval-harness",
+            "dotfiles",
+            "marketplace",
+            "marketplace/catalog-api",
+            "marketplace/checkout-svc",
+            "marketplace/ledger",
+            "marketplace/pay-app",
+            "marketplace/webhooks",
+            "projects/backend-legacy",
+            "projects/docs-site",
+            "projects/scripts",
+            "zdev"
         ],
         "projects": [
             {
-                "name": "myorg/backend",
+                "name": "ai-at-pay",
                 "status": "alive",
-                "branch": "feat/auth",
+                "intent": "Ship the internal AI-assisted engineering tooling.",
+                "bd_ready": 3
+            },
+            {
+                "name": "ai-at-pay/agent-sdk",
+                "status": "alive",
+                "branch": "feature/tool-router",
                 "attention": "working",
                 "agent_states": {
                     "claude": "working"
-                },
-                "ahead": 3,
-                "dirty_count": 2
+                }
             },
             {
-                "name": "myorg/api",
+                "name": "ai-at-pay/eval-harness",
+                "status": "alive",
+                "branch": "feature/regression-suite",
+                "attention": "working",
+                "agent_states": {
+                    "claude": "working"
+                }
+            },
+            {
+                "name": "dotfiles",
                 "status": "alive",
                 "branch": "main"
             },
             {
-                "name": "myorg/tools",
+                "name": "marketplace",
                 "status": "alive",
-                "branch": "feature/metrics",
-                "pr_open": 1
+                "intent": "Unify checkout, catalog and ledger under one deployable surface.",
+                "bd_ready": 7
+            },
+            {
+                "name": "marketplace/catalog-api",
+                "status": "alive",
+                "branch": "feat/expand-contract-migration"
+            },
+            {
+                "name": "marketplace/checkout-svc",
+                "status": "alive",
+                "branch": "feat/split-tender",
+                "ahead": 3,
+                "dirty_count": 2
+            },
+            {
+                "name": "marketplace/ledger",
+                "status": "alive",
+                "branch": "feat/ledger-reconciliation"
+            },
+            {
+                "name": "marketplace/pay-app",
+                "status": "alive",
+                "branch": "feat/deploy-script",
+                "attention": "working",
+                "agent_states": {
+                    "claude": "working"
+                }
+            },
+            {
+                "name": "marketplace/webhooks",
+                "status": "alive",
+                "branch": "feat/retry-backoff"
+            },
+            {
+                "name": "projects/backend-legacy",
+                "status": "alive",
+                "branch": "main",
+                "collapsed": true
+            },
+            {
+                "name": "projects/docs-site",
+                "status": "alive",
+                "branch": "main",
+                "collapsed": true
+            },
+            {
+                "name": "projects/scripts",
+                "status": "alive",
+                "branch": "main",
+                "collapsed": true
+            },
+            {
+                "name": "zdev",
+                "status": "alive",
+                "branch": "docs/demo-fixtures",
+                "pr_open": 1,
+                "ci_status": "completed",
+                "ci_conclusion": "success"
             }
         ],
-        "current_session": "myorg/backend"
+        "current_session": "marketplace/checkout-svc"
     }
 }
