@@ -175,6 +175,13 @@ func (d *DemoSource) SubmitHeldRemove(_ context.Context, _ string) error {
 	return nil
 }
 
+// SubmitSchedulePush is a no-op for the demo source — a scripted fake-fleet
+// replay has no daemon state to push commitments into. Implements
+// socket.SnapshotSource.
+func (d *DemoSource) SubmitSchedulePush(_ context.Context, _ string, _ []proto.Commitment) error {
+	return nil
+}
+
 // Run advances through the frame sequence on timers, broadcasting each new
 // snapshot to all registered subscribers. Holds on the final frame until ctx
 // cancels, then tears down all remaining subscribers.

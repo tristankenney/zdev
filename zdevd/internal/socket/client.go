@@ -380,6 +380,63 @@ func DialHeldRemove(ctx context.Context, socketPath, id string) (ok bool, err er
 	return true, nil
 }
 
+// DialSchedulePush implements the schedule-push client side of the design
+// amendment (docs/design/command-centre.md — "The scheduled anchor and the
+// push surface"). One-shot: dial → write
+// {"type":"schedule","v":1,"source":<source>,"commitments":[...]}\n → read
+// one schedule reply line → close. Returns (false, nil) folded into err
+// when the daemon replied ok:false (rejected — empty/"ics" source, or a
+// malformed record), same convention as DialPark/DialAnchorSet. Used by
+// both `zdevd schedule push` (cmd/zdevd/subcommands.go) and the
+// zdev_schedule_push MCP tool (cmd/zdevd/mcp.go) — this is the ONE client
+// implementation of the wire shape.
+func DialSchedulePush(ctx context.Context, socketPath, source string, commitments []proto.Commitment) (ok bool, err error) {
+	conn, err := Dial(ctx, socketPath)
+	if err != nil {
+		return false, fmt.Errorf("socket: dial: %w", err)
+	}
+	defer conn.Close()
+
+	req := struct {
+		Type        string             `json:"type"`
+		V           int                `json:"v"`
+		Source      string             `json:"source"`
+		Commitments []proto.Commitment `json:"commitments"`
+	}{Type: "schedule", V: 1, Source: source, Commitments: commitments}
+	payload, err := proto.MarshalCompact(req)
+	if err != nil {
+		return false, fmt.Errorf("schedule marshal: %w", err)
+	}
+	if _, err := conn.Write(append(payload, '\n')); err != nil {
+		return false, fmt.Errorf("schedule write: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(snapshotReadTimeout)); err != nil {
+		return false, fmt.Errorf("schedule set deadline: %w", err)
+	}
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 4*1024), proto.MaxHelloBytes)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return false, fmt.Errorf("schedule read: %w", err)
+		}
+		return false, errors.New("schedule: no reply (clean EOF)")
+	}
+	var reply struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &reply); err != nil {
+		return false, fmt.Errorf("schedule unmarshal: %w", err)
+	}
+	if !reply.OK {
+		if reply.Error != "" {
+			return false, errors.New(reply.Error)
+		}
+		return false, errors.New("schedule: daemon rejected the request")
+	}
+	return true, nil
+}
+
 // Stream reads subsequent snapshots from an already-handshaked conn (i.e.,
 // the conn returned by Subscribe). Returns a channel that receives every
 // snapshot the daemon emits until ctx cancels OR the conn closes. The

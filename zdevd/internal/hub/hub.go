@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -35,16 +36,17 @@ const errIncChanCap = 16
 type Hub struct {
 	debounce time.Duration
 
-	events         chan tmuxctl.Event // parser → hub
-	register       chan registerReq   // socket.Server → hub
-	unregister     chan *Subscriber   // socket.Server → hub
-	diagRequests   chan diagReq       // socket.Server (diag handler) → hub; ARCH-10
-	cursorRequests chan cursorReq     // socket.Server (cursor handler) → hub; zd-e6e
-	parkRequests   chan parkReq       // socket.Server (park handler) → hub; phase 1 focus loop
-	anchorRequests chan anchorReq     // socket.Server (anchor handler) → hub; phase 3A focus loop
-	heldRmRequests chan heldRmReq     // socket.Server (held-rm handler) → hub; phase 3A focus loop
-	errInc         chan struct{}      // RecordError → hub; errors_1h ticker
-	stopped        chan struct{}      // closed by Run on exit; signals Submit/Register/DiagSnapshot
+	events           chan tmuxctl.Event // parser → hub
+	register         chan registerReq   // socket.Server → hub
+	unregister       chan *Subscriber   // socket.Server → hub
+	diagRequests     chan diagReq       // socket.Server (diag handler) → hub; ARCH-10
+	cursorRequests   chan cursorReq     // socket.Server (cursor handler) → hub; zd-e6e
+	parkRequests     chan parkReq       // socket.Server (park handler) → hub; phase 1 focus loop
+	anchorRequests   chan anchorReq     // socket.Server (anchor handler) → hub; phase 3A focus loop
+	heldRmRequests   chan heldRmReq     // socket.Server (held-rm handler) → hub; phase 3A focus loop
+	scheduleRequests chan scheduleReq   // socket.Server (schedule handler) → hub; scheduled-anchor push surface
+	errInc           chan struct{}      // RecordError → hub; errors_1h ticker
+	stopped          chan struct{}      // closed by Run on exit; signals Submit/Register/DiagSnapshot
 
 	// Populated once by NewHub from the Config argument. Read-only after
 	// Run starts — Config-passed values never mutate during the hub's
@@ -190,6 +192,21 @@ type heldRmReq struct {
 	reply chan<- struct{}
 }
 
+// scheduleReq is the channel round-trip envelope for the "schedule" push
+// verb (design amendment, docs/design/command-centre.md — "The scheduled
+// anchor and the push surface"). Mirrors parkReq's shape exactly:
+// SubmitSchedulePush validates (source non-empty and not "ics"; every
+// record has id/title/at>0) and stamps each record's Source field on the
+// CALLER's goroutine, samples the wall clock ONCE, then hands the prepared
+// slice into the Run loop — applyEvent itself stays pure and deterministic,
+// same discipline as every other Submit* entry point.
+type scheduleReq struct {
+	source      string
+	commitments []proto.Commitment
+	nowNanos    int64
+	reply       chan<- struct{}
+}
+
 // Config bundles every dependency the hub needs. Pass to NewHub once;
 // fields are read-only after Run starts. Replaces the previous fluent
 // setter chain (WithSocketPath/WithEventLog/WithStatePath/WithNotifier)
@@ -323,26 +340,27 @@ func NewHub(cfg Config) *Hub {
 	st.autoAnchorMinSec = int64(cfg.AutoAnchorMin.Seconds())
 	st.autoAnchorAwayMinSec = int64(cfg.AutoAnchorAwayMin.Seconds())
 	return &Hub{
-		debounce:       cfg.Debounce,
-		events:         make(chan tmuxctl.Event, eventsChanCap),
-		register:       make(chan registerReq),
-		unregister:     make(chan *Subscriber),
-		diagRequests:   make(chan diagReq),
-		cursorRequests: make(chan cursorReq),
-		parkRequests:   make(chan parkReq),
-		anchorRequests: make(chan anchorReq),
-		heldRmRequests: make(chan heldRmReq),
-		errInc:         make(chan struct{}, errIncChanCap),
-		stopped:        make(chan struct{}),
-		state:          st,
-		subs:           make(map[*Subscriber]struct{}),
-		startedAt:      now,
-		lastEventAt:    now, // sentinel: 0 ago at boot — diag.Reply.LastEventAgoSec ~ 0 until first event
-		errCounter:     diag.NewErrorCounter(),
-		socketPath:     cfg.SocketPath,
-		eventlog:       cfg.EventLog,
-		statePath:      cfg.StatePath,
-		notifier:       cfg.Notifier,
+		debounce:         cfg.Debounce,
+		events:           make(chan tmuxctl.Event, eventsChanCap),
+		register:         make(chan registerReq),
+		unregister:       make(chan *Subscriber),
+		diagRequests:     make(chan diagReq),
+		cursorRequests:   make(chan cursorReq),
+		parkRequests:     make(chan parkReq),
+		anchorRequests:   make(chan anchorReq),
+		heldRmRequests:   make(chan heldRmReq),
+		scheduleRequests: make(chan scheduleReq),
+		errInc:           make(chan struct{}, errIncChanCap),
+		stopped:          make(chan struct{}),
+		state:            st,
+		subs:             make(map[*Subscriber]struct{}),
+		startedAt:        now,
+		lastEventAt:      now, // sentinel: 0 ago at boot — diag.Reply.LastEventAgoSec ~ 0 until first event
+		errCounter:       diag.NewErrorCounter(),
+		socketPath:       cfg.SocketPath,
+		eventlog:         cfg.EventLog,
+		statePath:        cfg.StatePath,
+		notifier:         cfg.Notifier,
 	}
 }
 
@@ -550,11 +568,26 @@ func (h *Hub) Run(ctx context.Context) error {
 		// moment the operator explicitly wants zdev to speak; delaying its
 		// own visible effect would be a needless inconsistency).
 		boundaryFired := checkBoundary(passNow.Unix(), h.state, h.notifier)
+		// Scheduled anchor (design amendment, scheduledanchor.go — "The
+		// scheduled anchor and the push surface") runs NEXT, before the
+		// presence tier below, so the tier order "explicit > scheduled >
+		// presence" holds every pass: a block that just started wins over
+		// dwell/away bookkeeping this same heartbeat, and a block that just
+		// ended (checkBoundary above cleared it) can be immediately
+		// superseded by the NEXT block in the SAME pass — one boundary
+		// notification for the ended block, a fresh scheduled anchor for
+		// the next, both within one publishPass (the design's explicit
+		// back-to-back allowance). snap.Commitments is this pass's already-
+		// merged, chronological set (built by buildSnapshot above); passing
+		// it in means checkScheduledAnchor never re-merges per source.
+		scheduledFired := checkScheduledAnchor(passNow.Unix(), h.state, snap.Commitments)
 		// Dwell auto-anchor (phase 3D, autoanchor.go) runs on this same
 		// heartbeat, in this order:
 		//   1. checkAutoAnchorAway — the auto-anchor's OWN away-boundary.
 		//      No-ops instantly if checkBoundary already cleared the anchor
-		//      above (finish/expiry) or if the current anchor is explicit.
+		//      above (finish/expiry), if checkScheduledAnchor just took over
+		//      (the anchor is no longer auto), or if the current anchor is
+		//      explicit.
 		//   2. updateDwell — track this pass's attendance. If a boundary
 		//      fired above (either check), fireBoundary already
 		//      force-restarted the dwell clock via
@@ -568,7 +601,7 @@ func (h *Hub) Run(ctx context.Context) error {
 		awayFired := checkAutoAnchorAway(passNow.Unix(), h.state, h.notifier)
 		updateDwell(h.state, passNow.Unix())
 		armFired := checkAutoAnchorArm(passNow.Unix(), h.state)
-		anchorMutated := boundaryFired || awayFired || armFired
+		anchorMutated := boundaryFired || scheduledFired || awayFired || armFired
 		if anchorMutated {
 			snap = buildSnapshot(h.state, 0, time.Time{}, passNow.Unix(), passNow.UnixMilli())
 		}
@@ -749,12 +782,27 @@ func (h *Hub) Run(ctx context.Context) error {
 			// "Boundaries" lists "the anchor is released" alongside finish
 			// and expiry), so the notification is fired HERE, at the
 			// request site, using the anchor captured before the clear.
+			// markScheduledOverridden (scheduledanchor.go) is called on BOTH
+			// branches below when prev was a scheduled anchor: the design
+			// amendment's pinned semantics ("once explicitly overridden,
+			// that block never re-anchors") apply whether the operator
+			// REPLACES the scheduled anchor with a fresh explicit pick
+			// ("set") or simply RELEASES it ("clear") — either is a
+			// deliberate act overriding the tier's choice for that specific
+			// block, and a "clear" in particular would otherwise let
+			// checkScheduledAnchor silently re-grab the very same block on
+			// the next pass (s.anchor is nil again, `now` may still be
+			// inside the window) — exactly the surprising oscillation this
+			// guards against.
 			switch req.action {
 			case "set":
+				prev := h.state.anchor
 				applyEvent(h.state, tmuxctl.AnchorSet{Title: req.title, Project: req.project, NowNanos: req.nowNanos}, nil)
+				markScheduledOverridden(h.state, prev)
 			case "clear":
 				prev := h.state.anchor
 				applyEvent(h.state, tmuxctl.AnchorClear{}, nil)
+				markScheduledOverridden(h.state, prev)
 				if prev != nil {
 					// Re-arm hygiene (phase 3D, autoanchor.go): an explicit
 					// clear IS a boundary (see comment above), so it gets the
@@ -797,6 +845,28 @@ func (h *Hub) Run(ctx context.Context) error {
 			// also means 'nothing consumed comes back'. Removals are
 			// human-keystroke rare; the coalescing forfeited costs nothing.
 			applyEvent(h.state, tmuxctl.HeldRemove{ID: req.id}, nil)
+			publishPass()
+			close(req.reply)
+
+		case req := <-h.scheduleRequests:
+			// Apply the push (pure — no I/O; validation already happened on
+			// the caller's goroutine in SubmitSchedulePush, same "validate
+			// before the channel send" discipline as park/anchor). A push
+			// is just a successful CommitmentsRefresh for its own source —
+			// FetchErr is always empty here, since a validation failure
+			// never reaches this channel at all.
+			applyEvent(h.state, tmuxctl.CommitmentsRefresh{
+				Source:      req.source,
+				Commitments: req.commitments,
+				NowNanos:    req.nowNanos,
+			}, nil)
+			// Publish SYNCHRONOUSLY — same ack-means-applied contract as
+			// park/anchor: the {ok:true} the caller sees means the merge is
+			// live in THIS pass's snapshot, not "applied unless the daemon
+			// dies inside the debounce window". Commitments are never
+			// persisted to disk (state.go's field doc comment — "last push
+			// wins" is the whole durability story), so synchronous publish
+			// here is about snapshot freshness, not disk durability.
 			publishPass()
 			close(req.reply)
 
@@ -1056,6 +1126,79 @@ func (h *Hub) SubmitHeldRemove(ctx context.Context, id string) error {
 	reply := make(chan struct{}, 1)
 	select {
 	case h.heldRmRequests <- heldRmReq{id: id, reply: reply}:
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-reply:
+		return nil
+	case <-h.stopped:
+		return ErrHubStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SubmitSchedulePush replaces one source's commitment set wholesale (design
+// amendment, docs/design/command-centre.md — "The scheduled anchor and the
+// push surface") and returns once the hub goroutine has applied it AND
+// published — same synchronous, ack-means-applied contract as SubmitPark/
+// SubmitAnchorSet, for the same reason: a push is exactly as deliberate an
+// external act as a park or an anchor-set, and the caller's {ok:true}
+// should mean "live in the fleet's view now," not "queued, maybe."
+//
+// Validation happens HERE, before the channel send, on the CALLER's
+// goroutine — same "validate before the hub goroutine ever sees it"
+// discipline as every other Submit* entry point:
+//
+//   - source must be non-empty after trimming.
+//   - source must NOT be "ics" — that name is reserved for the calendar
+//     probe; a push claiming it would fight the probe's own replace cycle
+//     (whichever emission lands last on a given pass wins, silently
+//     clobbering the other).
+//   - every record needs a non-empty id, a non-empty title, and At > 0.
+//     Kind is free-form (validated by nothing — "task:<project>" is a
+//     convention the scheduled-anchor tier reads, not a wire constraint).
+//   - each record's Source field is overwritten with the (trimmed) source
+//     argument — "one authority": whatever a caller put in a record's own
+//     Source is not trusted, only the request's own source name is.
+//
+// An empty (nil or zero-length) commitments slice is VALID — it's how a
+// source clears its own set; commitments == nil after validation still
+// proceeds to the channel send exactly like a non-empty slice would.
+func (h *Hub) SubmitSchedulePush(ctx context.Context, source string, commitments []proto.Commitment) error {
+	trimmedSource := strings.TrimSpace(source)
+	if trimmedSource == "" {
+		return errors.New("hub: schedule source is empty")
+	}
+	if trimmedSource == "ics" {
+		return errors.New(`hub: schedule source "ics" is reserved for the calendar probe`)
+	}
+	stamped := make([]proto.Commitment, len(commitments))
+	for i, c := range commitments {
+		if strings.TrimSpace(c.ID) == "" {
+			return fmt.Errorf("hub: schedule commitment %d: id is required", i)
+		}
+		if strings.TrimSpace(c.Title) == "" {
+			return fmt.Errorf("hub: schedule commitment %d (id %q): title is required", i, c.ID)
+		}
+		if c.At <= 0 {
+			return fmt.Errorf("hub: schedule commitment %d (id %q): at must be > 0", i, c.ID)
+		}
+		c.Source = trimmedSource
+		stamped[i] = c
+	}
+	select {
+	case <-h.stopped:
+		return ErrHubStopped
+	default:
+	}
+	reply := make(chan struct{}, 1)
+	req := scheduleReq{source: trimmedSource, commitments: stamped, nowNanos: time.Now().UnixNano(), reply: reply}
+	select {
+	case h.scheduleRequests <- req:
 	case <-h.stopped:
 		return ErrHubStopped
 	case <-ctx.Done():

@@ -96,24 +96,40 @@ type state struct {
 	projectListNames []string               // canonical names from ProjectListChanged
 	projectRepos     map[string]string      // canonical name → resolved "owner/repo" (S3 review-gauge grouping); empty when unresolved
 
-	// commitments is the last successfully-fetched calendar set (phase 2,
-	// docs/design/command-centre.md), replaced WHOLESALE on a successful
-	// CommitmentsRefresh and deliberately NOT persisted (persist.go) — a
-	// restart re-fetches rather than risk carrying a stale calendar across
-	// a daemon restart, the same "re-probe cheaply rather than trust old
-	// disk content" rationale as Branch/DirtyCount/Intent.
+	// commitments holds every source's last-successfully-emitted commitment
+	// set, keyed by source name (docs/design/command-centre.md — "The
+	// scheduled anchor and the push surface": generalized from the phase 2
+	// single-set shape so ingestion is source-agnostic — sources will keep
+	// changing, and the hub must not need a code change every time one
+	// does). A source's CommitmentsRefresh replaces ONLY its own key,
+	// WHOLESALE — other sources' entries are untouched. buildSnapshot
+	// merges every source's slice into one chronological Snapshot.Commitments
+	// (mergedCommitments in commitments.go). Deliberately NOT persisted
+	// (persist.go) for ANY source — a restart re-fetches (or waits for the
+	// next push) rather than risk carrying a stale calendar/run-sheet
+	// across a daemon restart, the same "re-probe cheaply rather than trust
+	// old disk content" rationale as Branch/DirtyCount/Intent. For a PUSHED
+	// source this is the deliberate freshness story spelled out in the
+	// design note: the morning /plan skill re-pushes after every restart,
+	// so "last push wins" is the whole durability model — there is no
+	// separate persistence path to keep in sync.
 	//
 	// commitmentsLastOK / commitmentsLastErr / commitmentsLastErrAt track
-	// SOURCE HEALTH, not display state: a fetch failure leaves commitments
-	// untouched (see applyEvent's CommitmentsRefresh case) but still needs
-	// to be visible somewhere, because a calendar probe that silently stays
-	// broken while quietly showing yesterday's meetings is the single
-	// worst failure mode this phase exists to avoid. Surfaced via
-	// diag.Reply (buildDiagReply in hub.go) and `zdev-show time`.
-	commitments          []proto.Commitment
-	commitmentsLastOK    time.Time // zero = never fetched successfully
-	commitmentsLastErr   string    // most recent fetch/parse failure; "" = healthy or never tried
-	commitmentsLastErrAt time.Time // when commitmentsLastErr was recorded; zero = no error on record
+	// SOURCE HEALTH — but ONLY for "ics" (the fetch-based calendar probe).
+	// A fetch failure leaves commitments["ics"] untouched (see applyEvent's
+	// CommitmentsRefresh case) but still needs to be visible somewhere,
+	// because a calendar probe that silently stays broken while quietly
+	// showing yesterday's meetings is the single worst failure mode this
+	// phase exists to avoid. Surfaced via diag.Reply (buildDiagReply in
+	// hub.go) and `zdev-show time`. Pushed sources carry NO fetch-health —
+	// there is no "last known good" distinct from "last pushed"; a push
+	// either lands (ack: true, applied synchronously) or the caller learns
+	// it failed immediately over the socket, so there's nothing left to
+	// track asynchronously the way an unattended background fetch needs.
+	commitments          map[string][]proto.Commitment
+	commitmentsLastOK    time.Time // zero = never fetched successfully ("ics" only)
+	commitmentsLastErr   string    // most recent fetch/parse failure; "" = healthy or never tried ("ics" only)
+	commitmentsLastErrAt time.Time // when commitmentsLastErr was recorded; zero = no error on record ("ics" only)
 
 	// showUnmanaged mirrors config.ShowUnmanaged. When true, buildSnapshot
 	// appends tmux sessions without a projects-file entry below the managed
@@ -356,6 +372,45 @@ type state struct {
 	// that would let an already-overdue anchor expire the instant the
 	// daemon comes back up.
 	lastEngagedTS int64
+
+	// --- Scheduled anchor (design amendment, docs/design/command-centre.md
+	// — "The scheduled anchor and the push surface"): the tier that reads
+	// "explicit > scheduled > presence" — a run-sheet block outranks
+	// inferred dwell/prompt presence but never an explicit pick. See
+	// scheduledanchor.go for the derivation; none of the three fields below
+	// are persisted (same "cheap to re-derive from live commitments"
+	// rationale as the dwell auto-anchor fields above), which is why a
+	// restart that lands mid-block simply waits for the next publishPass to
+	// re-arm rather than resurrecting anything from disk.
+
+	// scheduledAnchorCommitmentID is the ID of the anchor-eligible
+	// commitment currently driving the scheduled anchor (set by
+	// checkScheduledAnchor when it arms), or "" when no scheduled anchor is
+	// active. Read by hub.go's anchorRequests "set" branch to know WHICH
+	// block to mark in scheduledOverriddenBlocks when an explicit pick
+	// replaces a scheduled anchor. Stale values after an override are
+	// harmless — checkBoundary's block-end check also gates on
+	// isScheduledAnchor(s.anchor), so a stale ID is simply never consulted
+	// again once the anchor it named is no longer the current one.
+	scheduledAnchorCommitmentID string
+	// scheduledAnchorUntil is the [At, Until) window's end (commitmentEnd)
+	// for the commitment named by scheduledAnchorCommitmentID — stamped at
+	// arm time so checkBoundary can detect "the block just ended" by a
+	// plain integer comparison against `now`, without re-scanning the
+	// merged commitment set on every pass.
+	scheduledAnchorUntil int64
+	// scheduledOverriddenBlocks marks commitment IDs whose scheduled anchor
+	// was explicitly overridden while active. Once marked, checkScheduledAnchor
+	// refuses to re-grab that SPECIFIC block for the rest of its window —
+	// the pinned semantics from the design amendment: "once explicitly
+	// overridden, that block never re-anchors," even if the explicit
+	// anchor is later cleared or expires while `now` is still inside the
+	// same [At, Until) window. Entries are never pruned — today's
+	// commitments don't recur, so a stale entry for a long-past block is
+	// harmless dead weight, not a correctness risk. Marked by hub.go's
+	// anchorRequests "set" branch (the only path that can replace an
+	// existing anchor with an EXPLICIT one); nil until the first override.
+	scheduledOverriddenBlocks map[string]struct{}
 }
 
 // maxConsecutiveCaptureFailures is the eviction threshold. Three attempts
@@ -926,20 +981,49 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		s.projectData[key] = pd
 
 	case tmuxctl.CommitmentsRefresh:
-		// Phase 2 (docs/design/command-centre.md): a successful fetch
-		// replaces the stored set WHOLESALE. A failed fetch (FetchErr != "")
-		// deliberately does NOT touch s.commitments — the design note's
-		// single most important failure requirement is that a broken
-		// calendar must never silently blank out to "you are free"; the
-		// last-known set stays authoritative until a fetch actually
-		// succeeds again. Either branch records source health so
-		// `zdev-show time` / diag can surface it.
+		// Generalized multi-source replace (docs/design/command-centre.md —
+		// "The scheduled anchor and the push surface"): a successful
+		// emission replaces ONLY its own source's key in s.commitments,
+		// wholesale — every other source's entries are untouched. Empty
+		// Source is the back-compat default ("ics", the pre-multi-source
+		// behavior); "schedule" pushes (Hub.SubmitSchedulePush) always set
+		// Source explicitly, and are validated to never collide with "ics".
+		//
+		// A failed fetch (FetchErr != "") deliberately does NOT touch that
+		// source's stored set — the design note's single most important
+		// failure requirement is that a broken calendar must never
+		// silently blank out to "you are free"; the last-known set stays
+		// authoritative until a fetch actually succeeds again. Source
+		// health (commitmentsLastOK/Err/ErrAt) is recorded ONLY for "ics" —
+		// the only source with an asynchronous fetch to go stale; a pushed
+		// source's freshness story is simply "last push wins" (state.go's
+		// field doc comment), so there is nothing to track for it here.
+		source := e.Source
+		if source == "" {
+			source = "ics"
+		}
 		if e.FetchErr == "" {
-			s.commitments = e.Commitments
-			s.commitmentsLastOK = time.Unix(0, e.NowNanos)
-			s.commitmentsLastErr = ""
-			s.commitmentsLastErrAt = time.Time{}
-		} else {
+			if s.commitments == nil {
+				s.commitments = make(map[string][]proto.Commitment)
+			}
+			// Stamp Source onto every record — "one authority" (the request/
+			// probe's own Source field wins over whatever a record carried),
+			// same discipline SubmitSchedulePush's caller-side validation
+			// already applies; repeating it here is defense in depth, not
+			// the only line of defense, matching every other applyEvent
+			// guard in this file.
+			stamped := make([]proto.Commitment, len(e.Commitments))
+			for i, c := range e.Commitments {
+				c.Source = source
+				stamped[i] = c
+			}
+			s.commitments[source] = stamped
+			if source == "ics" {
+				s.commitmentsLastOK = time.Unix(0, e.NowNanos)
+				s.commitmentsLastErr = ""
+				s.commitmentsLastErrAt = time.Time{}
+			}
+		} else if source == "ics" {
 			s.commitmentsLastErr = e.FetchErr
 			s.commitmentsLastErrAt = time.Unix(0, e.NowNanos)
 		}

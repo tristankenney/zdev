@@ -114,6 +114,30 @@ type heldRmReply struct {
 	Error string `json:"error,omitempty"`
 }
 
+// scheduleRequest is the client-to-server schedule-push wire frame (design
+// amendment, docs/design/command-centre.md — "The scheduled anchor and the
+// push surface"). Type is always "schedule"; V is the protocol version (1);
+// Source names the pushing provider ("plan", …) and Commitments is the
+// FULL replacement set for that source — validated by
+// Hub.SubmitSchedulePush (source non-empty and not "ics"; every record
+// needs id/title/at>0), never here. An empty Commitments array is valid —
+// it's how a source clears itself.
+type scheduleRequest struct {
+	Type        string             `json:"type"`
+	V           int                `json:"v"`
+	Source      string             `json:"source"`
+	Commitments []proto.Commitment `json:"commitments"`
+}
+
+// scheduleReply is the server-to-client schedule-push wire frame. Same
+// shape as parkReply/anchorReply — OK false with Error set on rejection
+// (validation failure, or a stopped hub).
+type scheduleReply struct {
+	Type  string `json:"type"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 // SnapshotSource is the interface the Server requires from its backing hub.
 // *hub.Hub satisfies this interface; demo.DemoSource also satisfies it for
 // the `zdevd demo` subcommand (reproducible README GIF, no agents needed).
@@ -148,6 +172,13 @@ type SnapshotSource interface {
 	// a non-existent ID is not an error (idempotent — the popup may race a
 	// refresh).
 	SubmitHeldRemove(ctx context.Context, id string) error
+	// SubmitSchedulePush replaces one source's commitment set wholesale
+	// (design amendment — "The scheduled anchor and the push surface").
+	// Returns a non-nil error on a validation failure (empty/"ics" source,
+	// or a record missing id/title/at) or a stopped hub; the "schedule"
+	// case below turns that into {ok:false, error:"..."} on the wire,
+	// same convention as SubmitPark/SubmitAnchorSet.
+	SubmitSchedulePush(ctx context.Context, source string, commitments []proto.Commitment) error
 }
 
 // dialProbeTimeout caps the liveness probe in BindOrCleanStale.
@@ -430,6 +461,37 @@ func (s *Server) serveOne(ctx context.Context, conn net.Conn) {
 		}
 		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
 			slog.Warn("socket: held-rm reply write failed", "err", wErr)
+		}
+		return
+
+	case "schedule":
+		// One-shot schedule push: apply, write {ok,...} reply + close. Only
+		// v==1 supported. Rejection (empty/"ics" source, or a malformed
+		// record) is a normal reply (ok:false), not a closed connection —
+		// same convention as park/anchor/held-rm. Validation itself lives
+		// in Hub.SubmitSchedulePush, not here — this handler only unmarshals
+		// the wire frame and forwards it.
+		if h.V != 1 {
+			slog.Warn("socket: schedule request unsupported version", "v", h.V)
+			return
+		}
+		var sr scheduleRequest
+		if err := json.Unmarshal(sc.Bytes(), &sr); err != nil {
+			slog.Warn("socket: schedule request unmarshal failed", "err", err)
+			return
+		}
+		reply := scheduleReply{Type: "schedule", OK: true}
+		if err := s.hub.SubmitSchedulePush(ctx, sr.Source, sr.Commitments); err != nil {
+			reply.OK = false
+			reply.Error = err.Error()
+		}
+		payload, mErr := proto.MarshalCompact(reply)
+		if mErr != nil {
+			slog.Warn("socket: schedule reply marshal failed", "err", mErr)
+			return
+		}
+		if _, wErr := conn.Write(append(payload, '\n')); wErr != nil {
+			slog.Warn("socket: schedule reply write failed", "err", wErr)
 		}
 		return
 

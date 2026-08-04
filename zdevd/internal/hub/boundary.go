@@ -41,6 +41,22 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 	}
 	a := s.anchor
 
+	// Scheduled-anchor block end (design amendment, docs/design/
+	// command-centre.md — "The scheduled anchor and the push surface"): the
+	// block's Until passing is a boundary IF the anchor is STILL that same
+	// scheduled anchor. The isScheduledAnchor guard is load-bearing for the
+	// "one notification per block end" rule: an explicit override already
+	// replaced s.anchor via a DIFFERENT code path (hub.go's anchorRequests
+	// "set" branch), so by the time this runs the anchor is no longer
+	// scheduled and this must not fire a second, redundant boundary for a
+	// block whose anchor was already swapped out from under it.
+	// scheduledAnchorUntil is stamped by checkScheduledAnchor at arm time —
+	// a plain integer comparison here, no re-scan of the commitment set.
+	if isScheduledAnchor(a) && s.scheduledAnchorUntil > 0 && now >= s.scheduledAnchorUntil {
+		fireBoundary(now, s, a, fire)
+		return true
+	}
+
 	// Anchored work finished: the anchor names a project and that
 	// project's DISPLAYED attention (the dwell-debounced value buildSnapshot
 	// just committed for this pass) is AttFinished — as an EDGE, not a

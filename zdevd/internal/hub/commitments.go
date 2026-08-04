@@ -90,6 +90,46 @@ func deriveFreeUntil(commitments []proto.Commitment, now int64) int64 {
 	return next
 }
 
+// mergedCommitments flattens every source's stored slice in bySource
+// (state.commitments, keyed by source name) into ONE chronological,
+// freshly-allocated slice — the wire's Snapshot.Commitments is the merge
+// across ALL sources (docs/design/command-centre.md — "The scheduled
+// anchor and the push surface"), never a single source's view. Always a
+// fresh allocation (never aliases any source's stored slice), same
+// never-mutate-published-state discipline as sortedCommitments.
+//
+// Map iteration order is randomized by the Go runtime, so a plain sort by
+// At alone would let TWO commitments sharing an At (from different sources,
+// or within one source) land in a different relative order from one call
+// to the next — which would make commitmentsEqual's positional comparison
+// flap between structurally-identical merges and spuriously republish on
+// an idle heartbeat. sort.SliceStable plus an explicit (Source, ID)
+// tie-break makes the merge fully deterministic regardless of map
+// iteration order, closing that gap.
+func mergedCommitments(bySource map[string][]proto.Commitment) []proto.Commitment {
+	var total int
+	for _, v := range bySource {
+		total += len(v)
+	}
+	if total == 0 {
+		return nil
+	}
+	out := make([]proto.Commitment, 0, total)
+	for _, v := range bySource {
+		out = append(out, v...)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].At != out[j].At {
+			return out[i].At < out[j].At
+		}
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
 // commitmentsEqual reports whether a and b are the same commitment set in
 // the same order. Positional comparison is sufficient because both sides
 // are always produced by sortedCommitments (deterministic ascending-At

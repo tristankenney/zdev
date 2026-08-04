@@ -187,16 +187,20 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 	// floods the operator at the exact moment they release the anchor,
 	// which is precisely the wrong moment (deliberate choice).
 	// The airlock gates on EXPLICIT anchors only (calibration, 2026-08-03,
-	// "I do like multi tasking"): an auto-anchor is zdev noticing where the
-	// operator happens to be — a tether for cheap return, not a declared
-	// deep-work session. For a fleet operator, foreign waits ARE the work
-	// queue, and hopping to service them is the job, not self-distraction.
-	// The system's confidence in intent scales with the evidence: a
-	// deliberate act (M-,, a boundary pick, /plan) earns the full shield;
-	// inferred presence earns only quiet visuals (render damping). This is
-	// also the trust play — un-asked-for silence is how the operator ends
-	// up checking manually, the design's terminal failure mode.
-	if s.anchor != nil && !isAutoAnchor(s.anchor) {
+	// "I do like multi tasking"; extended by the scheduled-anchor design
+	// amendment — isExplicitAnchor, scheduledanchor.go): an auto-anchor is
+	// zdev noticing where the operator happens to be, and a scheduled
+	// anchor is a run-sheet block the operator (or /plan on their behalf)
+	// put on the calendar — neither is a DECLARED deep-work session. For a
+	// fleet operator, foreign waits ARE the work queue, and hopping to
+	// service them is the job, not self-distraction. The system's
+	// confidence in intent scales with the evidence: a deliberate act
+	// (M-,, a boundary pick, /plan's explicit anchor-set) earns the full
+	// shield; inferred presence OR a scheduled block earns only quiet
+	// visuals (render damping) and full notifications. This is also the
+	// trust play — un-asked-for silence is how the operator ends up
+	// checking manually, the design's terminal failure mode.
+	if isExplicitAnchor(s.anchor) {
 		anchorKey := ""
 		if s.anchor.Project != "" {
 			anchorKey = proto.SessionKey(s.anchor.Project)
@@ -258,7 +262,7 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 		// partition, so it would count waits being held silently. The
 		// surviving (pierced) crossings are the only honest number.
 		waitCount := eligibleWaits
-		if s.anchor != nil && !isAutoAnchor(s.anchor) {
+		if isExplicitAnchor(s.anchor) {
 			waitCount = len(crossings)
 		}
 		if waitCount > 0 {

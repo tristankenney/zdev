@@ -72,11 +72,12 @@ func defaultMCPExec(ctx context.Context, bin string, args ...string) ([]byte, er
 // through one of these vars so tests can stub the daemon out entirely (no
 // live zdevd needed), exactly as mcpExec stubs the exec seam.
 var (
-	mcpDialPark        = socketpkg.DialPark
-	mcpDialAnchorSet   = socketpkg.DialAnchorSet
-	mcpDialAnchorClear = socketpkg.DialAnchorClear
-	mcpDialHeldRemove  = socketpkg.DialHeldRemove
-	mcpSnapshot        = defaultMCPSnapshot
+	mcpDialPark         = socketpkg.DialPark
+	mcpDialAnchorSet    = socketpkg.DialAnchorSet
+	mcpDialAnchorClear  = socketpkg.DialAnchorClear
+	mcpDialHeldRemove   = socketpkg.DialHeldRemove
+	mcpDialSchedulePush = socketpkg.DialSchedulePush
+	mcpSnapshot         = defaultMCPSnapshot
 )
 
 // mcpSocketTimeout bounds one focus-loop tool's daemon round trip. The
@@ -379,6 +380,69 @@ func mcpTools() []mcpTool {
 					return "", fmt.Errorf("zdev_held_remove: daemon rejected the request")
 				}
 				return "removed: " + id, nil
+			},
+		},
+		{
+			Name:        "zdev_schedule_push",
+			Description: "Push a source's calendar/run-sheet commitments into zdev's focus loop (docs/design/command-centre.md — \"The scheduled anchor and the push surface\"). Each call REPLACES this source's ENTIRE previous set wholesale — pass everything still valid, not a delta; an empty commitments array is how a source clears itself. Sources stay dumb; do the enrichment (titles, project mapping, filtering) BEFORE calling this — records pushed here are treated as already-decided. `at`/`until` are unix seconds (`until` omitted defaults to at+30m for display purposes). `source` must be a stable name you own (e.g. \"plan\") and must NOT be \"ics\" — that name is reserved for zdev's own calendar probe. Set a record's `kind` to \"task:<project>\" (e.g. \"task:zitcha/backend\", using zdev's canonical slash-form project name) to make that block anchor-eligible: while `now` falls inside such a block and the operator has no explicit anchor, zdev auto-anchors to it — overriding an inferred \"(auto)\" presence anchor, but NEVER an explicit pick, and never re-grabbing a block the operator explicitly overrode. Plain \"task\" (no project suffix) and any other kind (e.g. \"meeting\") are valid but never anchor-eligible.",
+			InputSchema: objectSchema(map[string]any{
+				"source": map[string]any{"type": "string", "description": "Stable name for this push's source, e.g. \"plan\". Must not be \"ics\" (reserved for the calendar probe)."},
+				"commitments": map[string]any{
+					"type":        "array",
+					"description": "The FULL replacement set for this source — omit nothing still valid. Empty array clears the source.",
+					"items": objectSchema(map[string]any{
+						"id":    map[string]any{"type": "string", "description": "Stable per-source id — the dedup key. Re-pushing the same id updates that record."},
+						"title": map[string]any{"type": "string", "description": "Display title."},
+						"at":    map[string]any{"type": "integer", "description": "Unix seconds, block start."},
+						"until": map[string]any{"type": "integer", "description": "Unix seconds, block end. Omit if unknown (defaults to at+30m for display)."},
+						"kind":  map[string]any{"type": "string", "description": "Free-form, e.g. \"meeting\", \"focus\", or \"task:<project>\" to make the block anchor-eligible."},
+						"url":   map[string]any{"type": "string", "description": "Optional join/reference link."},
+					}, "id", "title", "at"),
+				},
+			}, "source", "commitments"),
+			run: func(ctx context.Context, args map[string]any) (string, error) {
+				source, _ := args["source"].(string)
+				if strings.TrimSpace(source) == "" {
+					return "", fmt.Errorf("zdev_schedule_push requires non-empty 'source'")
+				}
+				rawList, _ := args["commitments"].([]any)
+				commitments := make([]proto.Commitment, 0, len(rawList))
+				for _, raw := range rawList {
+					m, ok := raw.(map[string]any)
+					if !ok {
+						continue
+					}
+					var c proto.Commitment
+					if id, ok := m["id"].(string); ok {
+						c.ID = id
+					}
+					if title, ok := m["title"].(string); ok {
+						c.Title = title
+					}
+					if at, ok := m["at"].(float64); ok {
+						c.At = int64(at)
+					}
+					if until, ok := m["until"].(float64); ok {
+						c.Until = int64(until)
+					}
+					if kind, ok := m["kind"].(string); ok {
+						c.Kind = kind
+					}
+					if url, ok := m["url"].(string); ok {
+						c.URL = url
+					}
+					commitments = append(commitments, c)
+				}
+				cctx, cancel := context.WithTimeout(ctx, mcpSocketTimeout)
+				defer cancel()
+				ok, err := mcpDialSchedulePush(cctx, mcpSocketPath(), source, commitments)
+				if err != nil {
+					return "", fmt.Errorf("zdev_schedule_push: %w", err)
+				}
+				if !ok {
+					return "", fmt.Errorf("zdev_schedule_push: daemon rejected the request")
+				}
+				return fmt.Sprintf("pushed %d commitment(s) for source %q", len(commitments), source), nil
 			},
 		},
 	}

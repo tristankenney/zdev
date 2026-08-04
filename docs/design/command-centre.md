@@ -323,6 +323,120 @@ what ADHD costs is not leaving but LOSING THE WAY BACK. So:
   finished keeps its glyph and hue; only genuinely idle rows dim. The
   holding counter hue-codes person-shaped items ("┊ holding 3 · ●2").
 
+### The scheduled anchor and the push surface (2026-08-04 — operator-approved amendment)
+
+The operator's requirement, verbatim: **the anchor should derive from the
+run sheet/calendar implications, not just presence** — a run-sheet block
+that says "10:00-11:00 marketplace/pay-ops" should anchor the operator to
+that project for that window, the same way dwelling in a session or a
+scheduled meeting already earns a tether. And: **ingestion must be
+source-agnostic, because sources will keep changing** — the design's own
+"Sources" section already named three (MCP resources, iCalendar, exec),
+and the `/plan` skill is a fourth kind entirely (a push, not a poll).
+**Sources stay dumb; enrichment happens above them** — a source's only job
+is to say what and when; the `/plan` skill pushes already-enriched records
+(titles decided, project mappings resolved) rather than the daemon trying
+to infer either.
+
+This lands as two generalizations to the phase 2 time spine plus one new
+tier, extending the calibration section's philosophy one rung further.
+
+**1. Multi-source commitments.** The hub's commitment store, single-set in
+phase 2, is now keyed by source name: a `CommitmentsRefresh` replaces only
+its own key, wholesale; `Snapshot.Commitments` is the chronological merge
+across every source. `Source` empty decodes as `"ics"` (back-compat with
+every phase-2 caller, including the calendar probe's own historical
+zero-value emissions). Per-source fetch-health (`commitmentsLastOK/Err`,
+surfaced by `zdev-show time` / diag) stays scoped to `"ics"` alone — the
+only source with an asynchronous fetch that can go stale silently. A
+pushed source carries no fetch-health of its own; its freshness story is
+simply **"last push wins"** — deliberate, matching the existing
+"commitments are never persisted" rule (a restart clears them; the morning
+`/plan` run re-pushes).
+
+**2. The push surface.** A synchronous socket verb, `schedule`, mirrors
+the `park`/`anchor` precedent exactly (validate before the hub goroutine,
+apply, publish, ack means applied):
+
+```
+{"type":"schedule","v":1,"source":"plan","commitments":[{...proto.Commitment...}]}
+→ {"ok":true} / {"ok":false,"error":"..."}
+```
+
+Validation, on the caller's goroutine, never inside `applyEvent`: `source`
+non-empty and NOT `"ics"` (reserved for the calendar probe — a push
+claiming it would fight the probe's own replace cycle); every record needs
+`id`/`title`/`at > 0`; `kind` is free-form. Each record's `Source` field is
+overwritten with the request's own source — **one authority**, so a
+record can't misrepresent which source it came from. An empty
+`commitments` array is valid — it is how a source clears itself. CLI:
+`zdevd schedule push --source <name>` (NDJSON `Commitment` records on
+stdin) and `zdevd schedule [list]` (the merged set, source-annotated).
+MCP: `zdev_schedule_push`. `zdev-show time` now annotates each commitment
+line with its source.
+
+**3. The scheduled-anchor tier.** The calibration section's tier order —
+**explicit > scheduled > presence (prompt/dwell)** — gains its middle rung.
+A commitment is **anchor-eligible** when `kind == "task"` and carries a
+project mapping. `proto.Commitment` has no `Project` field and may not
+gain one outside a natural schema bump, so — same discipline as the
+auto-anchor's `"(auto)"` Title convention — the mapping rides the existing
+free-form `Kind` string: `Kind: "task:<project>"` (e.g.
+`"task:marketplace/pay-ops"`). Plain `"task"` (no mapping) is a valid kind
+but never eligible; every other kind ("meeting", "focus", …) never is
+either. **Own this hack loudly**: a proper `Kind`/`Project` split waits for
+the next natural proto bump, exactly like `"(auto)"` waits for one today.
+
+When `now` falls inside an eligible commitment's `[At, Until)` window and
+the current anchor is nil or presence-derived (`"(auto)"`), zdev anchors to
+it: `Anchor{Title: "<title> (scheduled)", Project: <mapping>, SinceTS:
+<At>}` — `SinceTS` is the **block's own start**, not the arming instant, so
+the sidebar's elapsed time reads as time-into-block even when the
+scheduled anchor arms mid-block (e.g. immediately after a prior anchor's
+boundary cleared the way). A scheduled anchor **never** overrides an
+explicit one; it **does** override an auto-anchor, silently — no boundary
+notification, same as an explicit pick upgrading a tether — because the
+plan outranks inferred presence.
+
+**Shield posture: tether-only, like auto.** The airlock's gate generalizes
+from `!isAutoAnchor` to `isExplicitAnchor` (`anchor != nil && !auto &&
+!scheduled`): a scheduled block earns damped visuals and full
+notifications, not silence — the operator multi-tasks, and a run-sheet
+block earns context, never a reason to go quiet. The deep shield remains
+`M-,`/a boundary pick/`/plan`'s explicit anchor-set.
+
+**Boundary.** The block's `Until` passing is a boundary — clear plus
+notification — **if and only if** the anchor is still that same scheduled
+anchor; an explicit override already replaced it through a different path,
+so the block-end check must not double-fire. Finish and expiry apply
+exactly as they do for auto (anchor-kind-agnostic already). **Back-to-back
+blocks**: the next block's derivation may anchor in the SAME publishPass
+the previous one's boundary cleared — allowed, and expected — but the
+boundary notification still fires exactly once, for the ended block.
+
+**Explicit-override semantics, pinned by dogfood reasoning**: once an
+explicit anchor replaces (or simply releases) a scheduled one, **that
+specific block never re-anchors**, even if the explicit anchor is later
+cleared or expires while `now` is still inside the same window — an
+operator who overrode or released the tier's choice for a block made a
+deliberate call the tier must not silently reassert. This applies whether
+the operator's act was a **replacing pick** (`zdev_anchor_set`/`M-,`
+mid-block) or a **plain release** (`zdev_anchor_clear` mid-block): a bare
+release, if left unguarded, would let the very next `publishPass` grab the
+anchor right back — exactly the surprising oscillation this rule exists to
+prevent. The guard is a per-commitment-ID set, so a DIFFERENT block later
+in the day is unaffected.
+
+Instant-prompt-anchor and dwell-arm both already guard on `anchor != nil`,
+so a scheduled anchor suppresses them for free — no new code needed there,
+only tests pinning that the existing guard covers this case too.
+
+**Not persisted** — same reasoning as the dwell auto-anchor and as
+commitments themselves: a restart re-derives within one `publishPass` once
+commitments are known again (which, for a pushed source, means the morning
+skill has re-pushed). The override-tracking set is not persisted either;
+a restart mid-block after an override is a rare, accepted edge case.
+
 ## The surfaces
 
 ### Sidebar (ambient — contracts, never grows)
