@@ -192,4 +192,19 @@ func markScheduledOverridden(s *state, prev *proto.Anchor) {
 		s.scheduledOverriddenBlocks = make(map[string]struct{})
 	}
 	s.scheduledOverriddenBlocks[s.scheduledAnchorCommitmentID] = struct{}{}
+	// The bookkeeping dies with the anchor it described (invariants
+	// review, 2026-08-04): left stale, an operator's EXPLICIT anchor whose
+	// hand-typed title happened to end "(scheduled)" would be judged
+	// against a long-ended block's Until — spuriously cleared with a
+	// boundary — and a later override would mark the WRONG block.
+	clearScheduledBookkeeping(s)
+}
+
+// clearScheduledBookkeeping zeroes the fields that describe WHICH block the
+// current scheduled anchor came from. Call whenever the scheduled anchor
+// stops being the anchor (override, clear, or its own boundary) — the
+// fields must never outlive the anchor they describe.
+func clearScheduledBookkeeping(s *state) {
+	s.scheduledAnchorCommitmentID = ""
+	s.scheduledAnchorUntil = 0
 }

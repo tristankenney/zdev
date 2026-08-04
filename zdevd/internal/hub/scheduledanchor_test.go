@@ -554,3 +554,103 @@ func TestScheduledAnchor_EndToEnd_ArmsFromPushedCommitment(t *testing.T) {
 		t.Errorf("Project = %q, want %q", armed.Project, "marketplace/pay-ops")
 	}
 }
+
+// The invariants review's reproduction (2026-08-04): a block longer than
+// the idle-expiry window must NOT flood boundaries — expiry is exempt for
+// scheduled anchors because the block's Until IS the expiry. Ten passes
+// deep inside an over-long block: zero boundary notifications.
+func TestScheduledAnchorExemptFromIdleExpiry(t *testing.T) {
+	s := newState()
+	s.anchorExpirySec = 90 * 60
+	s.commitments = map[string][]proto.Commitment{"plan": {{
+		ID: "blk-long", Source: "plan", Title: "deep block",
+		Kind: "task:marketplace/pay-ops",
+		At:   1000, Until: 1000 + 4*3600, // 4h block
+	}}}
+	rec := &fullNotifRecorder{}
+
+	merged := mergedCommitments(s.commitments)
+	// Arm at block start, then run passes from 2h in (past the 90m expiry).
+	checkScheduledAnchor(1000, s, merged)
+	if s.anchor == nil {
+		t.Fatal("block must arm")
+	}
+	for now := int64(1000 + 2*3600); now < 1000+2*3600+10; now++ {
+		checkBoundary(now, s, rec.fire)
+		checkScheduledAnchor(now, s, merged)
+	}
+	if got := len(rec.snapshot()); got != 0 {
+		t.Fatalf("scheduled anchor inside its window fired %d boundaries, want 0", got)
+	}
+	if s.anchor == nil || !isScheduledAnchor(s.anchor) {
+		t.Fatal("anchor must still be the scheduled block")
+	}
+
+	// The block's own end still bounds, exactly once.
+	end := int64(1000 + 4*3600)
+	checkBoundary(end, s, rec.fire)
+	if got := len(rec.snapshot()); got != 1 {
+		t.Fatalf("block end must fire exactly one boundary, got %d", got)
+	}
+}
+
+// A finish on a scheduled anchor CONSUMES its block: one boundary, and the
+// same pass (or any later one inside the window) must not re-grab it.
+func TestScheduledAnchorFinishConsumesBlock(t *testing.T) {
+	s := stateWithProject("marketplace-pay-ops", projectData{Attention: proto.AttWorking})
+	s.commitments = map[string][]proto.Commitment{"plan": {{
+		ID: "blk-1", Source: "plan", Title: "IMP-97",
+		Kind: "task:marketplace/pay-ops",
+		At:   1000, Until: 1000 + 3600,
+	}}}
+	rec := &fullNotifRecorder{}
+	merged := mergedCommitments(s.commitments)
+	checkScheduledAnchor(1000, s, merged)
+	if s.anchor == nil {
+		t.Fatal("block must arm")
+	}
+	// checkBoundary observes the project live first (arms the finish edge),
+	// then the work finishes.
+	checkBoundary(1100, s, rec.fire)
+	pd := s.projectData["marketplace-pay-ops"]
+	pd.Attention = proto.AttFinished
+	s.projectData["marketplace-pay-ops"] = pd
+
+	checkBoundary(1200, s, rec.fire)
+	checkScheduledAnchor(1200, s, merged) // same-pass re-grab attempt
+	if got := len(rec.snapshot()); got != 1 {
+		t.Fatalf("finish must fire exactly one boundary, got %d", got)
+	}
+	if s.anchor != nil {
+		t.Fatalf("consumed block must not re-grab, got %+v", s.anchor)
+	}
+}
+
+// Scheduled bookkeeping dies with the anchor: after any boundary, an
+// EXPLICIT anchor with a pathological "(scheduled)"-suffixed title must not
+// be judged against a stale block's Until.
+func TestStaleScheduledBookkeepingCannotClearExplicitAnchor(t *testing.T) {
+	s := newState()
+	s.commitments = map[string][]proto.Commitment{"plan": {{
+		ID: "blk-old", Source: "plan", Title: "old block",
+		Kind: "task:marketplace/pay-ops",
+		At:   1000, Until: 2000,
+	}}}
+	rec := &fullNotifRecorder{}
+	checkScheduledAnchor(1000, s, mergedCommitments(s.commitments))
+	checkBoundary(2000, s, rec.fire) // block ends normally
+	if s.scheduledAnchorUntil != 0 || s.scheduledAnchorCommitmentID != "" {
+		t.Fatal("bookkeeping must be zeroed by the boundary")
+	}
+
+	// Operator explicitly anchors with a pathological title.
+	applyEvent(s, tmuxctl.AnchorSet{Title: "review x (scheduled)", NowNanos: 5000e9}, nil)
+	before := len(rec.snapshot())
+	checkBoundary(6000, s, rec.fire)
+	if s.anchor == nil {
+		t.Fatal("explicit anchor with a pathological title must survive")
+	}
+	if got := len(rec.snapshot()); got != before {
+		t.Fatal("no spurious boundary may fire from stale bookkeeping")
+	}
+}

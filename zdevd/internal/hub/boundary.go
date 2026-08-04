@@ -69,6 +69,16 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 		if pd, ok := s.projectData[proto.SessionKey(a.Project)]; ok {
 			if pd.Attention == proto.AttFinished {
 				if s.anchorFinishArmed {
+					// A finish on a SCHEDULED anchor consumes its block:
+					// the work the block existed for is done, so the block
+					// must not silently re-grab on this same pass (the
+					// operator would hear "boundary" while the anchor
+					// quietly persisted — the untested transition the
+					// invariants review flagged). Presence or the next
+					// block takes over by the normal rules.
+					if isScheduledAnchor(a) {
+						markScheduledOverridden(s, a)
+					}
 					fireBoundary(now, s, a, fire)
 					return true
 				}
@@ -95,7 +105,14 @@ func checkBoundary(now int64, s *state, fire func(Notification)) bool {
 	// (autoanchor.go's handleWorkingSignal) — so a genuinely abandoned
 	// anchor (no prompts after the operator wandered off) still expires on
 	// schedule, measured from the LAST real engagement.
-	if s.anchorExpirySec > 0 && now-s.lastEngagedTS >= s.anchorExpirySec {
+	// Scheduled anchors are EXEMPT from idle expiry: the block's Until IS
+	// its expiry (checked above). Without this, a block longer than the
+	// expiry window flooded boundaries at heartbeat rate — expiry fired,
+	// the same-pass checkScheduledAnchor re-grabbed the block, engagement
+	// snapped back to the block's START (SinceTS=At), and the next pass
+	// fired again: nine notifications in ten seconds in the invariants
+	// review's reproduction (2026-08-04).
+	if s.anchorExpirySec > 0 && !isScheduledAnchor(a) && now-s.lastEngagedTS >= s.anchorExpirySec {
 		fireBoundary(now, s, a, fire)
 		return true
 	}
@@ -121,6 +138,10 @@ func fireBoundary(now int64, s *state, a *proto.Anchor, fire func(Notification))
 	held := len(s.heldItems)
 	applyEvent(s, tmuxctl.AnchorClear{}, nil)
 	resetDwellForCurrentAttendance(s, now)
+	// Scheduled bookkeeping never outlives the anchor it described —
+	// regardless of which boundary cause ended it (invariants review,
+	// 2026-08-04). Harmless no-op for auto/explicit anchors.
+	clearScheduledBookkeeping(s)
 	if fire == nil {
 		return
 	}
