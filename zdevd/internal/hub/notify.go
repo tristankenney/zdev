@@ -197,7 +197,7 @@ func tierCheck(now int64, s *state, fire func(Notification)) bool {
 	// confidence in intent scales with the evidence: a deliberate act
 	// (M-,, a boundary pick, /plan's explicit anchor-set) earns the full
 	// shield; inferred presence OR a scheduled block earns only quiet
-	// visuals (render damping) and full notifications. This is also the
+	// visuals (the anchor row only) and full notifications. This is also the
 	// trust play — un-asked-for silence is how the operator ends up
 	// checking manually, the design's terminal failure mode.
 	if isExplicitAnchor(s.anchor) {

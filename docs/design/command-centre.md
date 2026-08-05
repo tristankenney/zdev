@@ -92,8 +92,8 @@ credibility.
    drift item crossing its threshold — are **held**: captured, aging,
    silent. The only visible trace is a dim `┊ holding N` counter under the
    anchor, which exists as proof the airlock is catching things (that proof
-   is what lets the operator not go look). The sidebar damps: no pulsing,
-   no spinners except on the anchored work.
+   is what lets the operator not go look). The sidebar itself does NOT go
+   quiet — see the 2026-08-06 calibration below.
 3. **Capture.** Mid-focus thoughts get a two-keystroke park (`M-.` → one
    line → enter → gone), landing in the held set with a guaranteed hearing.
    The thought is externalised; the focus survives. Cheapest feature in the
@@ -311,7 +311,7 @@ tasking."** For a fleet operator, hopping to service a wait IS the job;
 what ADHD costs is not leaving but LOSING THE WAY BACK. So:
 
 - **The anchor is a tether, not a wall.** Its job is cheap re-entry.
-- **Auto-anchor = tether only**: damped visuals, full notifications. The
+- **Auto-anchor = tether only**: ambient visuals, full notifications. The
   airlock gates on `!isAutoAnchor` — inferred presence earns quiet, never
   silence. Un-asked-for silence is how the operator ends up checking
   manually, the terminal failure mode.
@@ -322,6 +322,37 @@ what ADHD costs is not leaving but LOSING THE WAY BACK. So:
   pulse peak in their full hue; working freezes its spinner in hue;
   finished keeps its glyph and hue; only genuinely idle rows dim. The
   holding counter hue-codes person-shaped items ("┊ holding 3 · ●2").
+  *Superseded 2026-08-06 — damping is gone entirely, see below.*
+
+### Calibration: damping is dead (2026-08-06)
+
+The tiered damping above was the second attempt to make a receded row
+"quiet but legible", and it failed the same way the first did, only less
+obviously. Reported from dogfood: **"pip is currently working, but showing
+a stalled spinner."** Freezing a SPINNER is not the same as being static —
+`◐` is a quarter-circle that only ever appears mid-rotation, so a
+motionless one reads as rotation that STOPPED. The sidebar was libelling
+healthy agents as hung.
+
+The failure was self-masking, which is why it survived three days: the
+anchor's own project pierces damping, so the one row the operator
+spot-checks was always the one row that was right.
+
+The deeper error is that damping inverts the sidebar's purpose. A fleet
+supervisor exists to DRAW the operator to what is live. **Focus is
+something you win by making the relevant row louder — the anchor row and
+the holding counter do exactly that — never by making the fleet dimmer.**
+The operator's instruction: *"we need this to draw me to what's
+relevant."*
+
+So `focusReceded` and `dampMarker` are deleted, along with the `receded`
+parameter threaded through the four render functions. Every row animates
+at full fidelity whether or not something is anchored. What survives of
+the focus loop's sidebar half is purely additive: the `▶ now` anchor row
+and the `┊ holding N` counter. The airlock is untouched — it gates
+NOTIFICATIONS (what speaks), which was always the half that worked; the
+sidebar was never the right place to enforce quiet, because a glance is
+not an interruption.
 
 ### The scheduled anchor and the push surface (2026-08-04 — operator-approved amendment)
 
@@ -400,7 +431,7 @@ plan outranks inferred presence.
 
 **Shield posture: tether-only, like auto.** The airlock's gate generalizes
 from `!isAutoAnchor` to `isExplicitAnchor` (`anchor != nil && !auto &&
-!scheduled`): a scheduled block earns damped visuals and full
+!scheduled`): a scheduled block earns an anchor row and full
 notifications, not silence — the operator multi-tasks, and a run-sheet
 block earns context, never a reason to go quiet. The deep shield remains
 `M-,`/a boundary pick/`/plan`'s explicit anchor-set.
@@ -441,9 +472,10 @@ a restart mid-block after an override is a rare, accepted edge case.
 
 ### Sidebar (ambient — contracts, never grows)
 
-Gains exactly: the anchor row, the `┊ holding N` counter, and a damped
-render mode while anchored. Everything else about it shrinks — see "The
-sidebar contracts" below.
+Gains exactly two additive lines: the anchor row and the `┊ holding N`
+counter. It never subtracts from the fleet rows — damping was tried and
+deleted (2026-08-06). Everything else about it shrinks — see "The sidebar
+contracts" below.
 
 ### The park prompt (`M-.`)
 
@@ -489,7 +521,7 @@ skeleton later: four popups, one codebase, one visual voice.
 | lipgloss borders/join/width | popup frames + layout | shipped (pinned renderer) |
 | bubblezone | hover/click in popups | shipped (Round) |
 | Round model pattern | the shared skeleton | shipped |
-| sidebar tea engine + theme seam | anchor, counter, damped mode | shipped |
+| sidebar tea engine + theme seam | anchor row, holding counter | shipped |
 | **pressure model** | curves, "coming into view" threshold | **custom — the real design work** |
 | **boundary detector** | anchor end, meeting edge, queue-clear | **custom — hub derivation** |
 | anchor + held set state | snapshot + persisted | custom, small |
@@ -544,7 +576,7 @@ and does the dogfood confirm it?
 | triage strip (`ZDEV_SIDEBAR_TRIAGE`, default off) | superseded by the boundary review — delete |
 | review gauge (`ZDEV_SIDEBAR_REVIEW`) | deliberative data — migrates to the centre's registers; sidebar version deleted |
 | wait pulses + spoken announcements | gated by the airlock; full loudness only while unanchored |
-| stale-dim / demote-fold | absorbed by the drift register; the dim channel is freed for damped mode |
+| stale-dim / demote-fold | absorbed by the drift register |
 | footer tally | competes with the holding counter — one survives |
 | initiative metadata rows (parked) | v2 is centre content, never sidebar rows |
 
@@ -562,8 +594,8 @@ than replaced.
 2. **The time spine.** `Commitments`/`FreeUntil` from one source (cheapest
    to prove — likely ICS), `InFocus`. *Kill: if the time data cannot be
    kept trustworthy, everything downstream is unsafe.*
-3. **The loop core.** Anchor (set/release/expiry), damped sidebar, airlock
-   gating the notifier, boundary review presenting held + digest.
+3. **The loop core.** Anchor (set/release/expiry), airlock gating the
+   notifier, boundary review presenting held + digest.
    *Kill: if suppression ever hides something needed, revert to manual
    mute; if the anchor goes stale enough to be ignored, the tether is
    noise — rethink expiry before building further.*

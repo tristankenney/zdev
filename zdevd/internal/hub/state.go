@@ -271,7 +271,7 @@ type state struct {
 	// anchor is the focus loop's "now" (phase 3A, docs/design/command-
 	// centre.md — "the anchor lifecycle"): the one thing the operator
 	// explicitly chose to be on. nil means unanchored, which is the ENTIRE
-	// loop's inert default — no airlock gating, no damped sidebar, InFocus
+	// loop's inert default — no airlock gating, no anchor row, InFocus
 	// falls back to the commitment-only check phase 2 already shipped.
 	// Owned by the hub goroutine; mutated by applyEvent(AnchorSet /
 	// AnchorClear) and by boundary.go's checkBoundary (an exceptional write

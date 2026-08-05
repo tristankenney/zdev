@@ -1,8 +1,7 @@
 // internal/render/focus.go
 //
 // The focus loop's sidebar half (phase 3C, docs/design/command-centre.md):
-// the anchor row, the "┊ holding N" counter, and damped rendering while
-// anchored. Knob: ZDEV_SIDEBAR_FOCUS (cmd/zdev-sidebar wires it into
+// the anchor row and the "┊ holding N" counter. Knob: ZDEV_SIDEBAR_FOCUS (cmd/zdev-sidebar wires it into
 // FocusEnabled below). Default off ⇒ byte-identical frames — the loop's
 // "must win by being picked, never by being default" rule, same posture as
 // every other sidebar knob (ZDEV_SIDEBAR_TRIAGE, ZDEV_SIDEBAR_REVIEW, …).
@@ -23,8 +22,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
-// FocusEnabled gates the anchor row, the holding counter, and damped
-// rendering. cmd/zdev-sidebar sets this from ZDEV_SIDEBAR_FOCUS=1.
+// FocusEnabled gates the anchor row and the holding counter. cmd/zdev-sidebar sets this from ZDEV_SIDEBAR_FOCUS=1.
 var FocusEnabled = false
 
 // renderAnchorRow writes the anchor row — "▶ now  <title> · <elapsed>" — and,
@@ -120,46 +118,3 @@ func renderAnchorRow(buf *bytes.Buffer, snap *proto.Snapshot, width int, nowFn f
 	return RowRef{Y: y, Name: anchor.Project}, true
 }
 
-// focusReceded reports whether project p should render RECEDED under damped
-// mode: true while anchored (damped, computed by the caller as
-// FocusEnabled && snap.Anchor != nil) except for the anchor's own project
-// and the FIRES list — a dead agent, or a wait that has crossed the urgent
-// tier. urgent is passed in rather than recomputed: frame.go already calls
-// isUrgent once per row for the ▌ left-border accent, and this predicate
-// must agree with that exact same call (pure function, same inputs).
-func focusReceded(damped bool, anchorProject string, p *proto.Project, urgent bool) bool {
-	if !damped {
-		return false
-	}
-	if anchorProject != "" && p.Name == anchorProject {
-		return false
-	}
-	return !(urgent || projectAttention(p) == proto.AttDead)
-}
-
-// dampMarker overrides a receded row's attention glyph. Recalibrated
-// 2026-08-03 ("I do like multi tasking"): damping kills MOTION, never
-// information. For a fleet operator the peripheral fleet state IS the work
-// queue — hopping to service a wait is the job, so a wait must stay
-// legible at a glance even while anchored. What changes per attention:
-//
-//	waiting  → frozen at the pulse PEAK ("●"), full waiting hue — visible,
-//	           motionless. (The first cut froze it to the resting "·" in
-//	           dim, which erased the information along with the motion.)
-//	working  → frozen spinner frame, its normal hue — "busy, fine".
-//	finished → its normal glyph and hue, static as always.
-//	idle/absent → dim; genuinely quiet rows are the only ones that recede.
-//
-// Dead/urgent rows never reach here — they pierce fully animated.
-func dampMarker(att proto.Attention, glyph string) (newGlyph, color string) {
-	switch att {
-	case proto.AttWaiting:
-		return "●", thWaiting(0)
-	case proto.AttWorking:
-		return WorkFrames[0], thWorking()
-	case proto.AttFinished:
-		return glyph, thDone()
-	default:
-		return glyph, thDim()
-	}
-}

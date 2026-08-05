@@ -257,11 +257,11 @@ func TestFocusShiftsRowMapAndKeepsDrawerHeaderClickable(t *testing.T) {
 	}
 }
 
-// focusDampSnapshot fixes the four cases damped mode must tell apart: the
-// anchor's own project (full treatment), a quiet wait and a quiet working
-// row (both receded), a dead agent and an urgent-tier wait (both FIRES —
-// pierce with full color).
-func focusDampSnapshot() *proto.Snapshot {
+// focusFleetSnapshot is an anchored fleet with every attention represented
+// off the anchor: a fresh wait, a dead agent, an urgent-tier wait, and a
+// working row that is NOT the anchor's project — the exact shape the torn-out
+// damped mode used to mute.
+func focusFleetSnapshot() *proto.Snapshot {
 	return &proto.Snapshot{
 		Anchor: &proto.Anchor{Title: "IMP-97 validate deploy", Project: "zdev", SinceTS: fixedNow - 60},
 		Projects: []proto.Project{
@@ -269,170 +269,44 @@ func focusDampSnapshot() *proto.Snapshot {
 			{Name: "alpha", Status: "waiting", Attention: proto.AttWaiting, WaitStartedTS: fixedNow - 5},
 			{Name: "beta", Attention: proto.AttDead, WaitStartedTS: fixedNow - 500},
 			{Name: "gamma", Status: "waiting", Attention: proto.AttWaiting, WaitStartedTS: fixedNow - int64(WaitUrgentSec) - 5},
+			{Name: "delta", Status: "shell-running", Attention: proto.AttWorking},
 		},
 	}
 }
 
-// Quiet rows recede (marker+name dim, frozen glyph); the anchor's project
-// and the FIRES list (dead, urgent wait) keep full color.
-func TestDampedModeRecedesQuietRowsAndFiresKeepColor(t *testing.T) {
+// Regression, dogfood 2026-08-06 ("pip is currently working, but showing a
+// stalled spinner"): being anchored somewhere else must not mute a single
+// row. Phase 3C's damped mode froze non-anchor markers, and a held spinner
+// frame reads as a HUNG process, so the sidebar libelled healthy agents as
+// stuck. The bug hid behind the anchor's own project, which pierced damping
+// and animated correctly — the one row the operator spot-checked was always
+// the one row that was right. Every row animates now; focus is won by making
+// the anchor louder, never by making the fleet quieter.
+func TestAnchoredFleetKeepsAnimatingEveryRow(t *testing.T) {
 	withFocus(t, true)
 
-	out := Render(focusDampSnapshot(), 50, NewAnimator(), fixedNowFn)
-
-	// Recalibrated 2026-08-03 ("I do like multi tasking"): damping kills
-	// MOTION, never information. A waiting row keeps its hue and shows the
-	// pulse PEAK, frozen — legible at a glance, grabbing nothing.
-	alpha := rawLineWithName(out, "alpha")
-	if !strings.Contains(stripAnsi([]byte(alpha)), "●") {
-		t.Errorf("receded waiting row must freeze at the pulse peak ●, got %q", alpha)
-	}
-	if !strings.Contains(alpha, thWaiting(0)) {
-		t.Errorf("receded waiting row keeps its waiting hue (static), got %q", alpha)
-	}
-
-	beta := rawLineWithName(out, "beta")
-	if strings.Contains(beta, Dim) {
-		t.Errorf("dead row (beta) is a FIRE — must not be dimmed, got %q", beta)
-	}
-	if !strings.Contains(beta, RedPulse) {
-		t.Errorf("dead row (beta) must keep its full RedPulse color, got %q", beta)
-	}
-
-	gamma := rawLineWithName(out, "gamma")
-	if strings.Contains(gamma, Dim) {
-		t.Errorf("urgent-tier wait (gamma) is a FIRE — must not be dimmed, got %q", gamma)
-	}
-	if !strings.Contains(gamma, RedPulse) {
-		t.Errorf("urgent-tier wait (gamma) must keep its full RedPulse color, got %q", gamma)
-	}
-
-	zdev := rawLineWithName(out, "zdev")
-	if strings.Contains(zdev, Dim) {
-		t.Errorf("the anchor's OWN project must keep full treatment, got %q", zdev)
-	}
-}
-
-// The no-animation assertion: a receded row's line must be BYTE-IDENTICAL
-// across two different animator states (the pulse/spinner frozen), while a
-// piercing row (urgent wait) and the anchor's own project keep animating.
-func TestDampedModeFreezesAnimationOnRecededRowsOnly(t *testing.T) {
-	withFocus(t, true)
-
-	snap := focusDampSnapshot()
-
-	animA := NewAnimator()
-	animB := NewAnimator()
+	snap := focusFleetSnapshot()
+	animA, animB := NewAnimator(), NewAnimator()
 	for i := 0; i < 6; i++ {
 		animB.Tick()
 	}
-
 	outA := Render(snap, 50, animA, fixedNowFn)
 	outB := Render(snap, 50, animB, fixedNowFn)
 
-	if a, b := rawLineWithName(outA, "alpha"), rawLineWithName(outB, "alpha"); a != b {
-		t.Errorf("receded row (alpha) must be byte-identical across animator states:\nA: %q\nB: %q", a, b)
-	}
-	if a, b := rawLineWithName(outA, "gamma"), rawLineWithName(outB, "gamma"); a == b {
-		t.Errorf("piercing row (gamma, urgent) must keep animating; frames were identical: %q", a)
-	}
-	if a, b := rawLineWithName(outA, "zdev"), rawLineWithName(outB, "zdev"); a == b {
-		t.Errorf("the anchor's own project must keep animating; frames were identical: %q", a)
-	}
-}
-
-// Hover is feedback, not attention — it must survive damping. A receded row
-// under the pointer still shows the › marker.
-func TestFocusHoverStillShowsOnRecededRow(t *testing.T) {
-	withFocus(t, true)
-
-	out, _ := RenderWithOpts(focusDampSnapshot(), 50, NewAnimator(), fixedNowFn, RenderOpts{Hover: "alpha"})
-	line := rawLineWithName(out, "alpha")
-	if !strings.HasPrefix(stripAnsi([]byte(line)), "›") {
-		t.Errorf("hovering a receded row must still show the › marker, got %q", stripAnsi([]byte(line)))
-	}
-}
-
-// Group headers keep their STRUCTURE (glyph, Bold, rollup) but lose their
-// identity hue when nothing inside the group is the anchor or a fire —
-// tested directly against writeGroupHeader/renderHomeRow rather than a full
-// Render, since the header's own receded flag is the GROUP's aggregate, not
-// the header row's individual state.
-func TestWriteGroupHeaderRecededLosesHueKeepsStructure(t *testing.T) {
-	var full, dim bytes.Buffer
-	writeGroupHeader(&full, "alpha", 50, 0, false, false)
-	writeGroupHeader(&dim, "alpha", 50, 0, false, true)
-
-	if !strings.Contains(full.String(), PaletteFor("alpha")) {
-		t.Errorf("non-receded header must carry its identity hue, got %q", full.String())
-	}
-	if strings.Contains(dim.String(), PaletteFor("alpha")) {
-		t.Errorf("receded header must NOT carry its identity hue, got %q", dim.String())
-	}
-	if !strings.Contains(dim.String(), thDim()) {
-		t.Errorf("receded header must carry thDim(), got %q", dim.String())
-	}
-	// Structure (the ╭ corner, the name, Bold) survives regardless.
-	for _, out := range []string{full.String(), dim.String()} {
-		if !strings.Contains(out, "╭") || !strings.Contains(out, "alpha") || !strings.Contains(out, Bold) {
-			t.Errorf("receded/full headers must both keep structure (╭, name, Bold): %q", out)
+	// "delta" is the reported case: working, not the anchor, no urgency to
+	// earn it a pierce — under damping it froze.
+	for _, name := range []string{"delta", "alpha", "gamma", "zdev"} {
+		if a, b := rawLineWithName(outA, name), rawLineWithName(outB, name); a == b {
+			t.Errorf("%s must keep animating while anchored elsewhere; frames were identical: %q", name, a)
 		}
 	}
-}
 
-func TestRenderHomeRowRecededLosesHueKeepsStructure(t *testing.T) {
-	p := &proto.Project{Name: "alpha", Status: "alive"}
-	anim := NewAnimator()
-
-	var full, dim bytes.Buffer
-	renderHomeRow(&full, p, 50, anim, fixedNowFn, false, false, false, false, 0, false)
-	renderHomeRow(&dim, p, 50, anim, fixedNowFn, false, false, false, true, 0, false)
-
-	if !strings.Contains(full.String(), PaletteFor("alpha")) {
-		t.Errorf("non-receded home row must carry its identity hue, got %q", full.String())
+	// And it animates through the real spinner, not a held frame.
+	if line := stripAnsi([]byte(rawLineWithName(outA, "delta"))); !strings.ContainsAny(line, "◐◓◑◒") {
+		t.Errorf("a non-anchor working row must carry a live spinner frame, got %q", line)
 	}
-	if strings.Contains(dim.String(), PaletteFor("alpha")) {
-		t.Errorf("receded home row must NOT carry its identity hue, got %q", dim.String())
-	}
-	if !strings.Contains(dim.String(), "╭") || !strings.Contains(dim.String(), "alpha") {
-		t.Errorf("receded home row must keep its structure (╭, name): %q", dim.String())
-	}
-}
-
-// Integration-level check that the per-group aggregate (frame.go's
-// groupFull) actually drives the header through a full Render: a quiet
-// group (nothing inside is the anchor or a fire) dims; a group holding the
-// anchor's own project keeps its hue even though the header ROW itself
-// isn't the anchor.
-func TestDampedGroupHeaderAggregate(t *testing.T) {
-	defer func(m string) { GroupMode = m }(GroupMode)
-	GroupMode = "prefix"
-	withFocus(t, true)
-
-	quiet := &proto.Snapshot{
-		Anchor: &proto.Anchor{Title: "x", Project: "zdev", SinceTS: fixedNow},
-		Projects: []proto.Project{
-			{Name: "alpha", Status: "alive"},
-			{Name: "alpha/repo", Status: "alive"},
-			{Name: "zdev", Status: "alive"},
-		},
-	}
-	out := Render(quiet, 50, NewAnimator(), fixedNowFn)
-	header := rawLineWithName(out, "alpha")
-	if !strings.Contains(header, Dim) {
-		t.Errorf("a quiet group's header must lose its hue while anchored elsewhere: %q", header)
-	}
-
-	anchoredInside := &proto.Snapshot{
-		Anchor: &proto.Anchor{Title: "x", Project: "alpha/repo", SinceTS: fixedNow},
-		Projects: []proto.Project{
-			{Name: "alpha", Status: "alive"},
-			{Name: "alpha/repo", Status: "alive"},
-		},
-	}
-	out2 := Render(anchoredInside, 50, NewAnimator(), fixedNowFn)
-	header2 := rawLineWithName(out2, "alpha")
-	if !strings.Contains(header2, PaletteFor("alpha")) {
-		t.Errorf("a group holding the anchor's project must keep its header hue: %q", header2)
+	// Full working hue, never dimmed to peripheral vision.
+	if line := rawLineWithName(outA, "delta"); !strings.Contains(line, thWorking()) {
+		t.Errorf("a non-anchor working row must keep its working hue: %q", line)
 	}
 }

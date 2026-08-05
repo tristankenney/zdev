@@ -423,8 +423,8 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 	render.ReviewGaugeEnabled = os.Getenv("ZDEV_SIDEBAR_REVIEW") == "1"
 
 	// Focus loop opt-in (default off — phase 3C, docs/design/command-centre.md):
-	// the anchor row (▶ now), the ┊ holding N counter, and damped rendering
-	// while anchored. Off ⇒ byte-identical to today even once the daemon
+	// the anchor row (▶ now) and the ┊ holding N counter while anchored.
+	// Off ⇒ byte-identical to today even once the daemon
 	// starts setting Anchor/Held — the loop must win by being picked, never
 	// by being default.
 	render.FocusEnabled = os.Getenv("ZDEV_SIDEBAR_FOCUS") == "1"

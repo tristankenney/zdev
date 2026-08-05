@@ -89,7 +89,7 @@ func isScheduledAnchor(a *proto.Anchor) bool {
 // nor run-sheet-derived (scheduled) — i.e. it was actually PICKED, whether
 // by hand, a boundary review, or /plan's explicit anchor-set. This is the
 // airlock's gate as of the design amendment: "the anchor is a tether, not
-// a wall" applies to auto AND scheduled alike (both damped-but-audible);
+// a wall" applies to auto AND scheduled alike (both tether-not-shield);
 // only an explicit anchor earns the deep shield (full airlock, silence).
 func isExplicitAnchor(a *proto.Anchor) bool {
 	return a != nil && !isAutoAnchor(a) && !isScheduledAnchor(a)
