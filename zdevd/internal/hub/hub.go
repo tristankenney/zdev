@@ -683,7 +683,8 @@ func (h *Hub) Run(ctx context.Context) error {
 			if h.eventlog != nil {
 				afterStatus := snapshotStatuses(h.state)
 				now := time.Now().UTC()
-				emitStateChanges(h.eventlog, beforeStatus, afterStatus, now)
+				emitStateChanges(h.eventlog, beforeStatus, afterStatus, waitReasons(h.state), now)
+				emitWaitReason(h.eventlog, ev, now)
 			}
 			if timer == nil {
 				timer = time.NewTimer(h.debounce)
@@ -1288,12 +1289,85 @@ func snapshotStatuses(s *state) map[string]string {
 	return out
 }
 
+// waitReason pairs the hook channel's wait kind with the agent's own
+// summary line, read from projectData at emit time. Both empty for
+// title-derived waits (no hook fired) — the stops classifier reports
+// those as "derived" rather than guessing.
+type waitReason struct{ kind, detail string }
+
+// waitReasons captures, per session name, the current wait's reason from
+// the hook channel (projectData.WaitKind/WaitSummary). Owned by the hub
+// goroutine, same discipline as snapshotStatuses; fresh map per call.
+//
+// Staleness window (invariants review 2026-08-08, finding 2): title-derived
+// wait EXITS clear WaitKind/WaitSummary in buildSnapshot's publish pass,
+// not per-event, so a →waiting transition landing between a wait exit and
+// the next publish can inherit the previous episode's reason inline. The
+// window is one debounce interval and `zdevd stops` tolerates ±2min of
+// join slop, so misclassification is bounded to adjacent episodes.
+// Loop-layer phase 0a (docs/design/loop-layer.md): this is what lets the
+// eventlog classify the stops it was already counting.
+func waitReasons(s *state) map[string]waitReason {
+	out := make(map[string]waitReason)
+	for name, pd := range s.projectData {
+		if pd.WaitKind != "" || pd.WaitSummary != "" {
+			out[name] = waitReason{kind: pd.WaitKind, detail: pd.WaitSummary}
+		}
+	}
+	return out
+}
+
+// emitWaitReason submits a standalone "wait-reason" event when a hook
+// notification with a wait kind arrives. This exists because the status
+// flip to waiting is TITLE-derived while the reason is HOOK-derived — two
+// independent events in either order. If the title lands first, the
+// state-change is emitted before the reason exists and would classify as
+// "derived" forever. The standalone event makes classification
+// ordering-proof: `zdevd stops` joins →waiting transitions to the nearest
+// wait-reason for the session within a window. Chmod replays of stale
+// notif files can duplicate these; duplicates inside the join window are
+// harmless (same classification), so no dedupe here.
+func emitWaitReason(w *eventlog.Writer, ev any, ts time.Time) {
+	n, ok := ev.(tmuxctl.NotifSeen)
+	if !ok || !isWaitKind(n.Kind) || n.Session == "" {
+		return
+	}
+	w.Submit(eventlog.Event{
+		Ts:      ts,
+		Type:    "wait-reason",
+		Session: n.Session,
+		Project: n.Session,
+		Reason:  n.Kind,
+		Detail:  n.Summary,
+	})
+}
+
+// isWaitKind approximates applyEvent's NotifSeen dispatch: every kind that
+// is NOT a lifecycle signal (dead/alive/ack/working/done) enters the
+// default wait-entry branch and stamps WaitKind. One deliberate deviation:
+// Kind=="" DOES enter that branch in applyEvent, but carries no
+// classifiable information, so no wait-reason event is emitted for it
+// (stopClass("") is "derived" regardless).
+func isWaitKind(k string) bool {
+	switch k {
+	case "", proto.WaitKindDead, proto.WaitKindAlive, proto.WaitKindAck,
+		proto.WaitKindWorking, proto.WaitKindDone:
+		return false
+	}
+	return true
+}
+
 // emitStateChanges compares before/after status maps and submits one
 // eventlog state-change Event per session whose status differs. New
 // sessions (in after but not before) are emitted with from="" → to=new.
 // Disappeared sessions (in before but not after) are emitted with
 // from=old → to="" — useful for `zdevd history` debugging.
-func emitStateChanges(w *eventlog.Writer, before, after map[string]string, ts time.Time) {
+//
+// reasons enriches transitions INTO waiting with the hook channel's wait
+// kind + summary (loop-layer phase 0a). Reasons for sessions not
+// currently waiting are absent from the map; a →waiting transition with
+// no entry (title-derived wait) emits with empty Reason/Detail.
+func emitStateChanges(w *eventlog.Writer, before, after map[string]string, reasons map[string]waitReason, ts time.Time) {
 	// Visit the union of keys so we catch additions AND removals.
 	seen := make(map[string]struct{}, len(before)+len(after))
 	for k := range before {
@@ -1308,14 +1382,21 @@ func emitStateChanges(w *eventlog.Writer, before, after map[string]string, ts ti
 		if from == to {
 			continue
 		}
-		w.Submit(eventlog.Event{
+		ev := eventlog.Event{
 			Ts:      ts,
 			Type:    "state-change",
 			Session: name,
 			Project: name,
 			From:    from,
 			To:      to,
-		})
+		}
+		if to == tmuxctl.StatusWaiting {
+			if r, ok := reasons[name]; ok {
+				ev.Reason = r.kind
+				ev.Detail = r.detail
+			}
+		}
+		w.Submit(ev)
 	}
 }
 

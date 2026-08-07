@@ -278,3 +278,36 @@ func stripLineComments(data []byte) []byte {
 	}
 	return out
 }
+
+// Reason/Detail (loop-layer phase 0a) must survive the wire round-trip —
+// the custom Marshal/Unmarshal pair via eventWire has dropped additive
+// fields before (caught live: Unmarshal omitted them on first landing).
+func TestEventReasonDetailRoundTrip(t *testing.T) {
+	in := Event{
+		Ts:      time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC),
+		Type:    "wait-reason",
+		Session: "alpha",
+		Project: "alpha",
+		Reason:  "permission",
+		Detail:  "Claude needs your permission to use Bash",
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out Event
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Reason != in.Reason || out.Detail != in.Detail {
+		t.Errorf("round-trip lost enrichment: reason %q detail %q", out.Reason, out.Detail)
+	}
+	// And absence stays absent — old log lines must not grow fields.
+	var legacy Event
+	if err := json.Unmarshal([]byte(`{"ts":"2026-07-27T06:12:17.12063Z","type":"state-change","session":"a","to":"waiting"}`), &legacy); err != nil {
+		t.Fatalf("legacy unmarshal: %v", err)
+	}
+	if legacy.Reason != "" || legacy.Detail != "" {
+		t.Errorf("legacy line grew enrichment fields: %+v", legacy)
+	}
+}

@@ -250,3 +250,73 @@ func submitOrFatal(t *testing.T, h *Hub, ev tmuxctl.Event) {
 		t.Fatalf("Submit: %v", err)
 	}
 }
+
+// TestHubEmitsWaitReason: a NotifSeen with a wait kind emits a standalone
+// wait-reason event carrying kind + summary — regardless of whether the
+// title-derived status has flipped yet. This is the ordering-proof half of
+// the loop-layer phase 0a enrichment: the →waiting state-change is
+// title-derived, the reason is hook-derived, and `zdevd stops` joins them.
+func TestHubEmitsWaitReason(t *testing.T) {
+	h, path, cleanup := startHubWithEventlog(t)
+	defer cleanup()
+
+	submitOrFatal(t, h, tmuxctl.SessionChanged{ID: "$0", Name: "alpha"})
+	submitOrFatal(t, h, tmuxctl.NotifSeen{
+		Session:   "alpha",
+		Timestamp: time.Now().Unix(),
+		Kind:      "permission",
+		Summary:   "Claude needs your permission to use Bash",
+	})
+
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, ev := range readEvents(t, path) {
+			if ev.Type == "wait-reason" && ev.Session == "alpha" {
+				if ev.Reason != "permission" {
+					t.Fatalf("wait-reason Reason = %q, want %q", ev.Reason, "permission")
+				}
+				if ev.Detail != "Claude needs your permission to use Bash" {
+					t.Fatalf("wait-reason Detail = %q", ev.Detail)
+				}
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no wait-reason event for alpha within 1s; events: %+v", readEvents(t, path))
+}
+
+// Lifecycle kinds (working/done/alive/dead/ack) must NOT emit wait-reason
+// events — they are not stops, and counting them would inflate the join
+// candidates with noise.
+func TestHubWaitReasonSkipsLifecycleKinds(t *testing.T) {
+	h, path, cleanup := startHubWithEventlog(t)
+	defer cleanup()
+
+	submitOrFatal(t, h, tmuxctl.SessionChanged{ID: "$0", Name: "alpha"})
+	for _, k := range []string{"working", "done", "alive", "dead", "ack", ""} {
+		submitOrFatal(t, h, tmuxctl.NotifSeen{Session: "alpha", Timestamp: time.Now().Unix(), Kind: k})
+	}
+	// Then one real wait kind as the sentinel: once IT appears, all the
+	// lifecycle kinds above have been processed (single hub goroutine,
+	// FIFO channel), so asserting absence is race-free.
+	submitOrFatal(t, h, tmuxctl.NotifSeen{Session: "alpha", Timestamp: time.Now().Unix(), Kind: "decision", Summary: "sentinel"})
+
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		var reasons []eventlog.Event
+		for _, ev := range readEvents(t, path) {
+			if ev.Type == "wait-reason" {
+				reasons = append(reasons, ev)
+			}
+		}
+		if len(reasons) > 0 {
+			if len(reasons) != 1 || reasons[0].Detail != "sentinel" {
+				t.Fatalf("lifecycle kinds leaked wait-reason events: %+v", reasons)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("sentinel wait-reason never appeared")
+}

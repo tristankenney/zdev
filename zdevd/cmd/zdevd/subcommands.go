@@ -616,8 +616,17 @@ func formatEventHuman(ev eventlog.Event) string {
 	ts := ev.Ts.Local().Format("15:04:05")
 	switch ev.Type {
 	case "state-change":
-		return fmt.Sprintf("[%s] state-change session=%s project=%s %s→%s",
+		line := fmt.Sprintf("[%s] state-change session=%s project=%s %s→%s",
 			ts, ev.Session, ev.Project, ev.From, ev.To)
+		// Wait-reason enrichment (loop-layer phase 0a): only →waiting
+		// transitions with hook-channel data carry these.
+		if ev.Reason != "" {
+			line += " reason=" + ev.Reason
+		}
+		if ev.Detail != "" {
+			line += fmt.Sprintf(" detail=%q", ev.Detail)
+		}
+		return line
 	case "pr-count":
 		return fmt.Sprintf("[%s] pr-count project=%s %d→%d",
 			ts, ev.Project, ev.OpenBefore, ev.OpenAfter)

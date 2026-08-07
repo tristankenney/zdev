@@ -117,6 +117,8 @@ func main() {
 			os.Exit(diagSubcmd(os.Args[2:]))
 		case "history":
 			os.Exit(historySubcmd(os.Args[2:]))
+		case "stops":
+			os.Exit(stopsSubcmd(os.Args[2:]))
 		case "demo":
 			os.Exit(demoSubcmd(os.Args[2:]))
 		case "cursor":

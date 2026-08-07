@@ -82,18 +82,29 @@ const fsyncDebounce = 200 * time.Millisecond
 // default MarshalJSON uses RFC3339 (no nanoseconds); D4-09 wants RFC3339Nano
 // for cross-event ordering at sub-millisecond resolution.
 type Event struct {
-	Ts         time.Time `json:"ts"`
-	Type       string    `json:"type"`
-	Session    string    `json:"session,omitempty"`
-	Project    string    `json:"project,omitempty"`
-	From       string    `json:"from,omitempty"`
-	To         string    `json:"to,omitempty"`
-	OpenBefore int       `json:"open_before,omitempty"`
-	OpenAfter  int       `json:"open_after,omitempty"`
-	Port       int       `json:"port,omitempty"`
-	Op         string    `json:"op,omitempty"`
-	Version    string    `json:"version,omitempty"`
-	PID        int       `json:"pid,omitempty"`
+	Ts      time.Time `json:"ts"`
+	Type    string    `json:"type"`
+	Session string    `json:"session,omitempty"`
+	Project string    `json:"project,omitempty"`
+	From    string    `json:"from,omitempty"`
+	To      string    `json:"to,omitempty"`
+	// Reason and Detail enrich `to:"waiting"` state-changes with the wait's
+	// cause, sourced from the session's hook-channel data at emit time
+	// (projectData.WaitKind / WaitSummary): Reason is the notify kind
+	// ("permission", "decision"); Detail is the agent's own summary line.
+	// Empty on title-derived waits (no hook fired) and on every other
+	// transition. Additive — old log lines simply lack the fields.
+	// This is the loop-layer's phase-0a instrumentation (docs/design/
+	// loop-layer.md): without it the log counts re-entries but cannot
+	// classify them, and C1 (the wait-split base rate) is unmeasurable.
+	Reason     string `json:"reason,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	OpenBefore int    `json:"open_before,omitempty"`
+	OpenAfter  int    `json:"open_after,omitempty"`
+	Port       int    `json:"port,omitempty"`
+	Op         string `json:"op,omitempty"`
+	Version    string `json:"version,omitempty"`
+	PID        int    `json:"pid,omitempty"`
 }
 
 // eventWire is the on-disk representation of an Event. Identical to Event
@@ -105,6 +116,8 @@ type eventWire struct {
 	Project    string `json:"project,omitempty"`
 	From       string `json:"from,omitempty"`
 	To         string `json:"to,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 	OpenBefore int    `json:"open_before,omitempty"`
 	OpenAfter  int    `json:"open_after,omitempty"`
 	Port       int    `json:"port,omitempty"`
@@ -122,6 +135,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		Project:    e.Project,
 		From:       e.From,
 		To:         e.To,
+		Reason:     e.Reason,
+		Detail:     e.Detail,
 		OpenBefore: e.OpenBefore,
 		OpenAfter:  e.OpenAfter,
 		Port:       e.Port,
@@ -151,6 +166,8 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	e.Project = w.Project
 	e.From = w.From
 	e.To = w.To
+	e.Reason = w.Reason
+	e.Detail = w.Detail
 	e.OpenBefore = w.OpenBefore
 	e.OpenAfter = w.OpenAfter
 	e.Port = w.Port
