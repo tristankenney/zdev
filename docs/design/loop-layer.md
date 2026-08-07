@@ -131,6 +131,21 @@ phase-2 dogfood.*
 - Every surface behind a knob, default off, byte-identical when unset.
 - Any change here goes through the hub-invariants reviewer.
 
+## Vocabulary alignment (2026-08-07)
+
+The research pass (`ai-at-pay/notes/loop-closing-options.md`) found a formal
+frame — arXiv 2607.00038's loop specification: trigger · goal · verification ·
+stopping rule · memory. This spec adopts its **terminal states**: a loop run
+ends `success`, `no-op`, `blocked`, `stalled` (strike guard — their
+"stagnation detector"), or `exhausted` (budget ceiling) — and its hard rule
+that **an error or exhausted budget must never register as success**. The
+wait-split maps onto their verification ladder: policy ≈ level 2 (rule-based),
+verifiable ≈ levels 1–3, judgement ≈ level 5. Two corpus findings locate this
+design: 78% of real loops are solo-agent (doer grades its own work) — this
+design is maker-checker by construction — and the corpus's two weakest
+components, automated triggering and durable memory, are exactly what a
+persistent daemon supplies.
+
 ## Decision gates (set 2026-08-07, "both, staged")
 
 - **Gate A (zdev):** GO/NO-GO on phases 2–4 at end of the two-week cycle,
