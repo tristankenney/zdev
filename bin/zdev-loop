@@ -1,0 +1,141 @@
+#!/bin/bash
+# zdev-loop — check-gated agent loop runner (loop-layer, docs/design/loop-layer.md).
+#
+# The cheapest rung of the loop-layer ladder: the outer loop as a VISIBLE
+# process in a supervised tmux pane, not a daemon capability. The daemon
+# stays observational (it has no action plane into panes — deliberate); this
+# script owns goal, check, strikes, and terminal states for ONE loop, and
+# reports its lifecycle through the same zdev-notify channel every agent
+# uses, so the sidebar/triage/eventlog see the loop like any other worker.
+#
+# Usage (normally via `zdev run <project> "<prompt>" --until '<check>'`):
+#   zdev-loop <dir> <check-cmd> <max-iters> <prompt...>
+#
+# Contract (the spec's words): every machine re-entry is check-gated and
+# strike-limited, and an error or exhausted budget NEVER registers as
+# success. Terminal states, from arXiv 2607.00038 via the spec:
+#   no-op     — the check was already green before the first turn
+#   success   — the check went green
+#   blocked   — claude missing / unlaunchable
+#   stalled   — the same check failure twice in a row (stagnation)
+#   exhausted — iteration budget spent
+#
+# The check runs HERE, outside the agent's context — the doer never grades
+# its own homework. --dangerously-skip-permissions follows the established
+# `zdev run` precedent: triggered loops run unattended.
+#
+# Ledger (loop-layer phase 4 v0): one line per iteration appended to
+# ~/.local/state/zdev/loops/<session>.log — ts, iteration, check exit,
+# terminal state when reached. `zdevd stops` complements it with the
+# wait-split; together they are RQ2's instrument.
+set -u
+
+if [ $# -lt 4 ]; then
+    echo "usage: zdev-loop <dir> <check-cmd> <max-iters> <prompt...>" >&2
+    exit 2
+fi
+
+DIR="$1"; CHECK="$2"; MAX="$3"; shift 3
+PROMPT="$*"
+
+cd "$DIR" || { echo "zdev-loop: cd $DIR failed" >&2; exit 1; }
+
+SESSION=""
+if [ -n "${TMUX_PANE:-}" ]; then
+    SESSION=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || echo "")
+fi
+LEDGER_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/zdev/loops"
+mkdir -p "$LEDGER_DIR" 2>/dev/null || true
+LEDGER="$LEDGER_DIR/${SESSION:-loop}.log"
+
+notify() { # notify <state> — best-effort, never fatal
+    command -v zdev-notify >/dev/null 2>&1 && zdev-notify loop "$1" >/dev/null 2>&1 || true
+}
+
+ledger() { # ledger <iter> <check-exit> <note>
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "${SESSION:-?}" "$1" "$2" "$3" \
+        >> "$LEDGER" 2>/dev/null || true
+}
+
+# run_check → sets CHECK_EXIT and CHECK_TAIL (last 30 lines). The tail is
+# the re-prompt's payload: the agent gets the actual failure, not "try
+# again". Capped so a huge test dump can't blow the prompt.
+CHECK_EXIT=0; CHECK_TAIL=""
+run_check() {
+    out=$(bash -c "$CHECK" 2>&1)
+    CHECK_EXIT=$?
+    CHECK_TAIL=$(printf '%s' "$out" | tail -30)
+}
+
+terminal() { # terminal <state> <exit-code> <notify-state> <message>
+    ledger "$ITER" "$CHECK_EXIT" "terminal=$1"
+    echo ""
+    echo "zdev-loop: $1 — $4 (iteration $ITER/$MAX)"
+    notify "$3"
+    exit "$2"
+}
+
+echo "zdev-loop: goal check: $CHECK (budget $MAX iterations)"
+ITER=0
+
+# Check-first: an already-green check means there is nothing to do. The
+# spec's no-op state — and it also catches a misconfigured always-green
+# check before it silently launders one agent turn as "success".
+run_check
+if [ "$CHECK_EXIT" -eq 0 ]; then
+    terminal "no-op" 0 done "check already green; no agent turn taken"
+fi
+
+command -v claude >/dev/null 2>&1 || {
+    CHECK_EXIT=127
+    terminal "blocked" 1 died "claude not found on PATH"
+}
+
+PREV_SIG=""
+STRIKES=0
+NEXT_PROMPT="$PROMPT"
+CONTINUE_FLAG=""
+
+while [ "$ITER" -lt "$MAX" ]; do
+    ITER=$((ITER + 1))
+    echo ""
+    echo "zdev-loop: iteration $ITER/$MAX"
+    notify working
+
+    # The agent turn. First iteration seeds the goal prompt; later ones
+    # continue the same conversation (-c) with the check's own output as
+    # the re-prompt. The turn's failure is not fatal to the loop — the
+    # check decides everything.
+    # shellcheck disable=SC2086
+    claude --dangerously-skip-permissions $CONTINUE_FLAG -p "$NEXT_PROMPT"
+    CONTINUE_FLAG="-c"
+
+    run_check
+    if [ "$CHECK_EXIT" -eq 0 ]; then
+        terminal "success" 0 done "check green"
+    fi
+    ledger "$ITER" "$CHECK_EXIT" "red"
+
+    # Strike guard — the stagnation detector. Signature = the failure
+    # tail; two identical failures in a row means the agent is polishing
+    # the same wrong answer, and iterating further compounds it.
+    SIG=$(printf '%s' "$CHECK_TAIL" | cksum | cut -d' ' -f1)
+    if [ "$SIG" = "$PREV_SIG" ]; then
+        STRIKES=$((STRIKES + 1))
+    else
+        STRIKES=1
+        PREV_SIG="$SIG"
+    fi
+    if [ "$STRIKES" -ge 2 ]; then
+        terminal "stalled" 1 question "same check failure twice; human judgement needed"
+    fi
+
+    NEXT_PROMPT="The goal check failed (exit $CHECK_EXIT): $CHECK
+
+Last 30 lines of check output:
+$CHECK_TAIL
+
+Fix the failure and get the check passing. Do not weaken or skip the check itself."
+done
+
+terminal "exhausted" 1 question "iteration budget spent; check still red"

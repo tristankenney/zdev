@@ -791,6 +791,7 @@ case "$1" in
         ;;
     run)
         # zdev run <project> "<prompt>" [--name NAME] [--switch]
+        #                               [--until CHECK] [--max N]
         #
         # The ACTUATOR (DIRECTION / agent operations plane, phase 1a): spawn a
         # SUPERVISED agent loop in <project> — ensure the session, open a new
@@ -798,15 +799,28 @@ case "$1" in
         # zdev to supervise (sidebar/triage/death detection as usual). Every
         # trigger (GitHub/Slack/cron) and every MCP client ultimately calls
         # this. Background by default (no focus steal); --switch to jump to it.
+        #
+        # --until CHECK (loop-layer, docs/design/loop-layer.md): run the
+        # window under zdev-loop instead of bare claude — a check-gated
+        # outer loop that re-prompts the agent with the check's own failure
+        # output until the check passes, the same failure repeats twice
+        # (stalled), or the budget is spent (exhausted; --max, default 10).
+        # The check runs in the runner, outside the agent's context.
         shift
         run_name=""
         run_switch=0
+        run_until=""
+        run_max=10
         run_args=()
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --name)   run_name="$2"; shift 2 ;;
                 --name=*) run_name="${1#*=}"; shift ;;
                 --switch) run_switch=1; shift ;;
+                --until)  run_until="$2"; shift 2 ;;
+                --until=*) run_until="${1#*=}"; shift ;;
+                --max)    run_max="$2"; shift 2 ;;
+                --max=*)  run_max="${1#*=}"; shift ;;
                 *)        run_args+=("$1"); shift ;;
             esac
         done
@@ -840,13 +854,22 @@ case "$1" in
         # new-window to avoid the send-keys race (see build_layout). Triggered
         # loops run unattended → --dangerously-skip-permissions. The prompt may
         # be a slash command (e.g. "/rigorous-review #1234").
-        run_inner="if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions $(printf '%q' "$run_prompt"); fi; echo 'zdev run: claude not found on PATH' >&2; exec ${SHELL:-/bin/sh} -i"
+        if [[ -n "$run_until" ]]; then
+            # Loop mode: zdev-loop owns the turn/check/strike cycle; the
+            # pane shows its narration and the fleet supervises it like
+            # any agent. Keep the shell after terminal state so the log
+            # stays readable in the pane.
+            run_inner="zdev-loop $(printf '%q' "$run_dir") $(printf '%q' "$run_until") $(printf '%q' "$run_max") $(printf '%q' "$run_prompt"); exec ${SHELL:-/bin/sh} -i"
+        else
+            run_inner="if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions $(printf '%q' "$run_prompt"); fi; echo 'zdev run: claude not found on PATH' >&2; exec ${SHELL:-/bin/sh} -i"
+        fi
         run_launch="${SHELL:-/bin/sh} -lic $(printf '%q' "$run_inner")"
         run_win=$(tmux new-window -d -t "=$run_session" -c "$run_dir" -n "$run_name" \
             -P -F '#{window_id}' "$run_launch")
         # Tag the window as a zdev-run loop (greppable; the fleet view, reap,
         # and later federation/migration key off this), recording the prompt.
         tmux set-option -w -t "$run_win" @zdev-run "$run_prompt" 2>/dev/null || true
+        [[ -n "$run_until" ]] && tmux set-option -w -t "$run_win" @zdev-loop-check "$run_until" 2>/dev/null || true
         echo "zdev run: spawned ${run_session}:${run_name} (${run_win})"
         if (( run_switch )) && [[ -n "${TMUX:-}" ]]; then
             tmux switch-client -t "=$run_session" 2>/dev/null || true
