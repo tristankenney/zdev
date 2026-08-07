@@ -92,6 +92,18 @@ cross-session outer loop.
 First dogfood target: this repo, `--until 'make -C zdevd test'` — the
 definition of done is already a command.
 
+**Shipped 2026-08-08 as `zdev-loop`, the runner variant.** Recon found the
+daemon has NO action plane into panes — it observes, scripts act — and
+giving it one (control-mode send-keys) is a character change deserving its
+own decision, not a side effect of phase 2. So the loop shipped as a
+visible runner process in a supervised pane: `zdev run <project>
+"<prompt>" --until '<check>' [--max N]`. Check-first no-op, strike guard,
+budget, all five terminal states; lifecycle via zdev-notify; per-iteration
+ledger under `~/.local/state/zdev/loops/`. Smoke-verified: no-op, success,
+and stalled paths live. The daemon-side loop (survives session death,
+respawns dead agents) remains the post-validation build, and the runner is
+the experiment that earns it.
+
 *Kill: strike-guard escalations outnumber completions, or one confirmed
 polished-wrong outcome ships.*
 
