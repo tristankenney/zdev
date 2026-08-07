@@ -120,6 +120,37 @@ conversation's context across the swap. This is the local instance of the
 detachment axis's D5 rung (the operator detaches, not the loop) and the
 same principle as `--teleport`/`/remote-control` one level down.
 
+### The process — discussion first (operator calibration, 2026-08-08)
+
+"Horse before cart — what's the test?" exposed the runner's hidden
+assumption: a check that is red-before/green-after exists. For fix-shaped
+work it does; for build-shaped work the check must be MANUFACTURED, and
+the manufacturing step is a conversation, not a chore:
+
+> **discuss** (interactive co-work, in the target repo's directory: the
+> ticket, the design, what would prove it done) → **the test crystallizes
+> out of the discussion**, written together, run red → **hand off** —
+> same conversation, driver swap: `zdev run --resume --until '<the new
+> test>'` → the loop turns it green → **boundary** (PR review).
+
+Why each piece is where it is:
+- The discussion is the one human entry per genuine decision — ALL the
+  judgement, front-loaded, instead of dribbled through mid-loop
+  interruptions. Reviewing a test is reviewing the spec; it is the cheap
+  place for judgement to land.
+- Per-directory conversations mean the resumed loop INHERITS the
+  discussion — intent, rejected alternatives, edge cases — so the
+  discussion is durable, not evaporated at delegation. (Hence the rule:
+  discuss in the repo the loop will run in.)
+- The test is Pan's co-work→coding seam made into an artifact, and the
+  loop spec's "memory" component in its most honest form.
+- The no-op gate enforces red-entry: a check already green cannot start
+  a loop, so a trivially-passing test can't launder a turn as success.
+- Authority nuance: the same conversation writes the test and the
+  implementation, so conversational separation is NOT the protection —
+  the operator's sign-off during the discussion is, plus the external
+  check runner and the PR diff showing any test tampering.
+
 ### Phase 3 — decision cards
 
 A held item grows from notification to decision card: agent, goal, check
