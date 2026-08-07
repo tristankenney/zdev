@@ -107,6 +107,19 @@ the experiment that earns it.
 *Kill: strike-guard escalations outnumber completions, or one confirmed
 polished-wrong outcome ships.*
 
+**Handoff (added 2026-08-08, operator requirement):** a loop must transition
+interactive ⇄ background. The substrate already existed — Claude Code
+conversations are per-directory, so `claude -c` (interactive) and
+`claude -c -p` (headless) are the SAME conversation under different
+drivers. Handoff is therefore a driver swap, never a context transfer:
+background→interactive is `claude -c` in the loop's directory (stalled/
+exhausted terminals print exactly this hint); interactive→background is
+`zdev-loop --resume`, whose first turn continues the existing conversation
+instead of seeding fresh. Verified live: a resumed loop carried the prior
+conversation's context across the swap. This is the local instance of the
+detachment axis's D5 rung (the operator detaches, not the loop) and the
+same principle as `--teleport`/`/remote-control` one level down.
+
 ### Phase 3 — decision cards
 
 A held item grows from notification to decision card: agent, goal, check

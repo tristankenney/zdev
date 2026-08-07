@@ -9,7 +9,18 @@
 # uses, so the sidebar/triage/eventlog see the loop like any other worker.
 #
 # Usage (normally via `zdev run <project> "<prompt>" --until '<check>'`):
-#   zdev-loop <dir> <check-cmd> <max-iters> <prompt...>
+#   zdev-loop [--resume] <dir> <check-cmd> <max-iters> <prompt...>
+#
+# HANDOFF (interactive ⇄ background). The conversation is the durable
+# substrate — Claude Code conversations are per-directory, so `claude -c`
+# (interactive) and `claude -c -p` (headless) are the SAME conversation
+# with different drivers. Two recipes:
+#   background → interactive: when the loop ends stalled/exhausted (or you
+#     kill it), run `claude -c` in the same directory — you inherit the
+#     loop's full conversation, fix or redirect, then hand back.
+#   interactive → background: exit your interactive session, then
+#     `zdev-loop --resume <dir> '<check>' N "goal restated"` — the first
+#     turn CONTINUES your conversation instead of seeding a fresh one.
 #
 # Contract (the spec's words): every machine re-entry is check-gated and
 # strike-limited, and an error or exhausted budget NEVER registers as
@@ -30,8 +41,13 @@
 # wait-split; together they are RQ2's instrument.
 set -u
 
+RESUME=0
+if [ "${1:-}" = "--resume" ]; then
+    RESUME=1; shift
+fi
+
 if [ $# -lt 4 ]; then
-    echo "usage: zdev-loop <dir> <check-cmd> <max-iters> <prompt...>" >&2
+    echo "usage: zdev-loop [--resume] <dir> <check-cmd> <max-iters> <prompt...>" >&2
     exit 2
 fi
 
@@ -71,6 +87,10 @@ terminal() { # terminal <state> <exit-code> <notify-state> <message>
     ledger "$ITER" "$CHECK_EXIT" "terminal=$1"
     echo ""
     echo "zdev-loop: $1 — $4 (iteration $ITER/$MAX)"
+    case "$1" in stalled|exhausted)
+        echo "zdev-loop: hand off — 'claude -c' here continues this conversation interactively;"
+        echo "           hand back with: zdev-loop --resume $(printf '%q' "$DIR") $(printf '%q' "$CHECK") $MAX '<goal>'"
+    esac
     notify "$3"
     exit "$2"
 }
@@ -94,7 +114,10 @@ command -v claude >/dev/null 2>&1 || {
 PREV_SIG=""
 STRIKES=0
 NEXT_PROMPT="$PROMPT"
+# --resume: attach to the directory's existing conversation from turn 1
+# (the interactive→background handoff); default seeds a fresh one.
 CONTINUE_FLAG=""
+[ "$RESUME" -eq 1 ] && CONTINUE_FLAG="-c"
 
 while [ "$ITER" -lt "$MAX" ]; do
     ITER=$((ITER + 1))

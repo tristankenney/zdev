@@ -810,6 +810,7 @@ case "$1" in
         run_name=""
         run_switch=0
         run_until=""
+        run_resume=0
         run_max=10
         run_args=()
         while [[ $# -gt 0 ]]; do
@@ -819,6 +820,7 @@ case "$1" in
                 --switch) run_switch=1; shift ;;
                 --until)  run_until="$2"; shift 2 ;;
                 --until=*) run_until="${1#*=}"; shift ;;
+                --resume) run_resume=1; shift ;;
                 --max)    run_max="$2"; shift 2 ;;
                 --max=*)  run_max="${1#*=}"; shift ;;
                 *)        run_args+=("$1"); shift ;;
@@ -859,7 +861,9 @@ case "$1" in
             # pane shows its narration and the fleet supervises it like
             # any agent. Keep the shell after terminal state so the log
             # stays readable in the pane.
-            run_inner="zdev-loop $(printf '%q' "$run_dir") $(printf '%q' "$run_until") $(printf '%q' "$run_max") $(printf '%q' "$run_prompt"); exec ${SHELL:-/bin/sh} -i"
+            run_resume_flag=""
+            (( run_resume )) && run_resume_flag="--resume "
+            run_inner="zdev-loop ${run_resume_flag}$(printf '%q' "$run_dir") $(printf '%q' "$run_until") $(printf '%q' "$run_max") $(printf '%q' "$run_prompt"); exec ${SHELL:-/bin/sh} -i"
         else
             run_inner="if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions $(printf '%q' "$run_prompt"); fi; echo 'zdev run: claude not found on PATH' >&2; exec ${SHELL:-/bin/sh} -i"
         fi
