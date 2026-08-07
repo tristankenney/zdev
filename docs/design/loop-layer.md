@@ -146,6 +146,27 @@ design is maker-checker by construction — and the corpus's two weakest
 components, automated triggering and durable memory, are exactly what a
 persistent daemon supplies.
 
+## Staged beyond the gate — detachment and reactivity (phases 5+)
+
+Research pass II (`ai-at-pay/notes/loop-closing-options.md`, Part II) mapped
+two further axes. Recorded here so the loop record's shape anticipates them;
+**none of it builds before Gate A**.
+
+- **Trigger + inbox fields on the loop record.** The full loop spec is
+  trigger · goal · verification · stopping rule · memory; phase 2 covers the
+  middle three. The inbox is `M-.` park generalised — same durable,
+  guaranteed-hearing machinery, more producers (gh probes, webhooks, other
+  agents), and a second consumer: the daemon injects queued input at the next
+  iteration boundary, never mid-step (Codex steering semantics). A goal
+  *change* always escalates to `waiting:judgement` — steering is input,
+  never silent re-planning.
+- **Detachment splits along the stop taxonomy.** Verifiable stops need only
+  a powered controller — the always-on-box move (tmux-native, ports
+  wholesale; the long-standing "remote machines" wishlist item). Judgement
+  stops need a phone-reachable boundary surface (decision card → push /
+  `/remote-control`), not a remote loop. Two smaller problems, not one big
+  one.
+
 ## Decision gates (set 2026-08-07, "both, staged")
 
 - **Gate A (zdev):** GO/NO-GO on phases 2–4 at end of the two-week cycle,
