@@ -119,6 +119,8 @@ func main() {
 			os.Exit(historySubcmd(os.Args[2:]))
 		case "stops":
 			os.Exit(stopsSubcmd(os.Args[2:]))
+		case "loops":
+			os.Exit(loopsSubcmd(os.Args[2:]))
 		case "demo":
 			os.Exit(demoSubcmd(os.Args[2:]))
 		case "cursor":
