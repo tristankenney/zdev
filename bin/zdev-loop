@@ -16,11 +16,21 @@
 # (interactive) and `claude -c -p` (headless) are the SAME conversation
 # with different drivers. Two recipes:
 #   background → interactive: when the loop ends stalled/exhausted (or you
-#     kill it), run `claude -c` in the same directory — you inherit the
-#     loop's full conversation, fix or redirect, then hand back.
+#     kill it), resume the loop's own conversation — the stall message
+#     prints the exact `claude --resume <session-id>` command, and pickup
+#     mode execs it for you.
 #   interactive → background: exit your interactive session, then
 #     `zdev-loop --resume <dir> '<check>' N "goal restated"` — the first
 #     turn CONTINUES your conversation instead of seeding a fresh one.
+#
+# SESSION PINNING (drill finding, 2026-08-09): `claude -c` attaches to the
+# directory's most recent conversation, and the very first pickup drill
+# grabbed a bystander conversation instead of the loop's. So the runner
+# captures its own session_id from the first turn's JSON output and pins
+# every later turn (and pickup) to it with `claude --resume <id>`. The -c
+# race survives only on the first turn of a `--resume` handoff, where
+# attaching to "most recent" is the entire point. Requires jq; without it
+# the runner degrades to the old unpinned -c behavior.
 #
 # Contract (the spec's words): every machine re-entry is check-gated and
 # strike-limited, and an error or exhausted budget NEVER registers as
@@ -97,7 +107,7 @@ ledger_iter() { # ledger_iter <iter> <check-exit> <strikes>
 }
 
 ledger_terminal() { # ledger_terminal <state> <iter> <check-exit>
-    ledger_line ",\"event\":\"terminal\",\"state\":\"$1\",\"iter\":$2,\"check_exit\":$3"
+    ledger_line ",\"event\":\"terminal\",\"state\":\"$1\",\"iter\":$2,\"check_exit\":$3,\"sid\":\"$(json_escape "${SID:-}")\""
 }
 
 # run_check → sets CHECK_EXIT and CHECK_TAIL (last 30 lines). The tail is
@@ -115,16 +125,22 @@ terminal() { # terminal <state> <exit-code> <notify-state> <message>
     echo ""
     echo "zdev-loop: $1 — $4 (iteration $ITER/$MAX)"
     case "$1" in stalled|exhausted)
-        echo "zdev-loop: hand off — 'claude -c' here continues this conversation interactively;"
+        if [ -n "${SID:-}" ]; then
+            echo "zdev-loop: hand off — 'claude --resume $SID' continues this exact conversation;"
+        else
+            echo "zdev-loop: hand off — 'claude -c' here continues this conversation interactively;"
+        fi
         echo "           hand back with: zdev-loop --resume $(printf '%q' "$DIR") $(printf '%q' "$CHECK") $MAX '<goal>'"
         notify "$3"
         if [ "${ZDEV_LOOP_PICKUP:-}" = "interactive" ]; then
             # The pickup surface (proposal r2, T1): sit in an interactive
-            # session ON the loop's conversation. Locally: walk over and
-            # type. Remotely: with Remote Control for all sessions, this
-            # session is reachable from the Claude app. No skip-permissions
-            # here — a human is (about to be) present.
+            # session ON the loop's OWN conversation — pinned by session
+            # id (drill finding: bare -c grabbed a bystander). No
+            # skip-permissions here — a human is (about to be) present.
             echo "zdev-loop: pickup — opening interactive session on this conversation"
+            if [ -n "${SID:-}" ]; then
+                exec claude --resume "$SID"
+            fi
             exec claude -c
         fi
         exit "$2"
@@ -153,10 +169,36 @@ command -v claude >/dev/null 2>&1 || {
 PREV_SIG=""
 STRIKES=0
 NEXT_PROMPT="$PROMPT"
-# --resume: attach to the directory's existing conversation from turn 1
-# (the interactive→background handoff); default seeds a fresh one.
-CONTINUE_FLAG=""
-[ "$RESUME" -eq 1 ] && CONTINUE_FLAG="-c"
+SID=""
+HAVE_JQ=0
+command -v jq >/dev/null 2>&1 && HAVE_JQ=1
+
+# run_turn <prompt> — one agent turn, pinned to the loop's own session
+# once its id is known. Prints the turn's result text to the pane.
+run_turn() {
+    if [ "$HAVE_JQ" -eq 1 ]; then
+        if [ -n "$SID" ]; then
+            turn_out=$(claude --dangerously-skip-permissions --resume "$SID" -p --output-format json "$1" 2>&1)
+        elif [ "$RESUME" -eq 1 ] && [ "$ITER" -eq 1 ]; then
+            # interactive→background handoff: attaching to the most
+            # recent conversation is the point; pin from here on.
+            turn_out=$(claude --dangerously-skip-permissions -c -p --output-format json "$1" 2>&1)
+        else
+            turn_out=$(claude --dangerously-skip-permissions -p --output-format json "$1" 2>&1)
+        fi
+        new_sid=$(printf '%s' "$turn_out" | jq -r '.session_id // empty' 2>/dev/null) || new_sid=""
+        [ -n "$new_sid" ] && SID="$new_sid"
+        printf '%s
+' "$(printf '%s' "$turn_out" | jq -r '.result // empty' 2>/dev/null)"
+    else
+        # No jq: old unpinned behavior, -c race and all.
+        if [ "$RESUME" -eq 1 ] || [ "$ITER" -gt 1 ]; then
+            claude --dangerously-skip-permissions -c -p "$1"
+        else
+            claude --dangerously-skip-permissions -p "$1"
+        fi
+    fi
+}
 
 while [ "$ITER" -lt "$MAX" ]; do
     ITER=$((ITER + 1))
@@ -165,12 +207,10 @@ while [ "$ITER" -lt "$MAX" ]; do
     notify working
 
     # The agent turn. First iteration seeds the goal prompt; later ones
-    # continue the same conversation (-c) with the check's own output as
-    # the re-prompt. The turn's failure is not fatal to the loop — the
-    # check decides everything.
-    # shellcheck disable=SC2086
-    claude --dangerously-skip-permissions $CONTINUE_FLAG -p "$NEXT_PROMPT"
-    CONTINUE_FLAG="-c"
+    # continue the loop's own pinned conversation with the check's
+    # failure output as the re-prompt. The turn's failure is not fatal
+    # to the loop — the check decides everything.
+    run_turn "$NEXT_PROMPT"
 
     run_check
     if [ "$CHECK_EXIT" -eq 0 ]; then
