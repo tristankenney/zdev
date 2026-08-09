@@ -35,10 +35,18 @@
 # its own homework. --dangerously-skip-permissions follows the established
 # `zdev run` precedent: triggered loops run unattended.
 #
-# Ledger (loop-layer phase 4 v0): one line per iteration appended to
-# ~/.local/state/zdev/loops/<session>.log — ts, iteration, check exit,
-# terminal state when reached. `zdevd stops` complements it with the
-# wait-split; together they are RQ2's instrument.
+# Ledger (loop-layer phase 4, v2 JSON): one event per line appended to
+# ~/.local/state/zdev/loops/<session>.jsonl — a start event (run id, goal,
+# check, ticket, budget, resume), one per red iteration, one terminal.
+# `zdevd loops` reads these; `zdevd stops` complements with the wait-split;
+# together they are RQ2's instrument. Ticket ID is auto-extracted from the
+# first JIRA-shaped token in the prompt (e.g. PAYX-70) for burndown rollup.
+#
+# Pickup (T1, proposal r2): ZDEV_LOOP_PICKUP=interactive makes stalled/
+# exhausted terminals exec an interactive `claude -c` on the loop's own
+# conversation instead of exiting — the pane becomes the pickup surface,
+# locally and (with Remote Control for all sessions) from the phone.
+# Default: current behavior — print the hand-back hint and exit.
 set -u
 
 RESUME=0
@@ -62,15 +70,34 @@ if [ -n "${TMUX_PANE:-}" ]; then
 fi
 LEDGER_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/zdev/loops"
 mkdir -p "$LEDGER_DIR" 2>/dev/null || true
-LEDGER="$LEDGER_DIR/${SESSION:-loop}.log"
+LEDGER="$LEDGER_DIR/${SESSION:-loop}.jsonl"
+RUN_ID="$(date +%s)-$$"
+TICKET=$(printf '%s' "$PROMPT" | grep -oE '[A-Z][A-Z0-9]*-[0-9]+' 2>/dev/null | head -1) || TICKET=""
 
 notify() { # notify <state> — best-effort, never fatal
     command -v zdev-notify >/dev/null 2>&1 && zdev-notify loop "$1" >/dev/null 2>&1 || true
 }
 
-ledger() { # ledger <iter> <check-exit> <note>
-    printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "${SESSION:-?}" "$1" "$2" "$3" \
+json_escape() { # single line, quotes and backslashes escaped
+    printf '%s' "$1" | tr '\n\t' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+ledger_line() { # ledger_line <json-fields-without-braces>
+    printf '{"ts":%s,"run":"%s","session":"%s"%s}\n' \
+        "$(date +%s)" "$RUN_ID" "$(json_escape "${SESSION:-?}")" "$1" \
         >> "$LEDGER" 2>/dev/null || true
+}
+
+ledger_start() {
+    ledger_line ",\"event\":\"start\",\"dir\":\"$(json_escape "$DIR")\",\"ticket\":\"$(json_escape "$TICKET")\",\"goal\":\"$(json_escape "$PROMPT")\",\"check\":\"$(json_escape "$CHECK")\",\"max\":$MAX,\"resume\":$RESUME"
+}
+
+ledger_iter() { # ledger_iter <iter> <check-exit> <strikes>
+    ledger_line ",\"event\":\"iter\",\"iter\":$1,\"check_exit\":$2,\"strikes\":$3"
+}
+
+ledger_terminal() { # ledger_terminal <state> <iter> <check-exit>
+    ledger_line ",\"event\":\"terminal\",\"state\":\"$1\",\"iter\":$2,\"check_exit\":$3"
 }
 
 # run_check → sets CHECK_EXIT and CHECK_TAIL (last 30 lines). The tail is
@@ -84,12 +111,23 @@ run_check() {
 }
 
 terminal() { # terminal <state> <exit-code> <notify-state> <message>
-    ledger "$ITER" "$CHECK_EXIT" "terminal=$1"
+    ledger_terminal "$1" "$ITER" "$CHECK_EXIT"
     echo ""
     echo "zdev-loop: $1 — $4 (iteration $ITER/$MAX)"
     case "$1" in stalled|exhausted)
         echo "zdev-loop: hand off — 'claude -c' here continues this conversation interactively;"
         echo "           hand back with: zdev-loop --resume $(printf '%q' "$DIR") $(printf '%q' "$CHECK") $MAX '<goal>'"
+        notify "$3"
+        if [ "${ZDEV_LOOP_PICKUP:-}" = "interactive" ]; then
+            # The pickup surface (proposal r2, T1): sit in an interactive
+            # session ON the loop's conversation. Locally: walk over and
+            # type. Remotely: with Remote Control for all sessions, this
+            # session is reachable from the Claude app. No skip-permissions
+            # here — a human is (about to be) present.
+            echo "zdev-loop: pickup — opening interactive session on this conversation"
+            exec claude -c
+        fi
+        exit "$2"
     esac
     notify "$3"
     exit "$2"
@@ -97,6 +135,7 @@ terminal() { # terminal <state> <exit-code> <notify-state> <message>
 
 echo "zdev-loop: goal check: $CHECK (budget $MAX iterations)"
 ITER=0
+ledger_start
 
 # Check-first: an already-green check means there is nothing to do. The
 # spec's no-op state — and it also catches a misconfigured always-green
@@ -137,8 +176,6 @@ while [ "$ITER" -lt "$MAX" ]; do
     if [ "$CHECK_EXIT" -eq 0 ]; then
         terminal "success" 0 done "check green"
     fi
-    ledger "$ITER" "$CHECK_EXIT" "red"
-
     # Strike guard — the stagnation detector. Signature = the failure
     # tail; two identical failures in a row means the agent is polishing
     # the same wrong answer, and iterating further compounds it.
@@ -149,6 +186,7 @@ while [ "$ITER" -lt "$MAX" ]; do
         STRIKES=1
         PREV_SIG="$SIG"
     fi
+    ledger_iter "$ITER" "$CHECK_EXIT" "$STRIKES"
     if [ "$STRIKES" -ge 2 ]; then
         terminal "stalled" 1 question "same check failure twice; human judgement needed"
     fi
