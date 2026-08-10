@@ -120,6 +120,35 @@ run_check() {
     CHECK_TAIL=$(printf '%s' "$out" | tail -30)
 }
 
+# handover <state> — one final pinned headless turn that briefs the loop's
+# own conversation before a human joins (drill finding, 2026-08-09: the
+# picked-up session gave "no clear feedback that it's a loop asking for
+# input", the human had to dictate commands, and the agent didn't know how
+# to relaunch itself). After this turn, whoever opens the conversation —
+# pane or phone — is met by a status brief instead of amnesia, and the
+# agent knows its own ledger and hand-back commands.
+# Costs one agent turn per stall; stalls should be rare and this is what
+# makes them serviceable. Disable with ZDEV_LOOP_HANDOVER=0.
+handover() {
+    [ "${ZDEV_LOOP_HANDOVER:-1}" = "0" ] && return 0
+    [ "$HAVE_JQ" -eq 1 ] || return 0
+    [ -n "$SID" ] || return 0
+    hp="LOOP HANDOVER. You are the agent inside a zdev loop (run $RUN_ID, session ${SESSION:-?}). Goal: $PROMPT
+Gate check: $CHECK
+The loop just ended in terminal state '$1' after $ITER of $MAX iterations. A human is about to join this conversation, possibly from a phone with no terminal of their own — you are their hands.
+Reply NOW with a short brief in exactly this shape:
+⟲ LOOP $1 — <one-line goal summary>
+  why: <one line on why it $1>
+  need: <the single decision or fix you need from the human>
+Keep it under 6 lines. Then, when the human responds:
+- You have Bash. 'zdevd loops --days 1' shows the loop ledger; 'zdevd stops' the wait report. Run these YOURSELF when status is asked for — never ask the human to run commands.
+- To hand back to the loop once unblocked, run: zdev run <project> '<goal>' --until '<the check>' --resume --pickup  (note: a check that is already green makes the loop a no-op by design — hand back only with a real, currently-red check).
+- Never weaken the check to make it pass."
+    turn_out=$(claude --dangerously-skip-permissions --resume "$SID" -p --output-format json "$hp" 2>&1)
+    printf '%s
+' "$(printf '%s' "$turn_out" | jq -r '.result // empty' 2>/dev/null)"
+}
+
 terminal() { # terminal <state> <exit-code> <notify-state> <message>
     ledger_terminal "$1" "$ITER" "$CHECK_EXIT"
     echo ""
@@ -131,6 +160,7 @@ terminal() { # terminal <state> <exit-code> <notify-state> <message>
             echo "zdev-loop: hand off — 'claude -c' here continues this conversation interactively;"
         fi
         echo "           hand back with: zdev-loop --resume $(printf '%q' "$DIR") $(printf '%q' "$CHECK") $MAX '<goal>'"
+        handover "$1"
         notify "$3"
         if [ "${ZDEV_LOOP_PICKUP:-}" = "interactive" ]; then
             # The pickup surface (proposal r2, T1): sit in an interactive
