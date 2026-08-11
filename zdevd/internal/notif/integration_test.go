@@ -56,12 +56,20 @@ func runSC3Harness(t *testing.T, dir string) func(session string, ts int64, writ
 	})
 
 	return func(session string, ts int64, writer func(path string)) time.Duration {
-		// Seed the project list so the session name appears in buildSnapshot.
-		// Without this, NotifSeen updates projectData but buildSnapshot never
-		// includes the project row (it only includes sessions + projectListNames).
+		// Seed a PRESENT session with a waiting ● pane title (ghost-wait
+		// fix 2026-08-09: absent rows suppress wait wire fields, and a
+		// hook wait without its title does not open a wait — zdev-notify
+		// sets both in the same breath, so the model here matches
+		// production). The ● title pre-opens the wait; the KIND can only
+		// arrive via the notif file, so kind-on-the-wire is the honest
+		// file→snapshot latency observable.
 		submit(tmuxctl.ProjectListChanged{Names: []string{session}})
+		submit(tmuxctl.SessionChanged{ID: "$" + session, Name: session})
+		submit(tmuxctl.WindowAdd{ID: "@" + session})
+		submit(tmuxctl.WindowPaneChanged{WindowID: "@" + session, PaneID: "%" + session})
+		submit(tmuxctl.PaneTitleChanged{PaneID: "%" + session, Title: "● claude"})
 
-		// Give the hub a brief moment to process ProjectListChanged and publish
+		// Give the hub a brief moment to process the seed events and publish
 		// a snapshot before we write the notif file. The hub debounces at 16ms;
 		// 30ms covers one full debounce cycle.
 		time.Sleep(30 * time.Millisecond)
@@ -92,14 +100,14 @@ func runSC3Harness(t *testing.T, dir string) func(session string, ts int64, writ
 					t.Fatalf("snapshot channel closed unexpectedly")
 				}
 				for _, p := range snap.Projects {
-					if p.Name == session && p.WaitStartedTS == ts {
+					if p.Name == session && p.WaitKind == "permission" {
 						return time.Since(start)
 					}
 				}
 			case <-time.After(10 * time.Millisecond):
 			}
 		}
-		t.Fatalf("did not see WaitStartedTS=%d for session %q within %v", ts, session, 2*sc3Budget)
+		t.Fatalf("did not see WaitKind=permission (ts %d) for session %q within %v", ts, session, 2*sc3Budget)
 		return 0
 	}
 }
@@ -107,8 +115,9 @@ func runSC3Harness(t *testing.T, dir string) func(session string, ts int64, writ
 func TestSC3_NotifLatency_FileWrite(t *testing.T) {
 	dir := t.TempDir()
 	write := runSC3Harness(t, dir)
-	elapsed := write("alpha", 1714838500, func(path string) {
-		if err := os.WriteFile(path, []byte("1714838500"), 0o644); err != nil {
+	ts := time.Now().Unix()
+	elapsed := write("alpha", ts, func(path string) {
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("%d\npermission", ts)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -132,13 +141,14 @@ func TestSC3_NotifLatency_AppendMode(t *testing.T) {
 	}
 
 	write := runSC3Harness(t, dir)
-	elapsed := write("beta", 1714838600, func(path string) {
+	ts := time.Now().Unix()
+	elapsed := write("beta", ts, func(path string) {
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer f.Close()
-		if _, err := f.WriteString("1714838600"); err != nil {
+		if _, err := f.WriteString(fmt.Sprintf("%d\npermission", ts)); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -155,9 +165,10 @@ func TestSC3_NotifLatency_AppendMode(t *testing.T) {
 func TestSC3_NotifLatency_AtomicRename(t *testing.T) {
 	dir := t.TempDir()
 	write := runSC3Harness(t, dir)
-	elapsed := write("gamma", 1714838700, func(path string) {
+	ts := time.Now().Unix()
+	elapsed := write("gamma", ts, func(path string) {
 		staging := path + ".tmp"
-		if err := os.WriteFile(staging, []byte("1714838700"), 0o644); err != nil {
+		if err := os.WriteFile(staging, []byte(fmt.Sprintf("%d\npermission", ts)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Rename(staging, path); err != nil {
@@ -184,7 +195,8 @@ func TestSC3_NotifLatency_CpOver(t *testing.T) {
 	dir := t.TempDir()
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "source.ts")
-	if err := os.WriteFile(srcPath, []byte("1714838800"), 0o644); err != nil {
+	ts := time.Now().Unix()
+	if err := os.WriteFile(srcPath, []byte(fmt.Sprintf("%d\npermission", ts)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,7 +211,7 @@ func TestSC3_NotifLatency_CpOver(t *testing.T) {
 			t.Fatalf("cp source -> watched dir failed: %v", err)
 		}
 	}
-	elapsed := write("delta", 1714838800, cpOver)
+	elapsed := write("delta", ts, cpOver)
 	if elapsed > sc3Budget {
 		// This variant spawns a subprocess, making it the suite's most
 		// scheduler-sensitive measurement — it flaked the pre-push hook
@@ -207,15 +219,14 @@ func TestSC3_NotifLatency_CpOver(t *testing.T) {
 		// measure ONCE more and fail only if both samples breach
 		// (scheduler noise doesn't repeat; a real regression does).
 		//
-		// The source file must be updated to hold the retry timestamp so
-		// the harness finds the expected WaitStartedTS in the snapshot —
-		// cpOver copies srcPath verbatim, so a stale "1714838800" content
-		// would cause the harness to wait until the 200ms deadline and
-		// t.Fatalf on every retry regardless of system load.
-		if err := os.WriteFile(srcPath, []byte("1714838900"), 0o644); err != nil {
+		// The source file keeps a fresh timestamp + the permission kind —
+		// cpOver copies srcPath verbatim, and the harness waits for the
+		// kind to reach delta2's row on the wire.
+		ts2 := time.Now().Unix()
+		if err := os.WriteFile(srcPath, []byte(fmt.Sprintf("%d\npermission", ts2)), 0o644); err != nil {
 			t.Fatalf("update source for retry: %v", err)
 		}
-		second := write("delta2", 1714838900, cpOver)
+		second := write("delta2", ts2, cpOver)
 		if second > sc3Budget {
 			if sc3SLOStrict {
 				t.Errorf("SC3 cp-over latency = %v then %v; budget = %v (both samples breached)",

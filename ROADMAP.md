@@ -539,3 +539,19 @@ still has no analog) and worktree spawn (why it's LATER).
    ready-to-land PR that would otherwise have rotted. If death detection only
    false-positives or the review queue stays empty, the bets are wrong and get
    cut.
+
+## Follow-up: ghost waits one layer down (2026-08-09)
+
+The ghost-wait fix (wire suppression + SessionsListed teardown) cleans the
+sidebar and triage, but tierCheck iterates projectData directly and two
+ghost paths survive the teardown: a RESTART ghost (persisted WaitStartedTS
+restored for a session that died while the daemon was down — no session
+record ever exists, so the reconcile never visits it) and a LATE HOOK
+(NotifSeen after the prune re-stamps pd). Both notify on waits nobody can
+answer and inflate the digest's "· N more waiting". Fix shape: generalize
+the teardown to sweep projectData entries with wait fields whose name has
+no session record on any socket — mind the dash/slash key mapping. Kill
+criterion: if the sweep can't be made provably restart-safe, gate
+tierCheck on session existence with a HookWaitTS-freshness grace instead.
+(Invariants review 2026-08-09, finding 1 — notification-channel only, the
+wire is already clean.)

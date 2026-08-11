@@ -253,9 +253,28 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		// the exit reason rides WaitSummary as the triage gist.
 		wireWaitStarted := pd.WaitStartedTS
 		wireWaitSummary := pd.WaitSummary
+		wireWaitKind := pd.WaitKind
+		wireWaitContext := pd.WaitContext
 		if displayAtt == proto.AttDead {
 			wireWaitStarted = pd.DeadSinceTS
 			wireWaitSummary = pd.DeadReason
+		}
+		// An absent row never emits wait fields (found live 2026-08-09:
+		// two member clones killed mid-wait sat urgent-red for 45 hours —
+		// the wait lifecycle above only runs for present sessions, so the
+		// frozen stamp kept aging through the renderer's isUrgent and the
+		// triage rank). Wire-only suppression, pd untouched: a hook's
+		// NotifSeen can legitimately precede the session's WindowAdd, and
+		// that transient wait must survive to display a pass later. The
+		// authoritative pd teardown lives in the SessionsListed reconcile
+		// (state.go), which fires only when tmux confirms the session is
+		// gone. Dead rows are never absent, so the death reuse above is
+		// unaffected.
+		if absent {
+			wireWaitStarted = 0
+			wireWaitSummary = ""
+			wireWaitKind = ""
+			wireWaitContext = ""
 		}
 
 		_, isUnmanaged := unmanagedSet[n]
@@ -272,7 +291,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			LastActivityTS:   pd.LastActivityTS,
 			WaitStartedTS:    wireWaitStarted,
 			WaitAcknowledged: isWaitAcknowledged(st, dataKey, wireWaitStarted, now),
-			WaitKind:         pd.WaitKind,
+			WaitKind:         wireWaitKind,
 			WaitSummary:      wireWaitSummary,
 			PROpen:           pr.Open,
 			PRFail:           pr.Fail,
@@ -283,7 +302,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			AgentStates:      projectAgentStates(pd.AgentStates),
 			AgentClaude:      pd.AgentClaude,
 			AgentPi:          pd.AgentPi,
-			WaitContext:      pd.WaitContext,
+			WaitContext:      wireWaitContext,
 			CIStatus:         pd.CIStatus,
 			CIConclusion:     pd.CIConclusion,
 			Intent:           pd.Intent,

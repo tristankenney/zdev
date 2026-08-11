@@ -1506,6 +1506,39 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 			// only record (or re-derives from the surviving live record
 			// on a same-name recreate).
 			recomputeAgents(s, sess.Name)
+			// A wait cannot outlive its session (found live 2026-08-09:
+			// member clones killed mid-wait sat urgent-red for 45 hours
+			// — buildSnapshot's wait lifecycle only runs for present
+			// sessions, so the stamp froze and kept aging). Clear the
+			// wait cascade HERE, at the authoritative removal point —
+			// never on derived absence, which has a legitimate transient
+			// (a hook's NotifSeen can precede WindowAdd). Guarded on no
+			// same-name survivor: a name collision's live record owns
+			// the projectData entry and its wait must not be wiped by
+			// the ghost's teardown.
+			nameStillLive := false
+			for _, osess := range s.sessions {
+				if osess.Name == sess.Name {
+					nameStillLive = true
+					break
+				}
+			}
+			// Guard includes HookWaitTS/WaitContext/WaitNotifiedTiers
+			// (invariants review 2026-08-09, finding 2): a wait that
+			// closed normally leaves only HookWaitTS behind, and a
+			// same-name recreate within hookWaitFreshSec would inherit
+			// the dead session's hook receipt as WaitConfirmed credit.
+			if pd, ok := s.projectData[sess.Name]; ok && !nameStillLive &&
+				(pd.WaitStartedTS != 0 || pd.WaitKind != "" || pd.WaitSummary != "" ||
+					pd.HookWaitTS != 0 || pd.WaitContext != "" || pd.WaitNotifiedTiers != 0) {
+				pd.WaitStartedTS = 0
+				pd.WaitContext = ""
+				pd.WaitNotifiedTiers = 0
+				pd.WaitKind = ""
+				pd.WaitSummary = ""
+				pd.HookWaitTS = 0
+				s.projectData[sess.Name] = pd
+			}
 		}
 	case tmuxctl.WindowsListed:
 		// Authoritative window reconcile (OQ-3): list-windows -a is ground

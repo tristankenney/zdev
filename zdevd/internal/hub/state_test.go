@@ -273,19 +273,37 @@ func TestApplyNotifSeen(t *testing.T) {
 	sub, unsub := mustSubscribe(t, h, "%notif")
 	defer unsub()
 
+	// Window + pane so the session derives PRESENT: hooks fire from inside
+	// panes, and an absent row suppresses wait fields on the wire by
+	// design (ghost-wait fix, 2026-08-09 — see absent_wait_test.go).
 	mustSubmit(t, h, tmuxctl.SessionChanged{ID: "$1", Name: "alpha"})
-	const ts = int64(1714838460)
+	mustSubmit(t, h, tmuxctl.WindowAdd{ID: "@1"})
+	mustSubmit(t, h, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%1"})
+	// zdev-notify writes the notif file AND sets the ● pane title in the
+	// same breath — a hook wait without its waiting title is not a state
+	// that occurs in production, and the lifecycle rightly clears it.
+	mustSubmit(t, h, tmuxctl.PaneTitleChanged{PaneID: "%1", Title: "● claude"})
+	// Recent timestamp: a present session's wait lifecycle rejects
+	// ancient stamps by design (stale-replay protection) — the old
+	// fixed 2024 constant only ever survived because the windowless
+	// session skipped the lifecycle entirely.
+	ts := time.Now().Unix()
 	mustSubmit(t, h, tmuxctl.NotifSeen{Session: "alpha", Timestamp: ts})
+	// Near-equality, not exact: the title pass may open the wait a moment
+	// before the hook stamp lands, and a continuing wait correctly keeps
+	// its original start time. The assertion's intent is "the wait
+	// reached the wire", not "the hook owns the clock".
+	near := func(got int64) bool { return got != 0 && got >= ts-5 && got <= ts+5 }
 	snap := drainUntil(t, sub, 200*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.WaitStartedTS == ts
+		return p != nil && near(p.WaitStartedTS)
 	})
 	proj := findProject(snap.Projects, "alpha")
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.WaitStartedTS != ts {
-		t.Errorf("WaitStartedTS = %d; want %d", proj.WaitStartedTS, ts)
+	if !near(proj.WaitStartedTS) {
+		t.Errorf("WaitStartedTS = %d; want ~%d", proj.WaitStartedTS, ts)
 	}
 }
 
@@ -300,8 +318,13 @@ func TestApplyNotifSeen_Kind(t *testing.T) {
 		sub, unsub := mustSubscribe(t, h, "%notifkind")
 		defer unsub()
 
+		// Present session (window + pane) — same reasoning as
+		// TestApplyNotifSeen: absent rows suppress wait wire fields.
 		mustSubmit(t, h, tmuxctl.SessionChanged{ID: "$1", Name: "alpha"})
-		mustSubmit(t, h, tmuxctl.NotifSeen{Session: "alpha", Timestamp: 1714838460, Kind: proto.WaitKindPermission})
+		mustSubmit(t, h, tmuxctl.WindowAdd{ID: "@1"})
+		mustSubmit(t, h, tmuxctl.WindowPaneChanged{WindowID: "@1", PaneID: "%1"})
+		mustSubmit(t, h, tmuxctl.PaneTitleChanged{PaneID: "%1", Title: "● claude"})
+		mustSubmit(t, h, tmuxctl.NotifSeen{Session: "alpha", Timestamp: time.Now().Unix(), Kind: proto.WaitKindPermission})
 		snap := drainUntil(t, sub, 200*time.Millisecond, func(s *proto.Snapshot) bool {
 			p := findProject(s.Projects, "alpha")
 			return p != nil && p.WaitKind == proto.WaitKindPermission
@@ -1129,9 +1152,10 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 
 	// Test G: buildSnapshot wires WaitContext from projectData to proto.Project.
 	t.Run("G_buildSnapshot_wires_wait_context", func(t *testing.T) {
-		s := newState()
-		s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
-		s.sessions["$1"] = &session{ID: "$1", Name: "example-agora", windows: make(map[string]*window)}
+		// Present session (window + pane): absent rows suppress wait wire
+		// fields by design (ghost-wait fix 2026-08-09), so the old
+		// windowless setup would assert the suppressed value.
+		s := buildTestState("example-agora", []string{"%1"}, []string{"shell"})
 		pd := s.projectData["example-agora"]
 		pd.WaitContext = "foo\nbar"
 		s.projectData["example-agora"] = pd
@@ -1295,13 +1319,18 @@ func findProject(projects []proto.Project, name string) *proto.Project {
 // visitTS = now-60 > waitStartedTS+300 = now-300, so it acknowledges.
 func TestBuildSnapshot_WaitAcknowledged_VisitPostDatesHighestTier(t *testing.T) {
 	now := time.Now().Unix()
-	s := newState()
-	s.paneCapturer = func(paneID, socketName string) (string, error) { return "", nil }
+	// Present, actively waiting session — absent rows suppress wait wire
+	// fields by design (ghost-wait fix 2026-08-09). The title change
+	// post-dates the visit so the visited-since-wait demotion stays out
+	// of this test's way; the visit still post-dates the highest crossed
+	// tier, which is what the assertion is about.
+	s := buildTestState("foo-bar", []string{"%1"}, []string{"● claude"})
 	s.projectListNames = []string{"foo/bar"}
 	pd := s.projectData["foo-bar"]
 	pd.WaitStartedTS = now - 600
 	s.projectData["foo-bar"] = pd
 	s.lastVisitTS["foo-bar"] = now - 60 // post-dates waitStartedTS+300 (= now-300)
+	s.lastTitleChangeTS["foo-bar"] = now - 50
 
 	snap := buildSnapshot(s, 1, time.Now(), now, now*1000)
 	proj := findProject(snap.Projects, "foo/bar")
