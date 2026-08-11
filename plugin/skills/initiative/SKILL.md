@@ -70,7 +70,9 @@ that its mainline is only as fresh as its own last `git fetch`.
   mainline (the digest never fetches, so its numbers are as fresh as the
   clone's last fetch).
 - **Rot check**: a clone whose branch merged more than ~2 weeks ago is rot.
-  Flag it for deletion rather than nursing it.
+  Flag it for deletion rather than nursing it — the `initiative-compact`
+  skill is the full pass (decision folding, notes cull, bd hygiene, rot
+  removal) when the whole initiative needs a tidy, not just one clone.
 
 ## Work items
 
