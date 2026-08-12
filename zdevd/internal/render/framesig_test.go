@@ -28,15 +28,29 @@ func TestFrameSig(t *testing.T) {
 	}
 
 	// Urgent wait → div 1: every tick changes the sig.
-	urgent := &proto.Snapshot{Projects: []proto.Project{
+	// Urgency redesign 2026-08-09: an UNACKED urgent row renders the
+	// static red ! — no pulse, so a tick must NOT change its sig (that
+	// would pay render.Body every tick for identical bytes). An ACKED
+	// urgent-age row still pulses per-tick and must change the sig.
+	urgentStatic := &proto.Snapshot{Projects: []proto.Project{
 		{Name: "a", Status: "waiting", Attention: proto.AttWaiting, WaitStartedTS: 1000},
 	}}
 	uNow := int64(1000 + int64(WaitUrgentSec))
 	b := NewAnimator()
-	s0 := b.FrameSigFor(urgent, uNow)
+	s0 := b.FrameSigFor(urgentStatic, uNow)
 	b.Tick()
-	if got := b.FrameSigFor(urgent, uNow); got == s0 {
-		t.Error("urgent tick did not change sig")
+	if got := b.FrameSigFor(urgentStatic, uNow); got != s0 {
+		t.Error("unacked urgent row is static — a tick must not change its sig")
+	}
+
+	urgentAcked := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "a", Status: "waiting", Attention: proto.AttWaiting, WaitStartedTS: 1000, WaitAcknowledged: true},
+	}}
+	c := NewAnimator()
+	s1 := c.FrameSigFor(urgentAcked, uNow)
+	c.Tick()
+	if got := c.FrameSigFor(urgentAcked, uNow); got == s1 {
+		t.Error("acked urgent-age row still pulses — tick did not change sig")
 	}
 
 	// The wall-clock second always participates (age strings).

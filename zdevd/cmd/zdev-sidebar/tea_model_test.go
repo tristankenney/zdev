@@ -29,9 +29,13 @@ func quietSnapshot(seq int64) *proto.Snapshot {
 
 // waitingSnapshotUrgent builds a snapshot with one long-waiting project.
 // WaitStartedTS is pinned near the Unix epoch so that against any realistic
-// fixedNow in a test, now-WaitStartedTS comfortably exceeds WaitUrgentSec —
-// FrameSigFor's pulse divisor is 1, so the pulse frame (and therefore the
-// FrameSig) changes on every single animator tick.
+// fixedNow in a test, now-WaitStartedTS comfortably exceeds WaitUrgentSec.
+// WaitAcknowledged is TRUE: since the 2026-08-09 urgency redesign an
+// UNACKED urgent row is a static red ! (a form, not a motion) and ticks
+// nothing — an acked urgent-age row still renders the ● pulse, whose
+// PulseGlyphAt tier runs per-tick at this age, so the pulse frame (and
+// therefore the FrameSig, and the rendered bytes) changes on every single
+// animator tick.
 func waitingSnapshotUrgent(seq int64) *proto.Snapshot {
 	return &proto.Snapshot{
 		V:        proto.CurrentProtocolVersion,
@@ -40,7 +44,7 @@ func waitingSnapshotUrgent(seq int64) *proto.Snapshot {
 		Seq:      seq,
 		Sessions: []string{},
 		Projects: []proto.Project{
-			{Name: "alpha", Status: "alive", Attention: proto.AttWaiting, WaitStartedTS: 1},
+			{Name: "alpha", Status: "alive", Attention: proto.AttWaiting, WaitStartedTS: 1, WaitAcknowledged: true},
 		},
 	}
 }

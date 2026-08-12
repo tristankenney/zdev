@@ -46,7 +46,17 @@ func (a *Animator) FrameSigFor(snap *proto.Snapshot, now int64) FrameSig {
 			}
 			switch {
 			case age >= int64(WaitUrgentSec):
-				div = 1
+				// Urgency redesign 2026-08-09: an UNACKED urgent row
+				// renders the static red ! (no pulse at all), so it
+				// needs no divisor — churning the sig for it would make
+				// every tick pay render.Body only for repaintLive to
+				// find identical bytes. An ACKED urgent-age row is not
+				// urgent (isUrgent gates on !WaitAcknowledged) and still
+				// renders the ● pulse, whose PulseGlyphAt tier runs at
+				// per-tick rate for this age.
+				if p.WaitAcknowledged {
+					div = 1
+				}
 			case age >= int64(WaitWarnSec) && div > 2:
 				div = 2
 			}

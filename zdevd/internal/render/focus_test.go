@@ -294,8 +294,11 @@ func TestAnchoredFleetKeepsAnimatingEveryRow(t *testing.T) {
 	outB := Render(snap, 50, animB, fixedNowFn)
 
 	// "delta" is the reported case: working, not the anchor, no urgency to
-	// earn it a pierce — under damping it froze.
-	for _, name := range []string{"delta", "alpha", "gamma", "zdev"} {
+	// earn it a pierce — under damping it froze. gamma (urgent) is NOT in
+	// this list: since the 2026-08-09 urgency redesign an urgent row is a
+	// deliberately static red ! + red name — a form, not a motion, so it
+	// cannot read as a stalled spinner.
+	for _, name := range []string{"delta", "alpha", "zdev"} {
 		if a, b := rawLineWithName(outA, name), rawLineWithName(outB, name); a == b {
 			t.Errorf("%s must keep animating while anchored elsewhere; frames were identical: %q", name, a)
 		}

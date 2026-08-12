@@ -415,7 +415,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
 					groupGutter(groupKeys[i], true, "│",
-						rowMargin(&p, animator, urgent, true, false, hovered)),
+						rowMargin(&p, animator, true, false, hovered)),
 					snap, true)
 			}
 		case isCurrent && grouped:
@@ -430,10 +430,10 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			}
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
 				groupGutter(groupKeys[i], true, g,
-					rowMargin(&p, animator, urgent, true, false, hovered)))
+					rowMargin(&p, animator, true, false, hovered)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
 				groupGutter(groupKeys[i], true, mg,
-					rowMargin(&p, animator, urgent, true, false, hovered)),
+					rowMargin(&p, animator, true, false, hovered)),
 				snap, false)
 		case isCurrent:
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows, "")
@@ -451,7 +451,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			}
 			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
 				groupGutter(groupKeys[i], true, g,
-					rowMargin(&p, animator, urgent, false, isCursor, hovered)))
+					rowMargin(&p, animator, false, isCursor, hovered)))
 		default:
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows, "")
 		}
@@ -910,11 +910,6 @@ func metadataPrefix(p *proto.Project, current string, animator *Animator, urgent
 		// the metadata row spends the full indent to stay aligned with the
 		// project row above it.
 		b.WriteString("      ")
-	case urgent:
-		b.WriteString(thUrgentBar())
-		b.WriteString("▌")
-		b.WriteString(Reset)
-		b.WriteString("     ")
 	case isCurrent:
 		b.WriteString(thBreath(p.Name, animator.BreathFrame()))
 		b.WriteString("▌")
@@ -1004,14 +999,6 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 		// marker already sits at column 0 ahead of the frame glyph. Spend
 		// the indent so the content column matches unmarked member rows.
 		buf.WriteString("  ")
-	case urgent:
-		// Urgent left-border accent. Replaces the breath bar when current
-		// (urgency wins over identity); replaces the "  " indent when non-current.
-		// 260511-nxy: foreground-only red ▌ — no bg state to leak across rows.
-		buf.WriteString(thUrgentBar())
-		buf.WriteString("▌")
-		buf.WriteString(Reset)
-		buf.WriteString(" ")
 	case isCurrent:
 		buf.WriteString(thBreath(p.Name, animator.BreathFrame()))
 		buf.WriteString("▌")
@@ -1035,7 +1022,16 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	if (DemoteMode != "off" && isStaleRow(p, nowFn())) || p.Unmanaged {
 		color = thDim()
 	}
+	// Urgency lives in the row body (redesign 2026-08-09): a red !
+	// marker plus the name in the urgent hue. The margin stays pure
+	// location — see rowMargin's doc comment.
+	if urgent {
+		glyph, color = "!", thUrgentBar()
+	}
 	buf.WriteString(color)
+	if urgent {
+		buf.WriteString(Bold)
+	}
 	buf.WriteString(glyph)
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
@@ -1043,12 +1039,15 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	switch {
 	case hovered:
 		buf.WriteString(thHover())
+	case urgent:
+		buf.WriteString(Bold)
+		buf.WriteString(thUrgentBar())
 	case isCurrent:
 		buf.WriteString(Bold)
 		buf.WriteString(thPalette(p.Name))
 	}
 	buf.WriteString(displayName(p.Name))
-	if hovered || isCurrent {
+	if hovered || isCurrent || urgent {
 		buf.WriteString(Reset)
 	}
 	// Agent Teams badge (phase4-v16, slice 4) — same placement as the
@@ -1184,11 +1183,6 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 		// Grouped: rowMargin already placed the marker at column 0 ahead of
 		// the frame glyph — spend the indent to hold the content column.
 		buf.WriteString("  ")
-	case urgent:
-		buf.WriteString(RedBorder)
-		buf.WriteString("▌")
-		buf.WriteString(Reset)
-		buf.WriteString(" ")
 	case isCursor:
 		buf.WriteString("▶ ")
 	case hovered:
@@ -1198,6 +1192,8 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 		buf.WriteString(Reset)
 		buf.WriteString(" ")
 	default:
+		// Urgency deliberately absent (redesign 2026-08-09): the margin
+		// means location; urgent rows announce in the row body below.
 		buf.WriteString("  ")
 	}
 
@@ -1209,7 +1205,15 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	if stale || p.Unmanaged {
 		color = thDim()
 	}
+	// Urgency lives in the row body (redesign 2026-08-09) — see
+	// renderProjectRow; same ! marker + urgent-hue name here.
+	if urgent {
+		glyph, color = "!", thUrgentBar()
+	}
 	buf.WriteString(color)
+	if urgent {
+		buf.WriteString(Bold)
+	}
 	buf.WriteString(glyph)
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
@@ -1225,6 +1229,11 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	switch {
 	case hovered:
 		buf.WriteString(thHover())
+		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
+		buf.WriteString(Reset)
+	case urgent:
+		buf.WriteString(Bold)
+		buf.WriteString(thUrgentBar())
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 		buf.WriteString(Reset)
 	case stale || p.Status == "absent" || p.Unmanaged:
@@ -1389,10 +1398,16 @@ func groupGutter(key string, hued bool, glyph, margin string) string {
 // its column jumped between 0 and 3 as the cursor crossed a group boundary
 // (live review 2026-07-31). Content columns are unchanged: the gutter's
 // consumers spend a constant two spaces where they used to draw the marker.
-func rowMargin(p *proto.Project, animator *Animator, urgent, isCurrent, isCursor, hovered bool) string {
+// Urgency does NOT live here (redesign 2026-08-09: the margin used to
+// carry a red ▌ for urgent rows — the same glyph as the current-session
+// breath bar, same column, distinguishable only by hue and motion, and
+// live dogfood found the two hard to tell apart. One column, one meaning:
+// the margin is LOCATION — ▌ you are here, ▶ cursor, › pointer. Urgency
+// is the agent's state and renders in the row body: a red ! marker and
+// the name in the urgent hue — no other row has a red name, so the forms
+// can never collide).
+func rowMargin(p *proto.Project, animator *Animator, isCurrent, isCursor, hovered bool) string {
 	switch {
-	case urgent:
-		return thUrgentBar() + "▌" + Reset + " "
 	case isCurrent:
 		return thBreath(p.Name, animator.BreathFrame()) + "▌" + Reset + " "
 	case isCursor:

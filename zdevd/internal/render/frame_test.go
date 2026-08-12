@@ -530,11 +530,16 @@ func TestRender_Urgent_NonCurrent_RedBorderStillPresent(t *testing.T) {
 	anim.OnSnapshot(snap)
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	// RedBorder + ▌ + Reset must appear exactly once (single compact row).
-	redBorderPrefix := []byte(RedBorder + "▌" + Reset)
-	count := bytes.Count(out, redBorderPrefix)
-	if count != 1 {
-		t.Errorf("urgent non-current: expected RedBorder+▌+Reset exactly 1 time (single row), got %d\n%q", count, out)
+	// Redesign 2026-08-09: no red ▌ anywhere — urgency is the row body's
+	// red ! marker plus the name in the urgent hue.
+	if bytes.Contains(out, []byte(RedBorder+"▌")) {
+		t.Errorf("urgent non-current: red ▌ must not appear\n%q", out)
+	}
+	if !bytes.Contains(out, []byte(thUrgentBar()+Bold+"!")) {
+		t.Errorf("urgent non-current: expected urgent ! marker\n%q", out)
+	}
+	if !bytes.Contains(out, []byte(Bold+thUrgentBar()+"alpha")) {
+		t.Errorf("urgent non-current: expected urgent-hue name\n%q", out)
 	}
 }
 
@@ -563,9 +568,9 @@ func TestRender_Urgent_NonCurrent_InlineAlertsStillRender(t *testing.T) {
 	if !bytes.Contains(out, []byte("✗1")) {
 		t.Errorf("urgent non-current with PRFail: expected '✗1' inline alert\n%q", out)
 	}
-	redBorderPrefix := []byte(RedBorder + "▌")
-	if !bytes.Contains(out, redBorderPrefix) {
-		t.Errorf("urgent non-current: expected RedBorder+▌ prefix\n%q", out)
+	// Redesign 2026-08-09: urgency is the row body's ! marker, no red ▌.
+	if !bytes.Contains(out, []byte(thUrgentBar()+Bold+"!")) {
+		t.Errorf("urgent non-current: expected urgent ! marker\n%q", out)
 	}
 }
 
@@ -600,10 +605,11 @@ func TestRender_Urgent_NonCurrent_NoBranchChip(t *testing.T) {
 	}
 }
 
-// TestRender_Urgent_CurrentSession_RedBorderBothRows verifies that a CURRENT-SESSION
-// project with WaitStartedTS >= WaitUrgentSec re-expands to 2 rows, both prefixed
-// with the red-▌ left-border accent. (2-row expansion only via isCurrent now.)
-func TestRender_Urgent_CurrentSession_RedBorderBothRows(t *testing.T) {
+// TestRender_Urgent_CurrentSession_RowBodyUrgency: a CURRENT urgent project
+// keeps its 2-row expansion and its breath bar (the margin means LOCATION —
+// redesign 2026-08-09), while urgency renders in the row body: a red !
+// marker and the name in the urgent hue. No red ▌ anywhere.
+func TestRender_Urgent_CurrentSession_RowBodyUrgency(t *testing.T) {
 	now := fixedNow
 	snap := &proto.Snapshot{
 		Projects: []proto.Project{
@@ -620,22 +626,25 @@ func TestRender_Urgent_CurrentSession_RedBorderBothRows(t *testing.T) {
 	if rows != 2 {
 		t.Errorf("urgent current: expected 2 rows, got %d\n%q", rows, out)
 	}
-	// RedBorder + ▌ + Reset must appear exactly twice (once per row).
-	redBorderPrefix := []byte(RedBorder + "▌" + Reset)
-	count := bytes.Count(out, redBorderPrefix)
-	if count != 2 {
-		t.Errorf("urgent current: expected RedBorder+▌+Reset exactly 2 times, got %d\n%q", count, out)
+	// The old red-▌ accent must be gone entirely.
+	if bytes.Contains(out, []byte(RedBorder+"▌")) {
+		t.Errorf("urgent current: red ▌ must no longer exist\n%q", out)
 	}
-	// Reset must appear.
-	if !bytes.Contains(out, []byte(Reset)) {
-		t.Errorf("urgent current: expected Reset in output\n%q", out)
+	// The urgent row body: red ! marker...
+	if !bytes.Contains(out, []byte(thUrgentBar()+Bold+"!")) {
+		t.Errorf("urgent current: expected urgent-hue ! marker\n%q", out)
+	}
+	// ...and the name in the urgent hue.
+	if !bytes.Contains(out, []byte(Bold+thUrgentBar()+"alpha")) {
+		t.Errorf("urgent current: expected name in urgent hue\n%q", out)
 	}
 }
 
-// TestRender_Urgent_CurrentSession_RedBorderWinsOverBreath verifies a
-// current-session project that is also urgent gets the red-▌ border on both
-// rows (urgency wins over identity — the breath bar is NOT shown).
-func TestRender_Urgent_CurrentSession_RedBorderWinsOverBreath(t *testing.T) {
+// TestRender_Urgent_CurrentSession_BreathBarStays: a current-session
+// project that is also urgent KEEPS its breath bar (redesign 2026-08-09:
+// the margin means location; urgency renders in the row body, so the two
+// no longer compete for the same column).
+func TestRender_Urgent_CurrentSession_BreathBarStays(t *testing.T) {
 	now := fixedNow
 	snap := &proto.Snapshot{
 		Projects: []proto.Project{
@@ -648,15 +657,12 @@ func TestRender_Urgent_CurrentSession_RedBorderWinsOverBreath(t *testing.T) {
 	anim.breathState = 0 // peak breath frame
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	redBorderPrefix := []byte(RedBorder + "▌" + Reset)
-	count := bytes.Count(out, redBorderPrefix)
-	if count != 2 {
-		t.Errorf("urgent current: expected RedBorder+▌+Reset exactly 2 times, got %d\n%q", count, out)
-	}
-	// The breath-bar prefix for "alpha" must NOT appear — urgency wins over identity.
 	breathPrefix := []byte(BreathColorForProject("alpha", anim.BreathFrame()) + "▌" + Reset)
-	if bytes.Contains(out, breathPrefix) {
-		t.Errorf("urgent current: breath-bar prefix must NOT appear (urgency wins over identity)\n%q", out)
+	if !bytes.Contains(out, breathPrefix) {
+		t.Errorf("urgent current: breath bar must stay (margin = location)\n%q", out)
+	}
+	if bytes.Contains(out, []byte(RedBorder+"▌")) {
+		t.Errorf("urgent current: red ▌ must no longer exist\n%q", out)
 	}
 }
 
@@ -920,9 +926,9 @@ func TestRender_UrgentSuppression_NonCurrent_Unacked(t *testing.T) {
 	anim.OnSnapshot(snap)
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	redBorderPrefix := []byte(RedBorder + "▌" + Reset)
-	if !bytes.Contains(out, redBorderPrefix) {
-		t.Errorf("non-current+unacked+urgent: expected RedBorder+▌+Reset in output\n%q", out)
+	// Redesign 2026-08-09: the unacked-urgent signal is the row body.
+	if !bytes.Contains(out, []byte(thUrgentBar()+Bold+"!")) {
+		t.Errorf("non-current+unacked+urgent: expected urgent ! marker\n%q", out)
 	}
 	// Should collapse to 1 row (260511-ohu: twoRows := isCurrent; urgent dropped).
 	rows := countProjectRows(out)
@@ -963,9 +969,11 @@ func TestRender_UrgentSuppression_NonCurrent_Acked(t *testing.T) {
 	}
 }
 
-// TestRender_UrgentSuppression_Current_Unacked verifies that a current waiting
-// project past WaitUrgentSec with WaitAcknowledged=false renders with the red ▌
-// border (urgency wins over identity — 260511-nxy behavior preserved).
+// TestRender_UrgentSuppression_Current_Unacked verifies that a current
+// waiting project past WaitUrgentSec with WaitAcknowledged=false renders
+// the ROW-BODY urgency (red ! marker + urgent-hue name — redesign
+// 2026-08-09); acked rows below suppress it. The margin keeps the breath
+// bar either way.
 func TestRender_UrgentSuppression_Current_Unacked(t *testing.T) {
 	now := fixedNow
 	snap := &proto.Snapshot{
@@ -984,10 +992,11 @@ func TestRender_UrgentSuppression_Current_Unacked(t *testing.T) {
 	anim.breathState = 0
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	redBorderPrefix := []byte(RedBorder + "▌" + Reset)
-	count := bytes.Count(out, redBorderPrefix)
-	if count != 2 {
-		t.Errorf("current+unacked+urgent: expected RedBorder+▌+Reset exactly 2 times, got %d\n%q", count, out)
+	if !bytes.Contains(out, []byte(thUrgentBar()+Bold+"!")) {
+		t.Errorf("current+unacked+urgent: expected urgent ! marker\n%q", out)
+	}
+	if !bytes.Contains(out, []byte(Bold+thUrgentBar()+"alpha")) {
+		t.Errorf("current+unacked+urgent: expected urgent-hue name\n%q", out)
 	}
 }
 
@@ -1107,8 +1116,11 @@ func TestMetadataPrefix(t *testing.T) {
 	p := &proto.Project{Name: "alpha", Status: "alive"}
 
 	t.Run("Urgent", func(t *testing.T) {
+		// Redesign 2026-08-09: urgency no longer draws in the margin —
+		// an urgent CURRENT row keeps its breath bar (margin = location).
+		anim.breathState = 0
 		prefix := metadataPrefix(p, "alpha", anim, true, false)
-		want := RedBorder + "▌" + Reset + "     "
+		want := BreathColorForProject("alpha", anim.BreathFrame()) + "▌" + Reset + "     "
 		if prefix != want {
 			t.Errorf("urgent prefix:\n  got  %q\n  want %q", prefix, want)
 		}
@@ -1408,7 +1420,7 @@ func TestRender_NonCurrent_CompactCIFail(t *testing.T) {
 // current+urgent+unacked project with Branch="x" and WaitStartedTS set has
 // the marker row + git domain row + agent domain row ALL prefixed with
 // RedBorder+▌+Reset (count == 3: marker + 2 domain rows).
-func TestRender_DomainRows_Urgent_RedBorderOnEachPopulatedRow(t *testing.T) {
+func TestRender_DomainRows_Urgent_BreathBarOnEachPopulatedRow(t *testing.T) {
 	now := fixedNow
 	snap := &proto.Snapshot{
 		Projects: []proto.Project{
@@ -1425,11 +1437,16 @@ func TestRender_DomainRows_Urgent_RedBorderOnEachPopulatedRow(t *testing.T) {
 	anim.OnSnapshot(snap)
 	out := Render(snap, 80, anim, func() int64 { return now })
 
-	redBorderPrefix := []byte(RedBorder + "▌" + Reset)
-	count := bytes.Count(out, redBorderPrefix)
+	// Redesign 2026-08-09: urgency no longer draws in any margin — the
+	// red ▌ is gone from marker AND domain rows; the breath bar (location)
+	// carries all three rows, and the urgent signal lives in the row body.
+	if bytes.Contains(out, []byte(RedBorder+"▌")) {
+		t.Errorf("current+urgent: red ▌ must not appear on any row\n%q", out)
+	}
+	breathPrefix := []byte(BreathColorForProject("alpha", anim.BreathFrame()) + "▌" + Reset)
 	// Marker row + git domain row (Branch="x") + agent domain row (WaitStartedTS set) = 3.
-	if count != 3 {
-		t.Errorf("current+urgent with Branch+WaitStartedTS: expected RedBorder+▌+Reset exactly 3 times (marker+git+agent), got %d\n%q", count, out)
+	if count := bytes.Count(out, breathPrefix); count != 3 {
+		t.Errorf("current+urgent with Branch+WaitStartedTS: expected breath ▌ exactly 3 times (marker+git+agent), got %d\n%q", count, out)
 	}
 }
 
