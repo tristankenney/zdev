@@ -150,3 +150,11 @@ tracker signal", not "no work".
 
 - `0` — digest produced (including an empty one).
 - `1` — the workspace root could not be read, or JSON marshalling failed.
+
+## v1 additive: `members[].anchor` (2026-08-17)
+
+A member named `<anchor>_<stream>` whose `<anchor>` is itself a member is a
+parallel **workstream** and carries `"anchor": "<anchor>"`. Ordinary members
+omit the field. Purely name-derived (convention over inspection), so
+worktree streams and full-clone streams group identically. The human render
+splits the count: `2 members · 3 streams`.

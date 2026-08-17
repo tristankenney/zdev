@@ -259,6 +259,13 @@ Usage:
                                  (per-repo ready/fix/rot, longest-rotting first)
   zdev initiatives [--json]      Digest of workspace initiatives (intent,
                                  decisions, members, bd work; local-only)
+  zdev stream add <init>/<repo> <name> [<branch>]
+                                 Add a parallel workstream: a git worktree
+                                 sibling <repo>_<name> on branch
+                                 <init>/<name> (or <branch> if given).
+                                 Rows/sessions/pay-cli instances follow.
+  zdev stream rm <init>/<repo>_<name>   Remove a workstream worktree
+  zdev stream ls <init>/<repo>   List a member's worktrees
   zdev ack [--all|<project>]     Acknowledge statuses — like "read all"
                                  (tmux: bind -n M-r run-shell "zdev ack --all")
   zdev notify {mute [DUR]|unmute|toggle|status}
@@ -774,6 +781,94 @@ case "$1" in
         # so it works even before zdevd has ever been launched.
         shift
         exec zdev-show initiatives "$@"
+        ;;
+    stream)
+        # Parallel workstreams inside an initiative (decision 2026-08-17):
+        # a workstream is a git WORKTREE of a member clone, named
+        # <repo>_<stream>, on its own branch. The disk is the registry, so
+        # the row appears on its own; the branch gives pay-cli a distinct
+        # instance (it slugifies the branch), so each stream gets its own
+        # isolated local env — and git's same-branch exclusivity means two
+        # streams can never collide on one instance. The anchor clone's
+        # object store is shared: one fetch serves every stream.
+        shift
+        stream_op="${1:-}"; shift || true
+        case "$stream_op" in
+            add)
+                stream_member="${1:-}"; stream_name="${2:-}"; stream_branch="${3:-}"
+                if [[ -z "$stream_member" || -z "$stream_name" ]]; then
+                    echo "usage: zdev stream add <initiative>/<repo> <name> [<branch>]" >&2
+                    exit 2
+                fi
+                stream_init="${stream_member%%/*}"
+                stream_repo="${stream_member#*/}"
+                stream_dir="$WORKSPACE/$stream_init/$stream_repo"
+                if [[ ! -e "$stream_dir/.git" ]]; then
+                    echo "zdev stream: not an initiative member: $stream_member" >&2
+                    exit 1
+                fi
+                if [[ "$stream_name" == *[/._]* ]]; then
+                    echo "zdev stream: stream name must be plain kebab-case (it follows _ in the dir name)" >&2
+                    exit 1
+                fi
+                stream_wt="$WORKSPACE/$stream_init/${stream_repo}_${stream_name}"
+                if [[ -e "$stream_wt" ]]; then
+                    echo "zdev stream: already exists: $stream_wt" >&2
+                    exit 1
+                fi
+                if [[ -n "$stream_branch" ]]; then
+                    # Existing branch (e.g. shepherding a PR stack's top).
+                    git -C "$stream_dir" worktree add "$stream_wt" "$stream_branch" || exit 1
+                else
+                    git -C "$stream_dir" worktree add -b "$stream_init/$stream_name" "$stream_wt" || exit 1
+                fi
+                # Submodules are per-worktree; best-effort, absent submodules no-op.
+                git -C "$stream_wt" submodule update --init --recursive >/dev/null 2>&1 || true
+                echo "zdev stream: added $stream_init/${stream_repo}_${stream_name} ($(git -C "$stream_wt" branch --show-current 2>/dev/null || echo detached))"
+                echo "             row + session + pay-cli instance follow the branch"
+                ;;
+            rm)
+                stream_member="${1:-}"
+                if [[ -z "$stream_member" || "$stream_member" != */*_* ]]; then
+                    echo "usage: zdev stream rm <initiative>/<repo>_<name>" >&2
+                    exit 2
+                fi
+                stream_init="${stream_member%%/*}"
+                stream_wtname="${stream_member#*/}"
+                stream_repo="${stream_wtname%%_*}"
+                stream_wt="$WORKSPACE/$stream_init/$stream_wtname"
+                stream_dir="$WORKSPACE/$stream_init/$stream_repo"
+                if [[ ! -e "$stream_wt/.git" ]]; then
+                    echo "zdev stream: no such workstream: $stream_member" >&2
+                    exit 1
+                fi
+                # git refuses to remove ANY worktree containing submodules
+                # (even clean ones), and most Pay repos carry ai/shared. A
+                # clean tree is safe to force; a dirty one stays protected.
+                if [[ -n "$(git -C "$stream_wt" status --porcelain 2>/dev/null)" ]]; then
+                    echo "zdev stream: $stream_member has uncommitted changes — commit/stash them, or force with:" >&2
+                    echo "  git -C $stream_dir worktree remove --force $stream_wt" >&2
+                    exit 1
+                fi
+                git -C "$stream_dir" worktree remove "$stream_wt" 2>/dev/null \
+                    || git -C "$stream_dir" worktree remove --force "$stream_wt" || exit 1
+                echo "zdev stream: removed $stream_member (branch kept; delete with git branch -d)"
+                ;;
+            ls)
+                stream_member="${1:-}"
+                if [[ -z "$stream_member" ]]; then
+                    echo "usage: zdev stream ls <initiative>/<repo>" >&2
+                    exit 2
+                fi
+                stream_dir="$WORKSPACE/${stream_member%%/*}/${stream_member#*/}"
+                exec git -C "$stream_dir" worktree list
+                ;;
+            *)
+                echo "usage: zdev stream {add|rm|ls} ..." >&2
+                exit 2
+                ;;
+        esac
+        exit 0
         ;;
     ack)
         shift

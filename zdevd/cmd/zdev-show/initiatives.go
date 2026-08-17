@@ -86,6 +86,30 @@ type memberDigest struct {
 	Dirty        bool   `json:"dirty"`
 	Unpushed     *int64 `json:"unpushed"`
 	LastCommitAt *int64 `json:"lastCommitAt"`
+	// Anchor names the member this one is a parallel WORKSTREAM of
+	// (decision 2026-08-17: a workstream is a worktree sibling named
+	// <repo>_<stream>). Set when the name carries the _<stream> suffix
+	// and the prefix is itself a member; empty for ordinary members.
+	// Additive to the v1 contract — see docs/initiatives-digest.md.
+	Anchor string `json:"anchor,omitempty"`
+}
+
+// assignAnchors marks workstream members with the member they stream from:
+// a member named <anchor>_<stream> whose <anchor> is also a member. Pure —
+// convention over inspection, so a full-clone stream (the documented
+// escape hatch for violent spikes) groups identically to a worktree one.
+func assignAnchors(members []memberDigest) {
+	names := make(map[string]bool, len(members))
+	for i := range members {
+		names[members[i].Name] = true
+	}
+	for i := range members {
+		if idx := strings.Index(members[i].Name, "_"); idx > 0 {
+			if anchor := members[i].Name[:idx]; names[anchor] {
+				members[i].Anchor = anchor
+			}
+		}
+	}
 }
 
 // workDigest maps `bd stats --json` summary counts. Tool is always "bd"
@@ -335,6 +359,7 @@ func (r *initiativesRunner) collectOne(name, dir string) initiativeDigest {
 			init.Members = append(init.Members, r.deriveMember(mDir))
 		}
 	}
+	assignAnchors(init.Members)
 
 	// Work: optional bd. Missing binary, missing .beads, or any bd failure
 	// ⇒ work is null — the digest must not fail because a tracker is absent.
@@ -484,9 +509,22 @@ func initiativeMetaLine(init initiativeDigest, now int64) string {
 		parts = append(parts, fmt.Sprintf("started %s%s", *init.Started, age))
 	}
 
-	member := fmt.Sprintf("%d members", len(init.Members))
-	if len(init.Members) == 1 {
+	var streams int
+	for _, m := range init.Members {
+		if m.Anchor != "" {
+			streams++
+		}
+	}
+	base := len(init.Members) - streams
+	member := fmt.Sprintf("%d members", base)
+	if base == 1 {
 		member = "1 member"
+	}
+	if streams > 0 {
+		member += fmt.Sprintf(" · %d streams", streams)
+		if streams == 1 {
+			member = strings.TrimSuffix(member, "streams") + "stream"
+		}
 	}
 	var dirty int
 	var unpushed int64

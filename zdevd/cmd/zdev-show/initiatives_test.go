@@ -452,3 +452,26 @@ func TestFormatInitiatives(t *testing.T) {
 		t.Errorf("empty = %q", got)
 	}
 }
+
+// Workstreams (decision 2026-08-17): a member named <anchor>_<stream>
+// whose anchor is also a member gets Anchor set; underscore names with
+// no matching anchor stay ordinary members (never guess).
+func TestAssignAnchors(t *testing.T) {
+	members := []memberDigest{
+		{Name: "pay-app"},
+		{Name: "pay-app_backend"},
+		{Name: "pay-app_stack"},
+		{Name: "pay-toggles"},
+		{Name: "lone_wolf"}, // underscore but no "lone" member — not a stream
+	}
+	assignAnchors(members)
+	want := map[string]string{
+		"pay-app": "", "pay-app_backend": "pay-app", "pay-app_stack": "pay-app",
+		"pay-toggles": "", "lone_wolf": "",
+	}
+	for _, m := range members {
+		if m.Anchor != want[m.Name] {
+			t.Errorf("%s: anchor = %q, want %q", m.Name, m.Anchor, want[m.Name])
+		}
+	}
+}

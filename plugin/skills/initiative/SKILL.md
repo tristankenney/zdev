@@ -55,6 +55,40 @@ Full clones, not worktrees: the initiative can hold mainline, and its git
 state is isolated from canonical and from sibling initiatives. The trade is
 that its mainline is only as fresh as its own last `git fetch`.
 
+## Parallel workstreams
+
+One repo, several concurrent efforts (a PR stack being shepherded, a
+feature build, a spike) — one clone can't hold them. A **workstream** is a
+git worktree sibling of the member clone, named `<repo>_<stream>`, on its
+own branch:
+
+```bash
+zdev stream add <initiative>/<repo> <stream> [<existing-branch>]
+zdev stream rm  <initiative>/<repo>_<stream>
+zdev stream ls  <initiative>/<repo>
+```
+
+`add` creates the worktree on branch `<initiative>/<stream>` (or checks out
+the branch you name — the PR-stack case). Everything downstream follows the
+directory and the branch for free: the row appears (disk is the registry),
+sessions/loops target `<initiative>/<repo>_<stream>`, and `pay dev up`
+derives a distinct instance from the branch — isolated local env per
+stream, no port collisions (pay-cli publishes no host ports and slugifies
+the branch into the compose project). Git's same-branch exclusivity means
+two streams can never share an instance.
+
+The anchor clone's object store is shared: one `git fetch` in the anchor
+serves every stream. Untracked state (node_modules, builds) is
+per-worktree — the honest disk cost of parallelism. `rm` auto-forces
+removal of CLEAN worktrees (git hard-refuses any worktree containing
+submodules, and most Pay repos carry `ai/shared`); dirty ones stay
+protected. A full clone (`<repo>_<stream>` by hand) remains the escape
+hatch for spikes that mutate deps or history violently — it groups
+identically in the digest.
+
+When a stream's purpose ends, `zdev stream rm` — same-day, same discipline
+as removing a member. A stream whose branch merged >2 weeks ago is rot.
+
 ## Status
 
 - `zdev initiatives [--json]` — the first read, always: every initiative's
