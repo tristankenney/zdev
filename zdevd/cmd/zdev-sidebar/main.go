@@ -301,7 +301,7 @@ const (
 // Outage banner strings (D4-04 — verbatim, no counter).
 const (
 	bannerReconnecting = "↻ reconnecting..."
-	bannerOffline      = "⚠ daemon offline"
+	bannerOffline      = "✗ daemon offline"
 )
 
 func main() {
@@ -436,11 +436,11 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 	// byte-identical to today.
 	render.InitiativeEnabled = os.Getenv("ZDEV_SIDEBAR_INITIATIVE") == "1"
 
-	// Footer style (dogfood #4): full (worded, default) | compact
-	// (legacy glyph tally) | off. Unknown values fall back to full.
+	// Footer style (dogfood #4): full (worded, default) | off. The
+	// legacy compact glyph tally was deleted (calm lane B, 2026-08-18) —
+	// full won the dogfood, and compact's ◎ was the vocabulary's only
+	// orphan glyph. Unknown values (compact included) fall back to full.
 	switch os.Getenv("ZDEV_SIDEBAR_FOOTER") {
-	case "compact":
-		render.FooterMode = "compact"
 	case "off":
 		render.FooterMode = "off"
 	}

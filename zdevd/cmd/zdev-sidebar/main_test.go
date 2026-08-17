@@ -462,8 +462,11 @@ func TestOutageBannerStringsMatchD4_04(t *testing.T) {
 	if bannerReconnecting != "↻ reconnecting..." {
 		t.Errorf("bannerReconnecting D4-04 mismatch: got %q, want %q", bannerReconnecting, "↻ reconnecting...")
 	}
-	if bannerOffline != "⚠ daemon offline" {
-		t.Errorf("bannerOffline D4-04 mismatch: got %q, want %q", bannerOffline, "⚠ daemon offline")
+	// ✗ not ⚠ since the calm-pass glyph grammar (2026-08-18): ⚠ means
+	// degraded-but-reachable (the health row); an unreachable daemon IS a
+	// failure and speaks the failure glyph.
+	if bannerOffline != "✗ daemon offline" {
+		t.Errorf("bannerOffline mismatch: got %q, want %q", bannerOffline, "✗ daemon offline")
 	}
 }
 

@@ -114,7 +114,7 @@ func TestChipShellCmd_Empty(t *testing.T) {
 func TestChipShellCmd_Short(t *testing.T) {
 	var buf bytes.Buffer
 	chipShellCmd(&buf, "npm test")
-	want := []byte(Icy + "▶ npm test" + Reset)
+	want := []byte(Icy + "npm test" + Reset)
 	if !bytes.Equal(buf.Bytes(), want) {
 		t.Errorf("chipShellCmd short\nwant: %q\ngot:  %q", want, buf.Bytes())
 	}
@@ -123,7 +123,7 @@ func TestChipShellCmd_Short(t *testing.T) {
 func TestChipShellCmd_LongTruncated(t *testing.T) {
 	var buf bytes.Buffer
 	chipShellCmd(&buf, "very-long-command-here")
-	want := []byte(Icy + "▶ very-long-com" + Ellipsis + Reset)
+	want := []byte(Icy + "very-long-com" + Ellipsis + Reset)
 	if !bytes.Equal(buf.Bytes(), want) {
 		t.Errorf("chipShellCmd long\nwant: %q\ngot:  %q", want, buf.Bytes())
 	}

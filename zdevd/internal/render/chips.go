@@ -331,8 +331,10 @@ func chipShellCmd(buf *bytes.Buffer, cmd string) {
 	if cmd == "" {
 		return
 	}
+	// No glyph prefix: the runtime domain row's "$" already introduces
+	// the command (calm lane B — the old "▶ " here doubled the row's
+	// domain glyph).
 	buf.WriteString(thChipAccent(Icy))
-	buf.WriteString("▶ ")
 	buf.WriteString(Truncate14(cmd))
 	buf.WriteString(Reset)
 }

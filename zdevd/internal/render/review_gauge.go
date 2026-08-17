@@ -77,12 +77,16 @@ func renderReviewGauge(buf *bytes.Buffer, snap *proto.Snapshot, width int) int {
 		// theme seam — classic byte-shape unchanged (each th* falls back
 		// to the constant this was authored with); rose-pine stops mixing
 		// classic xterm glyphs into truecolor rows.
+		// Glyph grammar (calm lane B): ✓ = all green, land it (◆ would
+		// invert the sidebar's "finished — come look" meaning); ↺ = rework
+		// requested (✗ means FAILURE everywhere else — changes-requested
+		// is not one); ⌁ keeps will-rot.
 		var glyph, color string
 		switch {
 		case r.Ready > 0:
-			glyph, color = "◆", thChipAccent(Green)
+			glyph, color = "✓", thChipAccent(Green)
 		case r.NeedsFix > 0:
-			glyph, color = "✗", thChipAccent(Orange)
+			glyph, color = "↺", thChipAccent(Orange)
 		default:
 			glyph, color = "⌁", thChipAccent(Yellow)
 		}

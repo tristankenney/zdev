@@ -633,11 +633,14 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 // tally was unmemorable noise — "I don't remember what the glyphs
 // signify"). cmd/zdev-sidebar sets this from ZDEV_SIDEBAR_FOOTER:
 //
-//	full    — worded counts of NON-ZERO decision-relevant buckets only
-//	          ("2 waiting · 1 dead · 3 working · 1 done"); quiet fleets
-//	          render a blank footer row. The default.
-//	compact — the legacy glyph tally (N● N◎ N◆ N· N·), always present.
-//	off     — blank footer row always.
+//	full — worded counts of NON-ZERO decision-relevant buckets only
+//	       ("2 waiting · 1 dead · 3 working · 1 done"); quiet fleets
+//	       render a blank footer row. The default.
+//	off  — blank footer row always.
+//
+// The legacy "compact" glyph tally was deleted (calm lane B,
+// 2026-08-18): full had already won the dogfood, and compact's ◎ was
+// the only glyph in the whole vocabulary with a single orphan site.
 //
 // Every mode emits exactly ONE row (possibly empty) so the frame's
 // line count — which tests and click-row math rely on — is invariant
@@ -923,16 +926,6 @@ func renderFooter(buf *bytes.Buffer, nWait, nDead, nRun, nDone, nAlive, nAbsent 
 		buf.WriteString(ClearLineEnd)
 		buf.WriteByte('\n')
 		return
-	case "compact":
-		buf.WriteString("  ")
-		buf.WriteString(thDim())
-		// Dead folds into the waiting slot here — the compact form is
-		// the legacy 5-bucket shape, kept stable for muscle memory.
-		fmt.Fprintf(buf, "%d● %d◎ %d◆ %d· %d·", nWait+nDead, nRun, nDone, nAlive, nAbsent)
-		buf.WriteString(Reset)
-		buf.WriteString(ClearLineEnd)
-		buf.WriteByte('\n')
-		return
 	}
 	// full: words, non-zero buckets only, decision-relevant first.
 	type bucket struct {
@@ -1214,8 +1207,10 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 		})
 	}
 
-	// Runtime domain row: shell-cmd | ports
-	renderDomainRow(buf, prefix, "▶", func(inner *bytes.Buffer) {
+	// Runtime domain row: shell-cmd | ports. "$" not "▶" — the glyph
+	// grammar keeps ▶ for the selection family (cursor, popup cursor);
+	// a running command reads as what it is: "$ npm test".
+	renderDomainRow(buf, prefix, "$", func(inner *bytes.Buffer) {
 		var subShell, subPorts bytes.Buffer
 
 		// Sub-group 1: shell command

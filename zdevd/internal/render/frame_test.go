@@ -337,12 +337,13 @@ func TestRender_FooterCounts(t *testing.T) {
 		t.Errorf("Render footer: quiet buckets must not be enumerated\n%q", out)
 	}
 
-	// compact mode keeps the legacy glyph tally.
+	// The legacy compact glyph tally was deleted (calm lane B): an
+	// unknown mode value renders the full worded form.
 	FooterMode = "compact"
 	defer func() { FooterMode = "full" }()
 	out = Render(snap, 50, anim, fixedNowFn)
-	if !bytes.Contains(out, []byte("1● 0◎ 1◆ 2· 0·")) {
-		t.Errorf("Render footer (compact): expected '1● 0◎ 1◆ 2· 0·' in output\n%q", out)
+	if !bytes.Contains(out, []byte("1 waiting")) || bytes.Contains(out, []byte("◎")) {
+		t.Errorf("deleted compact mode must fall back to the full form\n%q", out)
 	}
 }
 
@@ -1214,8 +1215,8 @@ func TestRender_DomainRows_AllThreePopulated(t *testing.T) {
 	if bytes.Count(out, []byte(Dim+"⎇ ")) != 1 {
 		t.Errorf("expected exactly 1 git domain glyph (⎇); got %d\n%q", bytes.Count(out, []byte(Dim+"⎇ ")), out)
 	}
-	if bytes.Count(out, []byte(Dim+"▶ ")) != 1 {
-		t.Errorf("expected exactly 1 runtime domain glyph (▶); got %d\n%q", bytes.Count(out, []byte(Dim+"▶ ")), out)
+	if bytes.Count(out, []byte(Dim+"$ ")) != 1 {
+		t.Errorf("expected exactly 1 runtime domain glyph ($); got %d\n%q", bytes.Count(out, []byte(Dim+"$ ")), out)
 	}
 	if bytes.Count(out, []byte(Dim+"✻ ")) != 1 {
 		t.Errorf("expected exactly 1 agent domain glyph (✻); got %d\n%q", bytes.Count(out, []byte(Dim+"✻ ")), out)
@@ -1238,7 +1239,7 @@ func TestRender_DomainRows_GitOnly(t *testing.T) {
 	if bytes.Count(out, []byte(Dim+"⎇ ")) != 1 {
 		t.Errorf("expected 1 git glyph (⎇), got %d\n%q", bytes.Count(out, []byte(Dim+"⎇ ")), out)
 	}
-	if bytes.Contains(out, []byte(Dim+"▶ ")) {
+	if bytes.Contains(out, []byte(Dim+"$ ")) {
 		t.Errorf("runtime glyph (▶) must not appear when no runtime data\n%q", out)
 	}
 	if bytes.Contains(out, []byte(Dim+"✻ ")) {
@@ -1263,7 +1264,7 @@ func TestRender_DomainRows_AgentOnly(t *testing.T) {
 	if bytes.Contains(out, []byte(Dim+"⎇ ")) {
 		t.Errorf("git glyph (⎇) must not appear when no git data\n%q", out)
 	}
-	if bytes.Contains(out, []byte(Dim+"▶ ")) {
+	if bytes.Contains(out, []byte(Dim+"$ ")) {
 		t.Errorf("runtime glyph (▶) must not appear when no runtime data\n%q", out)
 	}
 	if bytes.Count(out, []byte(Dim+"✻ ")) != 1 {

@@ -44,9 +44,9 @@ func TestReviewGaugeClassicPassthrough(t *testing.T) {
 	rows := renderReviewGauge(&buf, reviewGaugeFixtureSnapshot(), 50)
 
 	want := "" +
-		"  \x1b[32m◆\x1b[0m zitcha/agora \x1b[32m2 ready\x1b[0m \x1b[90m31m\x1b[0m\x1b[K\n" +
+		"  \x1b[32m✓\x1b[0m zitcha/agora \x1b[32m2 ready\x1b[0m \x1b[90m31m\x1b[0m\x1b[K\n" +
 		"  \x1b[33m⌁\x1b[0m solo/tool \x1b[33m1 rot\x1b[0m \x1b[90m12m\x1b[0m\x1b[K\n" +
-		"  \x1b[38;5;208m✗\x1b[0m zitcha/backend \x1b[38;5;208m1 fix\x1b[0m\x1b[K\n" +
+		"  \x1b[38;5;208m↺\x1b[0m zitcha/backend \x1b[38;5;208m1 fix\x1b[0m\x1b[K\n" +
 		"  \x1b[90m─────────────────\x1b[0m\x1b[K\n"
 
 	if buf.String() != want {
