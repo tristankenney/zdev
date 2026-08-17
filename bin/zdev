@@ -864,9 +864,23 @@ case "$1" in
                         echo "             clone it into one of those first" >&2
                         exit 1
                     fi
+                    # Freshness: fetch ONCE at the source — every hardlinked
+                    # clone then inherits current refs for free. Streams pop
+                    # in often; a stream born on a week-old master builds on
+                    # code that no longer exists. Fetch failure (offline) is
+                    # non-fatal: an offline stream is better than no stream.
+                    git -C "$_src" fetch --quiet origin 2>/dev/null \
+                        || echo "zdev stream: (offline? fetch failed — $_repo cloned from local refs as-is)"
                     git clone --quiet "$_src" "$stream_dir/$_repo" || exit 1
                     _origin=$(git -C "$_src" remote get-url origin 2>/dev/null || echo "")
                     [[ -n "$_origin" ]] && git -C "$stream_dir/$_repo" remote set-url origin "$_origin"
+                    # Supporting repos: fast-forward the checkout to the
+                    # freshly-fetched remote head so the stream starts
+                    # CURRENT, not wherever the source's working copy sat.
+                    if [[ "$_repo" != "$stream_primary" ]]; then
+                        _def=$(git -C "$stream_dir/$_repo" symbolic-ref --short HEAD 2>/dev/null || echo "")
+                        [[ -n "$_def" ]] && git -C "$stream_dir/$_repo" merge --ff-only "origin/$_def" >/dev/null 2>&1 || true
+                    fi
                     if [[ "$_repo" == "$stream_primary" ]]; then
                         if [[ -n "$stream_branch" ]]; then
                             git -C "$stream_dir/$_repo" fetch --quiet origin "$stream_branch" 2>/dev/null || true
@@ -877,6 +891,27 @@ case "$1" in
                     fi
                     git -C "$stream_dir/$_repo" submodule update --init --recursive >/dev/null 2>&1 || true
                 done
+                # The stream folder's CLAUDE.md: Claude Code loads CLAUDE.md
+                # from ancestor directories, so every agent in every repo of
+                # this stream inherits its context automatically — which
+                # stream this is, where the runner lives, and where bd is.
+                cat > "$stream_dir/CLAUDE.md" <<STREAMEOF
+# Workstream: $stream_init/$stream_name
+
+This directory is one WORKSTREAM of the '$stream_init' initiative — one
+pay-cli stack, one runner, one DNS namespace. Repos here are full clones
+independent of the initiative's other streams.
+
+- **Runner:** run 'pay dev up' in THIS folder ($stream_dir) — never inside
+  a repo (that would create a second, differently-named compose project).
+  Services: <service>.$stream_init-$stream_name.orb.local
+- **Primary repo:** $stream_primary (its branch carries this stream's work)
+- **Work items:** export BEADS_DIR=$WORKSPACE/$stream_init/.beads — bd is
+  shared across the whole initiative, not per-stream
+- **Initiative context:** $WORKSPACE/$stream_init/INITIATIVE.md and notes/
+- When this stream's purpose ends: 'zdev stream rm $stream_init/$stream_name'
+  (tears down the runner; refuses if anything is dirty or unpushed)
+STREAMEOF
                 echo "zdev stream: added $stream_init/$stream_name (stack: $stream_init-$stream_name, primary: $stream_primary)"
                 echo "             rows: $stream_init/$stream_name/<repo> · runner: pay dev up in $stream_dir"
                 echo "             DNS: <service>.$stream_init-$stream_name.orb.local"
@@ -906,8 +941,25 @@ case "$1" in
                         exit 1
                     fi
                 done
+                # Runner teardown BEFORE deletion: streams pop in and out,
+                # and every popped stream would otherwise leave orphaned
+                # containers and VOLUMES behind its compose project. The
+                # qualified name comes from stack.yml; docker compose v2
+                # operates on a project by name via labels.
+                _qname=$(sed -n 's/^name: //p' "$stream_dir/.pay/stack.yml" 2>/dev/null | head -1)
+                if [[ -n "$_qname" ]] && command -v docker >/dev/null 2>&1; then
+                    if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$_qname" 2>/dev/null)" ]]; then
+                        echo "zdev stream: tearing down runner $_qname (containers + volumes)"
+                        docker compose -p "$_qname" down -v --remove-orphans >/dev/null 2>&1 || true
+                        if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$_qname" 2>/dev/null)" ]]; then
+                            echo "zdev stream: runner $_qname did not tear down cleanly — remove it, then re-run:" >&2
+                            echo "  docker compose -p $_qname down -v --remove-orphans" >&2
+                            exit 1
+                        fi
+                    fi
+                fi
                 rm -rf "$stream_dir"
-                echo "zdev stream: removed $stream_path (remote branches kept)"
+                echo "zdev stream: removed $stream_path (runner down, remote branches kept)"
                 ;;
             ls)
                 stream_init="${1:-}"
@@ -915,14 +967,33 @@ case "$1" in
                     echo "usage: zdev stream ls <initiative>" >&2
                     exit 2
                 fi
+                _seen_projects=""
                 for _r in "$WORKSPACE/$stream_init"/*/; do
                     [[ -d "$_r" || -e "$_r/.git" ]] || continue
                     [[ -e "$_r/.git" ]] && continue
                     _rb="${_r%/}"; _rb="${_rb##*/}"
                     [[ "$_rb" == "notes" || "$_rb" == .* ]] && continue
                     _repos=$(for _w in "$_r"*/; do [[ -e "$_w/.git" ]] && printf '%s(%s) ' "$(basename "$_w")" "$(git -C "$_w" branch --show-current 2>/dev/null || echo detached)"; done)
-                    [[ -n "$_repos" ]] && printf '%s: %s\n' "$_rb" "$_repos"
+                    [[ -n "$_repos" ]] || continue
+                    _qname=$(sed -n 's/^name: //p' "$_r/.pay/stack.yml" 2>/dev/null | head -1)
+                    [[ -z "$_qname" ]] && _qname="$stream_init-$_rb"
+                    _seen_projects="$_seen_projects $_qname"
+                    _run="down"
+                    if command -v docker >/dev/null 2>&1; then
+                        _n=$(docker ps -q --filter "label=com.docker.compose.project=$_qname" 2>/dev/null | wc -l | tr -d ' ')
+                        [[ "$_n" -gt 0 ]] && _run="up ($_n)"
+                    fi
+                    printf '%s: %s· runner %s\n' "$_rb" "$_repos" "$_run"
                 done
+                # Orphaned runners: compose projects named <init>-* whose
+                # stream folder no longer exists — the debris pop-out
+                # hygiene exists to prevent, surfaced when it predates it.
+                if command -v docker >/dev/null 2>&1; then
+                    for _p in $(docker ps -a --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null | sort -u | grep "^$stream_init-" || true); do
+                        [[ " $_seen_projects " == *" $_p "* ]] && continue
+                        echo "orphan runner: $_p (no stream folder) — docker compose -p $_p down -v --remove-orphans"
+                    done
+                fi
                 ;;
             *)
                 echo "usage: zdev stream {add|rm|ls} ..." >&2

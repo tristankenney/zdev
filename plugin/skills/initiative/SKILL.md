@@ -83,8 +83,24 @@ any number of streams, which is why these are full clones, not worktrees
 bind-mounts).
 
 Rows appear as `<init>/<stream>/<repo>`; sessions and loops target them
-like any member. Run the stream with `pay dev up` in its folder. `rm`
-refuses while any repo inside is dirty or unpushed.
+like any member. Run the stream with `pay dev up` in its folder — `add`
+drops a CLAUDE.md into the stream folder (ancestor-loaded by every agent
+inside) carrying the runner name, the BEADS_DIR export, and this rule.
+
+**The floor is the default workstream.** An initiative's direct members
+ARE stream zero — its runner is `pay dev up` at the initiative root, its
+work needs no ceremony. Streams exist only for the SECOND concurrent
+concern onward, and they pop in and out fast (a half-day design spike is
+a normal stream). Never "promote" the floor into a stream folder: moving
+a directory destroys its tmux session, renames its compose project
+(orphaning containers), and orphans its per-directory Claude conversation
+history. The floor's work finishes where it lives.
+
+`add` fetches once at the clone source so streams are born current;
+`rm` tears down the stream's runner (containers AND volumes) before
+deleting, and refuses while any repo is dirty or unpushed. `ls` shows
+each stream's repos, branches, and runner state, and flags ORPHAN
+runners (compose projects named `<init>-*` with no surviving folder).
 
 A stream whose purpose ended is rot, same discipline as members.
 
