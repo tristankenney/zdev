@@ -244,7 +244,7 @@ func TestAnchorMode_EnterCallsAnchorFnNotParkFn(t *testing.T) {
 	}
 
 	model, cmd = m.Update(result)
-	m = model.(*parkModel)
+	_ = model.(*parkModel)
 	if !isQuitCmd(cmd) {
 		t.Fatal("parkResultMsg (ok) did not produce tea.Quit")
 	}

@@ -450,7 +450,7 @@ func TestManualRepoll_RestartsTickChainSoStaleTickIsDropped(t *testing.T) {
 	}
 	// A tick from the OLD chain arriving late must be dropped.
 	model, cmd := m.Update(roundTickMsg{seq: oldSeq})
-	m = model.(*roundModel)
+	_ = model.(*roundModel)
 	if cmd != nil {
 		t.Fatal("a tick from the superseded chain must return no Cmd")
 	}

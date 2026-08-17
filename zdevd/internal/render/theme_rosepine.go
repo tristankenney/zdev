@@ -53,16 +53,15 @@ func (c rpRGB) lerp(to rpRGB, t float64) rpRGB {
 // same variant the M-p switcher's fzf colors and docs/guide.html's dark
 // mode already use, which is the point: one designed object.
 var (
-	rpBase   = rpRGB{0x23, 0x21, 0x36}
-	rpMuted  = rpRGB{0x6e, 0x6a, 0x86}
-	rpSubtle = rpRGB{0x90, 0x8c, 0xaa}
-	rpText   = rpRGB{0xe0, 0xde, 0xf4}
-	rpLove   = rpRGB{0xeb, 0x6f, 0x92}
-	rpGold   = rpRGB{0xf6, 0xc1, 0x77}
-	rpRose   = rpRGB{0xea, 0x9a, 0x97}
-	rpPine   = rpRGB{0x3e, 0x8f, 0xb0}
-	rpFoam   = rpRGB{0x9c, 0xcf, 0xd8}
-	rpIris   = rpRGB{0xc4, 0xa7, 0xe7}
+	rpBase  = rpRGB{0x23, 0x21, 0x36}
+	rpMuted = rpRGB{0x6e, 0x6a, 0x86}
+	rpText  = rpRGB{0xe0, 0xde, 0xf4}
+	rpLove  = rpRGB{0xeb, 0x6f, 0x92}
+	rpGold  = rpRGB{0xf6, 0xc1, 0x77}
+	rpRose  = rpRGB{0xea, 0x9a, 0x97}
+	rpPine  = rpRGB{0x3e, 0x8f, 0xb0}
+	rpFoam  = rpRGB{0x9c, 0xcf, 0xd8}
+	rpIris  = rpRGB{0xc4, 0xa7, 0xe7}
 )
 
 // rpIdentity is the per-project identity palette: the six Rose Pine
@@ -192,28 +191,6 @@ func thBreath(name string, frame int) string {
 	return rpIdentityFor(name).fgBright(BreathBrightness[frame%len(BreathBrightness)])
 }
 
-// thMood maps MoodFor's tier to the divider hue.
-func thMood(classic string) string {
-	if ThemeMode != "rose-pine" {
-		return classic
-	}
-	switch classic {
-	case MoodRed:
-		return rpLove.fg()
-	case Orange:
-		return rpGold.fg()
-	case MoodGreen:
-		return rpFoam.fg()
-	default:
-		return rpMuted.fg()
-	}
-}
-
-// thDivider renders the mood divider row's dashes. Classic: one color,
-// seventeen ─. Rose-pine: the same seventeen ─ fading from the mood hue
-// toward the background — material polish that keeps the mood signal (the
-// LEFT end carries the full hue) while stopping the row from reading as a
-// hard rule across the pane.
 func thDivider(moodClassic string, n int) string {
 	if ThemeMode != "rose-pine" {
 		out := moodClassic

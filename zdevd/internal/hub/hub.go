@@ -1743,10 +1743,7 @@ func projectEquals(a, b proto.Project) bool {
 			return false
 		}
 	}
-	if a.Unmanaged != b.Unmanaged {
-		return false
-	}
-	return true
+	return a.Unmanaged == b.Unmanaged
 }
 
 // publishDropOldest implements D2-03 — subscribers always read the latest

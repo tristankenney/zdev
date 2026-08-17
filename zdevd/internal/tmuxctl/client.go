@@ -219,23 +219,3 @@ func (c *Conn) Close() error {
 	}
 	return nil
 }
-
-// slogDebugWriter is retained as a no-op-friendly diagnostic helper for
-// callers that want to redirect a writer to slog at Debug level. It is
-// no longer used by Dial after the PTY-stdio change (tmux's stderr is now
-// multiplexed into the PTY stream alongside stdout) but keeping the type
-// avoids a large blast-radius change to test code that happens to
-// reference it.
-type slogDebugWriter struct{}
-
-func (slogDebugWriter) Write(p []byte) (int, error) {
-	// Trim trailing newline so the slog record is single-line.
-	line := string(p)
-	if n := len(line); n > 0 && line[n-1] == '\n' {
-		line = line[:n-1]
-	}
-	if line != "" {
-		slog.Debug("tmux stderr", "line", line)
-	}
-	return len(p), nil
-}

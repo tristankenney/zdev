@@ -68,7 +68,8 @@ func TestThemeWaitRamp(t *testing.T) {
 // same hue as the marker — identity is ONE color per project everywhere.
 func TestThemeIdentityCoherence(t *testing.T) {
 	withTheme(t, "rose-pine")
-	if thPalette("zdev") != thPalette("zdev") {
+	first := thPalette("zdev")
+	if thPalette("zdev") != first {
 		t.Error("identity must be deterministic")
 	}
 	hue := rpIdentityFor("zdev")

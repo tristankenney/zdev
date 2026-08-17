@@ -453,7 +453,7 @@ const (
 // from pane titles + visit/title-change timestamps via
 // hub.deriveAttention, so all consumers (marker, mood block, chip color)
 // dispatch on a single field instead of independently re-deriving from
-// Status/AgentClaude/AgentPi/WaitStartedTS — which previously drifted
+// Status/AgentStates/WaitStartedTS — which previously drifted
 // (gray dot but waiting-age timer text, etc.).
 type Attention string
 

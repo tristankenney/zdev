@@ -195,7 +195,7 @@ func TestPick_HeldRow_FiresAnchorHeldRmSwitchInOrderAndQuits(t *testing.T) {
 	m, calls := newTestBoundaryModel(snap)
 
 	model, cmd := m.Update(keyType(tea.KeyEnter))
-	m = model.(*boundaryModel)
+	_ = model.(*boundaryModel)
 	if cmd == nil {
 		t.Fatal("enter should return a non-nil Cmd")
 	}

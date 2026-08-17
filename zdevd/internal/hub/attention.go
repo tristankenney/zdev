@@ -4,7 +4,7 @@
 // "what should the sidebar show for this session right now". Replaces the
 // scattered decision logic in recomputeAgents (state mutator switch),
 // snapshot.go (stale-waiting demoter), and MarkerFor (renderer fan-out
-// across Status/AgentClaude/AgentPi).
+// across Status and the per-agent states).
 //
 // The function is pure: all inputs are passed explicitly (no time.Now,
 // no map lookups). Tests are table-driven and enumerable, which is the

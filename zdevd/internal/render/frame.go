@@ -708,10 +708,6 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // the knob is removed rather than nursed.
 var GroupMode = "off"
 
-// groupKey delegates to proto.GroupKey — uniform first-segment keying;
-// the tree mirrors the disk.
-func groupKey(name string) string { return proto.GroupKey(name) }
-
 // displayName returns the row text for a project name under
 // GroupMode=prefix: the portion after the group-key segment — the header
 // carries the context the prefix used to, so repeating it on every row is

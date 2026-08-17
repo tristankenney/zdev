@@ -193,7 +193,7 @@ func TestLister_RefreshError(t *testing.T) {
 	if err := l.Refresh(context.Background()); err == nil {
 		t.Error("expected error on exec failure")
 	}
-	if names := l.Names(); names != nil && len(names) != 0 {
+	if names := l.Names(); len(names) != 0 {
 		t.Errorf("on error, Names() = %v; want empty", names)
 	}
 }

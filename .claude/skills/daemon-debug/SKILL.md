@@ -68,8 +68,9 @@ Startup log line `zdevd starting` echoes the active values.
   inside it; use `zdev <project>` to enter a real session.
 - The wire `Status` is a projection of `Attention` (`AttentionToStatus`); the
   renderer marker reads `Attention`. Per-viewer suppression
-  (`snapWithCurrentSession`) clears `AgentClaude/AgentPi` and demotes `Status`
-  but NOT `Attention`.
+  (`snapWithCurrentSession`) clears `AgentStates` and demotes `Status`
+  but NOT `Attention` (phase4-v25 — the legacy AgentClaude/AgentPi fields
+  are gone).
 - The eventlog's `state-change` events use raw `deriveStatus` — they are not
   dwell-debounced, so they show flaps the sidebar (correctly) hides.
 - Waiting visibility across sessions is GLOBAL at any instant; apparent
