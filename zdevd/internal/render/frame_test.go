@@ -1555,7 +1555,7 @@ func TestRender_FoldMode_DemotedProjectsMovedToBottom(t *testing.T) {
 	out := Render(snap, 50, anim, fixedNowFn)
 
 	// Dim demote divider must be present.
-	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	demoteDivider := []byte(Dim + strings.Repeat("─", 8) + Reset)
 	if !bytes.Contains(out, demoteDivider) {
 		t.Errorf("fold mode: expected dim demote divider %q in output\n%q", demoteDivider, out)
 	}
@@ -1591,7 +1591,7 @@ func TestRender_FoldMode_NoDividerWhenNoDemoted(t *testing.T) {
 	anim.OnSnapshot(snap)
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	demoteDivider := []byte(Dim + strings.Repeat("─", 8) + Reset)
 	if bytes.Contains(out, demoteDivider) {
 		t.Errorf("fold mode: demote divider must NOT appear when no stale projects\n%q", out)
 	}
@@ -1614,7 +1614,7 @@ func TestRender_FoldMode_ActiveBlockOrderPreserved(t *testing.T) {
 	anim.OnSnapshot(snap)
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	demoteDivider := []byte(Dim + strings.Repeat("─", 8) + Reset)
 	divIdx := bytes.Index(out, demoteDivider)
 	if divIdx < 0 {
 		t.Fatalf("fold mode: expected demote divider in output\n%q", out)
@@ -1654,7 +1654,7 @@ func TestRender_FoldMode_DimAndFoldDefaultsUnchanged(t *testing.T) {
 	anim.OnSnapshot(snap)
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	demoteDivider := []byte(Dim + strings.Repeat("─", 8) + Reset)
 	if bytes.Contains(out, demoteDivider) {
 		t.Errorf("dim mode: demote divider must NOT appear (fold is opt-in)\n%q", out)
 	}
@@ -1685,7 +1685,7 @@ func TestRender_OffMode_NoStaleDim(t *testing.T) {
 		t.Errorf("off mode: stale row must render with palette color (no dim-out); paletteColor=%q\n%q", paletteColor, out)
 	}
 	// No demote divider either.
-	demoteDivider := []byte(Dim + strings.Repeat("─", 17) + Reset)
+	demoteDivider := []byte(Dim + strings.Repeat("─", 8) + Reset)
 	if bytes.Contains(out, demoteDivider) {
 		t.Errorf("off mode: demote divider must NOT appear\n%q", out)
 	}

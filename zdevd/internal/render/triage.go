@@ -126,7 +126,7 @@ func renderTriageSection(buf *bytes.Buffer, snap *proto.Snapshot, width int, ani
 	// reads as its own boxed region.
 	buf.WriteString("  ")
 	buf.WriteString(thDim())
-	buf.WriteString(strings.Repeat("─", 17))
+	buf.WriteString(strings.Repeat("─", 8))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')

@@ -457,6 +457,8 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 	// first-path-segment run — the initiative-grouping surface for the
 	// worktree layout). Unknown values fall back to off.
 	switch os.Getenv("ZDEV_SIDEBAR_GROUP") {
+	case "off":
+		render.GroupMode = "off"
 	case "prefix", "collapse":
 		// "collapse" styles identically to prefix — hiding is the DAEMON's
 		// call (Project.Collapsed on the wire); the renderer just obeys.

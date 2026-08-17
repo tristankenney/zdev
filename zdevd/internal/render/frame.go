@@ -208,7 +208,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	// one ambient read the design keeps ON during the loop, everything else
 	// recedes around it.
 	buf.WriteString("  ")
-	buf.WriteString(thDivider(MoodFor(snap, nowFn), 17))
+	buf.WriteString(thDivider(MoodFor(snap, nowFn), 8))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
@@ -596,7 +596,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// Dim-colored to signal "below the fold". One row always.
 			buf.WriteString("  ")
 			buf.WriteString(thDim())
-			buf.WriteString(strings.Repeat("─", 17))
+			buf.WriteString(strings.Repeat("─", 8))
 			buf.WriteString(Reset)
 			buf.WriteString(ClearLineEnd)
 			buf.WriteByte('\n')
@@ -695,11 +695,12 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // the initiative name (see groupKey) — so membership derives from the
 // directories that exist and scope drift needs no config edit.
 //
-// Kill criterion: if a week of dogfood shows the headers never change
-// which row the eye lands on (the pay/ prefix cluster already groups
-// rows spatially), the headers are decoration — default stays off, and
-// the knob is removed rather than nursed.
-var GroupMode = "off"
+// Kill criterion — VERDICT (2026-08-18, calm lane D): survived. Weeks of
+// dogfood ran grouped (ZDEV_SIDEBAR_GROUP=collapse); the group frames are
+// where the eye lands, the initiative/stream structure lives in them, and
+// the flat list is the mode nobody chose. Default flips to "prefix";
+// "off" remains the escape hatch.
+var GroupMode = "prefix"
 
 // displayName returns the row text for a project name under
 // GroupMode=prefix: the portion after the group-key segment — the header

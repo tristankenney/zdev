@@ -54,9 +54,12 @@ TAB=$(printf '\t')
 # (A function, not inline in the <(...): bash 3.2 mis-parses multi-line
 # process substitutions.)
 projects_feed() {
+    # Grouped is the DEFAULT since the GroupMode kill-criterion verdict
+    # (calm lane D, 2026-08-18) — only an explicit "off" keeps the flat
+    # projects-file order, mirroring the sidebar.
     case "${ZDEV_SIDEBAR_GROUP:-}" in
-        prefix|collapse) zdev --list-projects 2>/dev/null | _row_sort ;;
-        *)               zdev --list-projects 2>/dev/null ;;
+        off) zdev --list-projects 2>/dev/null ;;
+        *)   zdev --list-projects 2>/dev/null | _row_sort ;;
     esac
 }
 
@@ -104,7 +107,7 @@ teams() {
 #                                        when present (empty id ⇒ session only)
 build_list() {
     awk -F"$TAB" -v T="$TAB" \
-        -v grp="$(case "${ZDEV_SIDEBAR_GROUP:-}" in (prefix|collapse) echo 1;; (*) echo 0;; esac)" \
+        -v grp="$(case "${ZDEV_SIDEBAR_GROUP:-}" in (off) echo 0;; (*) echo 1;; esac)" \
         -v cWait=$'\033[1;91m' -v cWork=$'\033[36m' -v cDone=$'\033[32m' \
         -v cDead=$'\033[1;91m' -v cIdle=$'\033[90m' -v cR=$'\033[0m' '
         # glyph maps a member status to a colored marker (mirrors the sidebar

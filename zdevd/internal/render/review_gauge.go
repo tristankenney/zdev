@@ -138,7 +138,7 @@ func renderReviewGauge(buf *bytes.Buffer, snap *proto.Snapshot, width int) int {
 	// reads as its own boxed region above the stable project list.
 	buf.WriteString("  ")
 	buf.WriteString(thDim())
-	buf.WriteString(strings.Repeat("─", 17))
+	buf.WriteString(strings.Repeat("─", 8))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
