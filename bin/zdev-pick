@@ -47,17 +47,37 @@ export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:-} \
 
 TAB=$(printf '\t')
 
-# The project feed for build_list. Grouped mode sorts (LC_ALL=C — byte
-# order, matching the Go sidebar's sort.Strings) so same-prefix runs are
-# contiguous and the root-row lookahead in the awk END block holds; flat
-# mode keeps the projects-file order the switcher has always shown.
+# The project feed for build_list. Grouped mode sorts to match the Go
+# sidebar's proto.RowSort so same-prefix runs are contiguous and the
+# root-row lookahead in the awk END block holds; flat mode keeps the
+# projects-file order the switcher has always shown.
 # (A function, not inline in the <(...): bash 3.2 mis-parses multi-line
 # process substitutions.)
 projects_feed() {
     case "${ZDEV_SIDEBAR_GROUP:-}" in
-        prefix|collapse) zdev --list-projects 2>/dev/null | LC_ALL=C sort ;;
+        prefix|collapse) zdev --list-projects 2>/dev/null | _row_sort ;;
         *)               zdev --list-projects 2>/dev/null ;;
     esac
+}
+
+# _row_sort mirrors proto.RowSort (the daemon's row order): LC_ALL=C byte
+# order, except a group's floor members (<group>/<repo>) sort before its
+# stream members (<group>/<stream>/<repo>) so streams cluster after the
+# floor. Decorate/sort/undecorate: the key rewrites the first "/" to "/0/"
+# (floor) or "/1/" (stream); bare names key as themselves. "0" and "1"
+# both sort after "/" and before every name byte that matters, so the key
+# order equals plain byte order whenever no 3-segment names exist —
+# the same compatibility claim proto.RowSort makes.
+_row_sort() {
+    awk '{
+        key=$0
+        i=index($0, "/")
+        if (i > 1) {
+            rest=substr($0, i+1)
+            key=substr($0, 1, i-1) (index(rest, "/") ? "/1/" : "/0/") rest
+        }
+        printf "%s\t%s\n", key, $0
+    }' | LC_ALL=C sort | cut -f2
 }
 
 # Live team members, one per line: <lead_project>\t<member>\t<status>\t<wid>.
