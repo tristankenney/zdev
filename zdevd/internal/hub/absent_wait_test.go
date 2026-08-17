@@ -74,6 +74,56 @@ func TestSessionsListedTeardownClearsWait(t *testing.T) {
 	}
 }
 
+// A restart ghost — persisted demand for a session that never exists in
+// this daemon life — is unreachable by the record prune (no record), so
+// the first authoritative listing sweeps it. Found live 2026-08-17:
+// marketplace/pay-toggles carried attention="waiting" persisted seven
+// days earlier; the fold pierce kept its absent row visible forever.
+func TestSessionsListedSweepsRestartGhosts(t *testing.T) {
+	s := newState()
+	applyPersistedState(s, &persistedState{
+		V:                 stateSchemaV,
+		Attention:         map[string]proto.Attention{"ghost-proj": proto.AttWaiting, "live-proj": proto.AttWaiting},
+		WaitStartedTS:     map[string]int64{"ghost-proj": 1000, "live-proj": 2000},
+		WaitNotifiedTiers: map[string]uint8{"ghost-proj": 7},
+	})
+	if _, ok := s.ghostRestores["ghost-proj"]; !ok {
+		t.Fatal("setup: restored demand not marked as a ghost candidate")
+	}
+
+	// live-proj's session exists; ghost-proj's never appears.
+	applyEvent(s, tmuxctl.SessionChanged{ID: "$1", Name: "live-proj"}, nil)
+	applyEvent(s, tmuxctl.SessionsListed{SocketName: "", IDs: []string{"$1"}}, nil)
+
+	ghost := s.projectData["ghost-proj"]
+	if ghost.WaitStartedTS != 0 || ghost.WaitNotifiedTiers != 0 ||
+		ghost.Attention != proto.AttIdle || ghost.AttentionDerived != proto.AttIdle {
+		t.Errorf("restart ghost not swept: %+v", ghost)
+	}
+	live := s.projectData["live-proj"]
+	if live.WaitStartedTS != 2000 || live.Attention != proto.AttWaiting {
+		t.Errorf("legitimate restore must survive the sweep: %+v", live)
+	}
+	if len(s.ghostRestores) != 0 {
+		t.Errorf("candidate set must drain, got %v", s.ghostRestores)
+	}
+}
+
+// A restored DEATH mark is deliberately not a ghost candidate: dead
+// sessions are absent by definition and the mark must survive until acked.
+func TestSessionsListedSweepSparesDeathMarks(t *testing.T) {
+	s := newState()
+	applyPersistedState(s, &persistedState{
+		V:           stateSchemaV,
+		DeadSinceTS: map[string]int64{"fallen": 1234},
+		DeadReason:  map[string]string{"fallen": "exit"},
+	})
+	applyEvent(s, tmuxctl.SessionsListed{SocketName: ""}, nil)
+	if s.projectData["fallen"].DeadSinceTS != 1234 {
+		t.Errorf("death mark must survive the ghost sweep: %+v", s.projectData["fallen"])
+	}
+}
+
 func TestSessionsListedTeardownSparesSameNameSurvivor(t *testing.T) {
 	s := newState()
 	// Two records sharing a name (collision), each modeled with a window.

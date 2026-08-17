@@ -223,6 +223,21 @@ type state struct {
 	// recomputeAgents from selecting it for further capture attempts.
 	paneCaptureFailures map[string]int
 
+	// ghostRestores names projectData entries restored from persistence
+	// with demand-shaped state (a wait cascade, or waiting/finished
+	// attention). A restored demand whose session never exists in THIS
+	// daemon life is a restart ghost — the SessionsListed teardown can't
+	// reach it (there is no session record to prune), so it would pierce
+	// group folding and age forever (found live 2026-08-17: a wait frozen
+	// seven days kept its absent row visible). The set drains at the next
+	// authoritative listing: candidates whose name has a live record are
+	// legitimate restores; the rest are swept. Populated by
+	// applyPersistedState pre-Run; hub goroutine only afterwards. Never
+	// persisted. Death marks are deliberately NOT candidates — a dead
+	// session is absent by definition and its mark must survive until
+	// acked.
+	ghostRestores map[string]struct{}
+
 	// agents is the registered agent specs (claude, opencode, …) sourced
 	// from sidebar.toml at startup. recomputeAgents iterates this in
 	// declaration order to classify every pane title and build AgentStates.
@@ -561,6 +576,7 @@ func newState() *state {
 		celebrateUntil:      make(map[string]int64),
 		projectRepos:        make(map[string]string),
 		paneCaptureFailures: make(map[string]int),
+		ghostRestores:       make(map[string]struct{}),
 		sessionSocket:       make(map[string]string),
 		agents:              agents.NewRegistry(agents.Builtin()),
 	}
@@ -1543,6 +1559,46 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 				pd.HookWaitTS = 0
 				s.projectData[sess.Name] = pd
 			}
+		}
+		// Restart-ghost sweep: persisted demand (a wait, or a frozen
+		// waiting/finished attention) restored for a session that has no
+		// record AT ALL is unreachable by the prune above — there is
+		// nothing to prune — so it would pierce group folding and age
+		// forever (found live 2026-08-17: marketplace/pay-toggles frozen
+		// waiting for seven days). Candidates whose name has a live record
+		// are legitimate restores and drop out untouched; the rest lose
+		// their demand. Draining on the FIRST listing of any socket
+		// accepts one rare degradation: a restored wait for a session on a
+		// slower socket is swept a moment early, and re-derives from live
+		// titles (fresh age) when that socket's events arrive — fail-open
+		// toward showing demand again, never toward hiding a live one.
+		for name := range s.ghostRestores {
+			live := false
+			for _, osess := range s.sessions {
+				if osess.Name == name {
+					live = true
+					break
+				}
+			}
+			delete(s.ghostRestores, name)
+			if live {
+				continue
+			}
+			pd, ok := s.projectData[name]
+			if !ok {
+				continue
+			}
+			pd.WaitStartedTS = 0
+			pd.WaitContext = ""
+			pd.WaitNotifiedTiers = 0
+			pd.WaitKind = ""
+			pd.WaitSummary = ""
+			pd.HookWaitTS = 0
+			if pd.Attention == proto.AttWaiting || pd.Attention == proto.AttFinished {
+				pd.Attention = proto.AttIdle
+				pd.AttentionDerived = proto.AttIdle
+			}
+			s.projectData[name] = pd
 		}
 	case tmuxctl.WindowsListed:
 		// Authoritative window reconcile (OQ-3): list-windows -a is ground

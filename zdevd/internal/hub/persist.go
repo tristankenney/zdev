@@ -333,6 +333,17 @@ func applyPersistedState(s *state, ps *persistedState) {
 		s.lastTitleChangeTS[k] = v
 	}
 
+	// Restart-ghost candidates: any entry restored with demand-shaped
+	// state. Whether the demand is legitimate can only be judged against
+	// tmux's ground truth, which hasn't arrived yet — the SessionsListed
+	// reconcile drains this set (see state.ghostRestores).
+	for k, pd := range s.projectData {
+		if pd.WaitStartedTS != 0 || pd.WaitNotifiedTiers != 0 ||
+			pd.Attention == proto.AttWaiting || pd.Attention == proto.AttFinished {
+			s.ghostRestores[k] = struct{}{}
+		}
+	}
+
 	for k, v := range ps.DeadSinceTS {
 		pd := s.projectData[k]
 		pd.DeadSinceTS = v
