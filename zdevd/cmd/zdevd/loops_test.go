@@ -8,7 +8,7 @@ func TestAssembleRunsAndDisplayState(t *testing.T) {
 	now := int64(1_786_100_000)
 	events := []loopEvent{
 		// run A: full lifecycle to success at iter 2
-		{Ts: now - 900, Run: "A", Session: "zdev", Event: "start", Ticket: "PAYX-70", Goal: "region type", Max: 6, Resume: 1},
+		{Ts: now - 900, Run: "A", Session: "zdev", Event: "start", Ticket: "DEMO-70", Goal: "region type", Max: 6, Resume: 1},
 		{Ts: now - 800, Run: "A", Session: "zdev", Event: "iter", Iter: 1, CheckExit: 1, Strikes: 1},
 		{Ts: now - 700, Run: "A", Session: "zdev", Event: "terminal", State: "success", Iter: 2},
 		// run B: stalled
@@ -30,7 +30,7 @@ func TestAssembleRunsAndDisplayState(t *testing.T) {
 		t.Fatalf("order wrong: %v %v %v %v", runs[0].Run, runs[1].Run, runs[2].Run, runs[3].Run)
 	}
 	a := runs[1]
-	if a.Ticket != "PAYX-70" || a.Max != 6 || !a.Resume || a.Iters != 2 || a.Terminal != "success" {
+	if a.Ticket != "DEMO-70" || a.Max != 6 || !a.Resume || a.Iters != 2 || a.Terminal != "success" {
 		t.Errorf("run A assembled wrong: %+v", a)
 	}
 	if got := runDisplayState(runs[2], now); got != "stalled" {

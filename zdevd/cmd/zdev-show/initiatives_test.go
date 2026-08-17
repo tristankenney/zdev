@@ -35,10 +35,10 @@ func TestParseInitiativeMD(t *testing.T) {
 		},
 		{
 			name: "intent wraps until the next bold field",
-			in: "# x\n\n**Intent:** Ship the MVP — a directory\nwhere customers find suppliers,\n" +
-				"so payments land on Pay.\n**Started:** 2026-07-30\n",
+			in: "# x\n\n**Intent:** Ship the MVP — a directory\nwhere buyers find suppliers,\n" +
+				"so orders land on Acme.\n**Started:** 2026-07-30\n",
 			want: initiativeDoc{
-				Intent:  strPtr("Ship the MVP — a directory where customers find suppliers, so payments land on Pay."),
+				Intent:  strPtr("Ship the MVP — a directory where buyers find suppliers, so orders land on Acme."),
 				Started: strPtr("2026-07-30"),
 			},
 		},

@@ -50,7 +50,7 @@
 # check, ticket, budget, resume), one per red iteration, one terminal.
 # `zdevd loops` reads these; `zdevd stops` complements with the wait-split;
 # together they are RQ2's instrument. Ticket ID is auto-extracted from the
-# first JIRA-shaped token in the prompt (e.g. PAYX-70) for burndown rollup.
+# first JIRA-shaped token in the prompt (e.g. DEMO-70) for burndown rollup.
 #
 # Pickup (T1, proposal r2): ZDEV_LOOP_PICKUP=interactive makes stalled/
 # exhausted terminals exec an interactive `claude -c` on the loop's own

@@ -46,7 +46,8 @@ Per member clone (never trust memory over the disk):
 git -C <clone> status --porcelain            # dirty?
 git -C <clone> log --oneline @{upstream}.. 2>/dev/null   # unpushed?
 git -C <clone> branch --show-current
-gh pr list --repo payau/<repo> --head <branch> --state merged --json number,mergedAt
+# owner/repo comes from the clone's own remote — never hard-code an org
+gh pr list --repo "$(git -C <clone> remote get-url origin | sed -E 's#^(git@[^:]+:|https://[^/]+/)##; s#\.git$##')" --head <branch> --state merged --json number,mergedAt
 ```
 
 ## 2. Propose — four lanes, then stop and agree
