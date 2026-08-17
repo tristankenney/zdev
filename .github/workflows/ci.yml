@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: every job only reads the repo. Nothing writes back.
+permissions:
+  contents: read
+
 # Run only one CI per branch; cancel queued/in-progress runs on a new push.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,11 +21,12 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: zdevd/go.mod
           cache-dependency-path: zdevd/go.sum
@@ -74,9 +79,10 @@ jobs:
   # their LLM loops are not (that needs API keys — follow-up workflow).
   agent-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: zdevd/go.mod
           cache-dependency-path: zdevd/go.sum
