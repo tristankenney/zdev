@@ -453,25 +453,52 @@ func TestFormatInitiatives(t *testing.T) {
 	}
 }
 
-// Workstreams (decision 2026-08-17): a member named <anchor>_<stream>
-// whose anchor is also a member gets Anchor set; underscore names with
-// no matching anchor stay ordinary members (never guess).
-func TestAssignAnchors(t *testing.T) {
-	members := []memberDigest{
-		{Name: "pay-app"},
-		{Name: "pay-app_backend"},
-		{Name: "pay-app_stack"},
-		{Name: "pay-toggles"},
-		{Name: "lone_wolf"}, // underscore but no "lone" member — not a stream
+// Workstreams (decision 2026-08-17 rev 2, folder stacks): an initiative
+// child folder without .git holding repo children yields members named
+// <stream>/<repo> with Stream set; direct repo children stay plain.
+func TestCollectOneStreams(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite := func(rel, content string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	assignAnchors(members)
+	mustWrite("INITIATIVE.md", "# t\n\n**Intent:** x\n")
+	// Direct member.
+	if err := os.MkdirAll(filepath.Join(dir, "pay-app", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Stream folder with two repos.
+	if err := os.MkdirAll(filepath.Join(dir, "backend", "pay-app", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "backend", "pay-ments", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// notes/ and dotdirs never members.
+	mustWrite("notes/x.md", "n")
+
+	r := newInitiativesRunner()
+	init := r.collectOne("t", dir)
+
+	got := map[string]string{}
+	for _, m := range init.Members {
+		got[m.Name] = m.Stream
+	}
 	want := map[string]string{
-		"pay-app": "", "pay-app_backend": "pay-app", "pay-app_stack": "pay-app",
-		"pay-toggles": "", "lone_wolf": "",
+		"pay-app":         "",
+		"backend/pay-app": "backend", "backend/pay-ments": "backend",
 	}
-	for _, m := range members {
-		if m.Anchor != want[m.Name] {
-			t.Errorf("%s: anchor = %q, want %q", m.Name, m.Anchor, want[m.Name])
+	if len(got) != len(want) {
+		t.Fatalf("members = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s: stream = %q, want %q", k, got[k], v)
 		}
 	}
 }

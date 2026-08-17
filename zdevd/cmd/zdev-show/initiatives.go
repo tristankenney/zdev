@@ -86,30 +86,13 @@ type memberDigest struct {
 	Dirty        bool   `json:"dirty"`
 	Unpushed     *int64 `json:"unpushed"`
 	LastCommitAt *int64 `json:"lastCommitAt"`
-	// Anchor names the member this one is a parallel WORKSTREAM of
-	// (decision 2026-08-17: a workstream is a worktree sibling named
-	// <repo>_<stream>). Set when the name carries the _<stream> suffix
-	// and the prefix is itself a member; empty for ordinary members.
+	// Stream names the WORKSTREAM folder this member lives in (decision
+	// 2026-08-17 rev 2: a workstream is an unmarked child folder of the
+	// initiative holding full clones — one pay-cli stack, one runner,
+	// one DNS namespace <service>.<init>-<stream>.orb.local). Member
+	// Name is then "<stream>/<repo>"; empty for direct members.
 	// Additive to the v1 contract — see docs/initiatives-digest.md.
-	Anchor string `json:"anchor,omitempty"`
-}
-
-// assignAnchors marks workstream members with the member they stream from:
-// a member named <anchor>_<stream> whose <anchor> is also a member. Pure —
-// convention over inspection, so a full-clone stream (the documented
-// escape hatch for violent spikes) groups identically to a worktree one.
-func assignAnchors(members []memberDigest) {
-	names := make(map[string]bool, len(members))
-	for i := range members {
-		names[members[i].Name] = true
-	}
-	for i := range members {
-		if idx := strings.Index(members[i].Name, "_"); idx > 0 {
-			if anchor := members[i].Name[:idx]; names[anchor] {
-				members[i].Anchor = anchor
-			}
-		}
-	}
+	Stream string `json:"stream,omitempty"`
 }
 
 // workDigest maps `bd stats --json` summary counts. Tool is always "bd"
@@ -353,13 +336,35 @@ func (r *initiativesRunner) collectOne(name, dir string) initiativeDigest {
 				continue
 			}
 			mDir := filepath.Join(dir, e.Name())
-			if _, err := os.Stat(filepath.Join(mDir, ".git")); err != nil {
+			if _, err := os.Stat(filepath.Join(mDir, ".git")); err == nil {
+				init.Members = append(init.Members, r.deriveMember(mDir))
 				continue
 			}
-			init.Members = append(init.Members, r.deriveMember(mDir))
+			if e.Name() == "notes" {
+				continue
+			}
+			// Unmarked child without .git: a WORKSTREAM folder — its
+			// repo children are members named <stream>/<repo> with the
+			// Stream field set (see memberDigest.Stream).
+			subs, err := os.ReadDir(mDir)
+			if err != nil {
+				continue
+			}
+			for _, sub := range subs {
+				if !sub.IsDir() || strings.HasPrefix(sub.Name(), ".") {
+					continue
+				}
+				sDir := filepath.Join(mDir, sub.Name())
+				if _, err := os.Stat(filepath.Join(sDir, ".git")); err != nil {
+					continue
+				}
+				m := r.deriveMember(sDir)
+				m.Name = e.Name() + "/" + sub.Name()
+				m.Stream = e.Name()
+				init.Members = append(init.Members, m)
+			}
 		}
 	}
-	assignAnchors(init.Members)
 
 	// Work: optional bd. Missing binary, missing .beads, or any bd failure
 	// ⇒ work is null — the digest must not fail because a tracker is absent.
@@ -509,21 +514,24 @@ func initiativeMetaLine(init initiativeDigest, now int64) string {
 		parts = append(parts, fmt.Sprintf("started %s%s", *init.Started, age))
 	}
 
-	var streams int
+	streamSet := map[string]bool{}
+	var streamed int
 	for _, m := range init.Members {
-		if m.Anchor != "" {
-			streams++
+		if m.Stream != "" {
+			streamSet[m.Stream] = true
+			streamed++
 		}
 	}
-	base := len(init.Members) - streams
+	base := len(init.Members) - streamed
 	member := fmt.Sprintf("%d members", base)
 	if base == 1 {
 		member = "1 member"
 	}
-	if streams > 0 {
-		member += fmt.Sprintf(" · %d streams", streams)
-		if streams == 1 {
-			member = strings.TrimSuffix(member, "streams") + "stream"
+	if n := len(streamSet); n > 0 {
+		if n == 1 {
+			member += " · 1 stream"
+		} else {
+			member += fmt.Sprintf(" · %d streams", n)
 		}
 	}
 	var dirty int

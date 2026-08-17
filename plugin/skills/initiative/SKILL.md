@@ -58,36 +58,35 @@ that its mainline is only as fresh as its own last `git fetch`.
 ## Parallel workstreams
 
 One repo, several concurrent efforts (a PR stack being shepherded, a
-feature build, a spike) — one clone can't hold them. A **workstream** is a
-git worktree sibling of the member clone, named `<repo>_<stream>`, on its
-own branch:
+feature build, a spike) — one clone can't hold them, and each effort
+usually needs its own RUNNING environment. A **workstream** is a child
+FOLDER of the initiative holding one full clone per repo it needs —
+exactly a pay-cli stack, so each stream is one runner: its own set of
+containers, its own compose project, its own DNS namespace
+(`<service>.<init>-<stream>.orb.local`), all up simultaneously with no
+port conflicts.
 
 ```bash
-zdev stream add <initiative>/<repo> <stream> [<existing-branch>]
-zdev stream rm  <initiative>/<repo>_<stream>
-zdev stream ls  <initiative>/<repo>
+zdev stream add <initiative> <name> <primary-repo> [repo...] [--branch <existing>]
+zdev stream rm  <initiative>/<name>
+zdev stream ls  <initiative>
 ```
 
-`add` creates the worktree on branch `<initiative>/<stream>` (or checks out
-the branch you name — the PR-stack case). Everything downstream follows the
-directory and the branch for free: the row appears (disk is the registry),
-sessions/loops target `<initiative>/<repo>_<stream>`, and `pay dev up`
-derives a distinct instance from the branch — isolated local env per
-stream, no port collisions (pay-cli publishes no host ports and slugifies
-the branch into the compose project). Git's same-branch exclusivity means
-two streams can never share an instance.
+`add` writes `.pay/stack.yml` with the QUALIFIED name `<init>-<name>`
+(compose projects — and therefore DNS — unique by construction), clones
+each repo (hardlinked from the initiative's own member or `projects/`, so
+the cost is untracked files), branches the primary repo to
+`<init>/<name>` (or checks out `--branch`, the PR-stack case), and leaves
+supporting repos on their default branch — the same branch may appear in
+any number of streams, which is why these are full clones, not worktrees
+(that, and a worktree's `.git` pointer file breaks git inside docker
+bind-mounts).
 
-The anchor clone's object store is shared: one `git fetch` in the anchor
-serves every stream. Untracked state (node_modules, builds) is
-per-worktree — the honest disk cost of parallelism. `rm` auto-forces
-removal of CLEAN worktrees (git hard-refuses any worktree containing
-submodules, and most Pay repos carry `ai/shared`); dirty ones stay
-protected. A full clone (`<repo>_<stream>` by hand) remains the escape
-hatch for spikes that mutate deps or history violently — it groups
-identically in the digest.
+Rows appear as `<init>/<stream>/<repo>`; sessions and loops target them
+like any member. Run the stream with `pay dev up` in its folder. `rm`
+refuses while any repo inside is dirty or unpushed.
 
-When a stream's purpose ends, `zdev stream rm` — same-day, same discipline
-as removing a member. A stream whose branch merged >2 weeks ago is rot.
+A stream whose purpose ended is rot, same discipline as members.
 
 ## Status
 

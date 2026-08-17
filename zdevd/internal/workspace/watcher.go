@@ -92,6 +92,28 @@ func (w *Watcher) addGroupWatches(h *fswatch.Handle) {
 			continue
 		}
 		h.Add(dir)
+		// Workstream folders (2026-08-17): an INITIATIVE's unmarked child
+		// without .git is a stream — a pay-cli stack of full clones, one
+		// runner. Arm it too, so a repo cloned INTO an existing stream
+		// still triggers a refresh. Only initiatives have streams; a
+		// drawer's children are repos by definition.
+		if _, err := os.Stat(filepath.Join(dir, "INITIATIVE.md")); err != nil {
+			continue
+		}
+		subs, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, sub := range subs {
+			if !sub.IsDir() || sub.Name()[0] == '.' || sub.Name() == "notes" {
+				continue
+			}
+			sd := filepath.Join(dir, sub.Name())
+			if _, err := os.Stat(filepath.Join(sd, ".git")); err == nil {
+				continue // a member repo, not a stream folder
+			}
+			h.Add(sd)
+		}
 	}
 }
 
@@ -128,6 +150,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if ev.Op&fsnotify.Create != 0 && filepath.Dir(ev.Name) == w.dir {
 				if _, err := os.Stat(filepath.Join(ev.Name, ".git")); err != nil {
 					h.Add(ev.Name)
+				}
+			}
+			// A dir created one level down — inside a group — may be a
+			// stream folder (initiative child without .git). Same
+			// unconditional-arming rationale as above: repos
+			// self-identify later, and arming a repo-to-be just costs
+			// noise until restart.
+			if ev.Op&fsnotify.Create != 0 && filepath.Dir(filepath.Dir(ev.Name)) == w.dir {
+				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
+					if _, err := os.Stat(filepath.Join(ev.Name, ".git")); err != nil {
+						h.Add(ev.Name)
+					}
 				}
 			}
 		},
