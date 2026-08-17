@@ -94,7 +94,7 @@ LABEL  := com.zdev.zdevd
 REAPER_LABEL  := com.zdev.reaper
 DOMAIN := gui/$(shell id -u)
 
-.PHONY: all build test golden bench-idle bench-workday bench-workday-verdict drift-check live-test install uninstall use-go kill-renderers clean help start stop restart status logs
+.PHONY: all build test check vulncheck golden bench-idle bench-workday bench-workday-verdict drift-check live-test install uninstall use-go kill-renderers clean help start stop restart status logs
 
 all: build
 
@@ -111,7 +111,9 @@ help:
 	@echo "  status          — show daemon pid, uptime, and exit status"
 	@echo "  logs            — tail -f daemon logs (stdout + stderr interleaved)"
 	@echo ""
-	@echo "  test            — plutil-lint + anti-fork gate + go test -race ./..."
+	@echo "  test            — plutil-lint + anti-fork gates + gofmt/vet + go test -race ./..."
+	@echo "  check           — test + pinned staticcheck (QA tier 2; CI-suitable)"
+	@echo "  vulncheck       — pinned govulncheck (needs network to vuln.go.dev)"
 	@echo "  golden          — golden-frame parity test (UPDATE=1 to regenerate)"
 	@echo "  bench-idle      — sudo powermetrics; asserts < $(BENCH_IDLE_THRESHOLD) wakeups/sec (D4-16 calibrated)"
 	@echo "  bench-workday   — sudo powermetrics 8h capture (operator-driven; D4-15)"
@@ -303,6 +305,21 @@ test: $(ZDEVD_UNIT_BUILT)
 	cd "$(ZDEVD_DIR)" && go vet ./...
 	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
 endif
+
+# QA tier 2 (docs/adversarial-review-and-qa-plan.md §A): everything `test`
+# enforces plus pinned static analysis. Pinned via go run @version so local
+# and CI agree without a tool-install step. Not part of the pre-push hook —
+# `test` stays the fast required gate; `check` is the CI/thorough tier.
+STATICCHECK_VERSION ?= 2025.1.1
+check: test
+	cd "$(ZDEVD_DIR)" && go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
+
+# Vulnerability scan, separate from `check` because it needs network access
+# to vuln.go.dev (sandboxed/offline environments 403 — a silent skip inside
+# `check` would read as "scanned clean", so it fails loudly on its own).
+GOVULNCHECK_VERSION ?= v1.1.4
+vulncheck:
+	cd "$(ZDEVD_DIR)" && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 # OPS-09 — golden-frame byte-equality (subset of `make test`, runnable solo).
 # Pass UPDATE=1 to regenerate fixtures.
