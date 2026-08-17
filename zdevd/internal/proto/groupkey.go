@@ -1,6 +1,9 @@
 package proto
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // GroupKey returns the sidebar/switcher grouping key for a project name:
 // the first path segment for slash-form names, "" for bare names. Uniform —
@@ -55,6 +58,53 @@ func EffectiveGroupKey(name string, homes map[string]bool) string {
 		return name
 	}
 	return ""
+}
+
+// StreamKey returns the workstream segment of an initiative stream member
+// name — the middle segment of <initiative>/<stream>/<repo> — or "" for
+// bare names and floor members. Structural: only initiative stream members
+// row with three segments (drawer children row exactly one level deep —
+// the registry's discovery rules in bin/zdev), so slash position alone
+// decides. Pure.
+func StreamKey(name string) string {
+	i := strings.IndexByte(name, '/')
+	if i <= 0 {
+		return ""
+	}
+	rest := name[i+1:]
+	if j := strings.IndexByte(rest, '/'); j > 0 {
+		return rest[:j]
+	}
+	return ""
+}
+
+// RowSort orders sidebar row names: plain lexicographic — the tree mirrors
+// the disk; homes naturally precede their members — except within one
+// group, where FLOOR members (<group>/<repo>) sort before STREAM members
+// (<group>/<stream>/<repo>), clustering streams after the floor
+// (workstreams decision 2026-08-17: the floor is stream zero; streams are
+// the second concurrent concern onward, so they hang below the floor
+// instead of interleaving with it alphabetically).
+//
+// Byte-identical to sort.Strings on any universe without 3-segment names:
+// the comparator only deviates for two names sharing a group key, and the
+// floor/stream split permutes names inside the "<group>/" prefix block —
+// contiguous under lexicographic order — so the order stays total and
+// transitive. Applied by BOTH hub ordering sites (buildSnapshot and
+// orderedRowNames — the Invariant-9 drift class) and mirrored by
+// bin/zdev-pick's decorated sort. Pure.
+func RowSort(names []string) {
+	sort.Slice(names, func(i, j int) bool { return rowLess(names[i], names[j]) })
+}
+
+func rowLess(a, b string) bool {
+	if ka, kb := GroupKey(a), GroupKey(b); ka == "" || ka != kb {
+		return a < b
+	}
+	if sa, sb := StreamKey(a) != "", StreamKey(b) != ""; sa != sb {
+		return sb
+	}
+	return a < b
 }
 
 // IsInitiativeHome reports whether name is a group home within the given

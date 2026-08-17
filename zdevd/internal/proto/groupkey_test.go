@@ -1,6 +1,10 @@
 package proto
 
-import "testing"
+import (
+	"reflect"
+	"sort"
+	"testing"
+)
 
 func TestGroupKeyUniform(t *testing.T) {
 	cases := map[string]string{
@@ -42,5 +46,70 @@ func TestHomeSet(t *testing.T) {
 	}
 	if !IsInitiativeHome("marketplace", homes) || IsInitiativeHome("projects", homes) {
 		t.Errorf("IsInitiativeHome disagrees with HomeSet")
+	}
+}
+
+func TestStreamKey(t *testing.T) {
+	cases := map[string]string{
+		"marketplace/backend/pay-app": "backend",
+		"marketplace/pay-app":         "",
+		"marketplace":                 "",
+		"projects/pay-app":            "",
+		"":                            "",
+		"/odd":                        "",
+		"a//b":                        "",
+	}
+	for name, want := range cases {
+		if got := StreamKey(name); got != want {
+			t.Errorf("StreamKey(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestRowSort pins floor-before-stream within a group: streams cluster
+// after the floor, alphabetically among themselves, with everything else
+// in plain byte order.
+func TestRowSort(t *testing.T) {
+	names := []string{
+		"zdev",
+		"marketplace/backend/pay-app",
+		"marketplace/area-selector/pay-app",
+		"marketplace/pay-toggles",
+		"marketplace",
+		"marketplace/pay-app",
+		"projects/pay-app",
+		"dotfiles",
+	}
+	RowSort(names)
+	want := []string{
+		"dotfiles",
+		"marketplace",
+		"marketplace/pay-app",
+		"marketplace/pay-toggles",
+		"marketplace/area-selector/pay-app",
+		"marketplace/backend/pay-app",
+		"projects/pay-app",
+		"zdev",
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("RowSort:\n got %v\nwant %v", names, want)
+	}
+}
+
+// TestRowSortMatchesPlainSortWithoutStreams pins the compatibility claim:
+// on a universe with no 3-segment names RowSort is byte-identical to
+// sort.Strings, including the prefix-adjacent shapes where a naive
+// segment-wise comparator diverges ("pay-later" vs "pay/x": '-' < '/').
+func TestRowSortMatchesPlainSortWithoutStreams(t *testing.T) {
+	names := []string{
+		"zdev", "pay-later", "pay/x", "pay", "pay.app",
+		"marketplace", "marketplace/pay-app", "marketplace2",
+		"projects/onboarding", "projects/pay-app", "dotfiles",
+	}
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	RowSort(names)
+	if !reflect.DeepEqual(names, sorted) {
+		t.Errorf("RowSort must match sort.Strings without streams:\n got %v\nwant %v", names, sorted)
 	}
 }
