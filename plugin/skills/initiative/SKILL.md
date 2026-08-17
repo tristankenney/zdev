@@ -102,7 +102,9 @@ deleting, and refuses while any repo is dirty or unpushed. `ls` shows
 each stream's repos, branches, and runner state, and flags ORPHAN
 runners (compose projects named `<init>-*` with no surviving folder).
 
-A stream whose purpose ended is rot, same discipline as members.
+A stream whose purpose ended is rot, same discipline as members. The
+`stream` skill (`/zdev:stream`) is the day-to-day verb guide and carries
+the offer-a-stream behaviour for agents.
 
 ## Status
 
