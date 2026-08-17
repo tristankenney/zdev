@@ -8,20 +8,24 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 )
 
-// TestOrderingIsAlpha pins the flat-root contract: row order is plain
-// lexicographic on both ordering sites (the tree mirrors the disk; homes
-// naturally precede their members), and buildSnapshot and orderedRowNames
-// agree — the Invariant-9 drift class.
-func TestOrderingIsAlpha(t *testing.T) {
+// TestOrderingIsRowSort pins the flat-root contract: row order is
+// proto.RowSort on both ordering sites — lexicographic (the tree mirrors
+// the disk; homes naturally precede their members) except that an
+// initiative's floor members sort before its stream members, clustering
+// streams after the floor — and buildSnapshot and orderedRowNames agree —
+// the Invariant-9 drift class.
+func TestOrderingIsRowSort(t *testing.T) {
 	s := buildTestState("scratch-session", []string{"%1"}, []string{"shell"})
 	s.projectListNames = []string{
 		"zdev", "projects/pay-app", "marketplace",
+		"marketplace/backend/pay-app", "marketplace/area-selector/pay-app",
 		"marketplace/pay-app", "dotfiles", "projects/onboarding",
 	}
 
 	fromOrdered := orderedRowNames(s)
 	want := []string{
 		"dotfiles", "marketplace", "marketplace/pay-app",
+		"marketplace/area-selector/pay-app", "marketplace/backend/pay-app",
 		"projects/onboarding", "projects/pay-app",
 		"scratch-session", "zdev",
 	}
@@ -48,7 +52,7 @@ func TestOrderingIsAlpha(t *testing.T) {
 // their quiet members behind the synthetic header.
 func TestCollapsedNames(t *testing.T) {
 	names := []string{
-		"alpha", "alpha/repo-a", "alpha/repo-b",
+		"alpha", "alpha/repo-a", "alpha/repo-b", "alpha/stream-s/repo-x",
 		"beta", "beta/repo-c",
 		"gamma", "gamma/repo-d",
 		"delta", "delta/repo-e",
@@ -64,11 +68,14 @@ func TestCollapsedNames(t *testing.T) {
 	s.projectData["epsilon-repo-w"] = projectData{Attention: proto.AttWorking}
 
 	hidden := collapsedNames(s, names)
+	// Stream members fold with their initiative — a stream is inside the
+	// group, never a group of its own.
 	want := map[string]bool{
-		"alpha/repo-a":     true,
-		"alpha/repo-b":     true,
-		"epsilon/repo-q":   true,
-		"projects/pay-app": true,
+		"alpha/repo-a":          true,
+		"alpha/repo-b":          true,
+		"alpha/stream-s/repo-x": true,
+		"epsilon/repo-q":        true,
+		"projects/pay-app":      true,
 	}
 	for n := range want {
 		if _, ok := hidden[n]; !ok {

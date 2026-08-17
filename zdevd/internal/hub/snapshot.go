@@ -81,8 +81,8 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			names = append(names, sess.Name)
 		}
 	}
-	sort.Strings(names)
-	sort.Strings(unmanagedNames) // no-op when hide (default)
+	proto.RowSort(names)
+	proto.RowSort(unmanagedNames) // no-op when hide (default)
 
 	// Lead de-aggregation (Agent Teams slice B): when teamWindows is on,
 	// collect the panes claimed by team members once so each session's
@@ -774,7 +774,8 @@ func dwellWindowMS(st *state, pd *projectData, candidate proto.Attention, now in
 
 // orderedRowNames returns the project row names in the exact order
 // buildSnapshot lays them out: the deduped project-list names then the
-// unmanaged session names, each block sorted. The single definition of that
+// unmanaged session names, each block proto.RowSort-ordered (lexicographic
+// with floor members before stream members). The single definition of that
 // ordering, used by countVisibleProjects, projectNameAtRow, and cursorFlatRows
 // so the cursor's row math can never disagree with what buildSnapshot
 // published. Safe to call only from the hub goroutine (reads state maps).
@@ -806,8 +807,8 @@ func orderedRowNames(st *state) []string {
 			names = append(names, sess.Name)
 		}
 	}
-	sort.Strings(names)
-	sort.Strings(unmanagedNames)
+	proto.RowSort(names)
+	proto.RowSort(unmanagedNames)
 
 	return append(names, unmanagedNames...)
 }
