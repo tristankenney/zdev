@@ -117,4 +117,3 @@ func renderAnchorRow(buf *bytes.Buffer, snap *proto.Snapshot, width int, nowFn f
 	}
 	return RowRef{Y: y, Name: anchor.Project}, true
 }
-
