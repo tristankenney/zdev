@@ -49,7 +49,7 @@ type RepoResolver interface {
 // internal semaphore (size=1) serializes calls; concurrent RefreshIfStale
 // dispatches from the scheduler queue here.
 //
-// Subsumes ~/.local/bin/zdev-sidebar-pr-refresh (D3-02; SC4 dtruss verifies
+// Subsumes the removed bash baseline zdev-sidebar-pr-refresh (D3-02; SC4 dtruss verifies
 // no external invocation in steady state).
 type GHProbe struct {
 	submit   func(tmuxctl.Event)

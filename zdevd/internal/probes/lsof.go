@@ -22,7 +22,7 @@ const lsofProbeTimeout = 3 * time.Second
 // and resolves each listening PID's cwd via a single multi-PID
 // `lsof -p PID1,PID2,...,PIDN -d cwd -F n` call (per OQ-5 confirmation).
 //
-// Subsumes ~/.local/bin/zdev-sidebar-ports-refresh (D3-03; SC4 dtruss-verifies
+// Subsumes the removed bash baseline zdev-sidebar-ports-refresh (D3-03; SC4 dtruss-verifies
 // no external invocation in steady state).
 type LsofProbe struct {
 	submit    func(tmuxctl.Event)
@@ -199,7 +199,7 @@ func parseLsofCwd(b []byte) map[string]string {
 // Workspace = "/Users/me/workspace", cwd = "/Users/me/workspace/example/frontend"
 // → project = "example" (first path component below workspace).
 //
-// Bash baseline (~/.local/bin/zdev-sidebar-ports-refresh) uses ps-tree
+// The removed bash baseline (zdev-sidebar-ports-refresh) used ps-tree
 // ancestor walk; D3-03 simplifies to cwd-based attribution.
 func projectFromCwd(cwd, workspace string) string {
 	if cwd == "" || workspace == "" {

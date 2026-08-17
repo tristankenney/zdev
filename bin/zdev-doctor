@@ -275,7 +275,8 @@ if [[ "${ZDEV_PROJECTS_DISCOVER:-0}" == "1" ]]; then
   fi
   [[ "$invisible_found" -eq 0 ]] && ok "no unmarked root dirs with children — nothing invisible to discovery"
 fi
-# gh powers the sidebar's PR/CI chips (zdev-sidebar-pr-refresh). Warn,
+# gh powers the sidebar's PR/CI chips (the daemon's in-process gh probe,
+# internal/probes/gh.go). Warn,
 # not fail: zdev works without it, the chips just stay blank — but that
 # blankness looks like a bug unless something names the cause.
 if command -v gh >/dev/null 2>&1; then
