@@ -250,11 +250,10 @@ func TestRecomputeAgents_SkipRuleNameClears(t *testing.T) {
 	// Seed non-empty attribution, then prove recompute clears it.
 	pd := s.projectData["zdevd-watcher"]
 	pd.AgentStates = map[string]string{"claude": "waiting"}
-	pd.AgentClaude = "waiting"
 	s.projectData["zdevd-watcher"] = pd
 	recomputeAgents(s, "zdevd-watcher")
 	got := s.projectData["zdevd-watcher"]
-	if got.AgentStates != nil || got.AgentClaude != "" {
+	if got.AgentStates != nil {
 		t.Errorf("recomputeAgents on skip-rule name computed instead of clearing: %+v", got)
 	}
 }

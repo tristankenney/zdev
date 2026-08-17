@@ -666,7 +666,7 @@ func TestApplyActivityRefresh_QueuedBeforeSessionKnown(t *testing.T) {
 
 // --- Task 6.2: Agent attribution tests (DATA-08, recomputeAgents) ---
 
-// TestApplyAgent_PaneTitleChanged_ClaudeWaiting verifies AgentClaude="waiting"
+// TestApplyAgent_PaneTitleChanged_ClaudeWaiting verifies AgentStates["claude"]="waiting"
 // when a pane title is set to "● claude".
 func TestApplyAgent_PaneTitleChanged_ClaudeWaiting(t *testing.T) {
 	h, cleanup := startHub(t)
@@ -683,23 +683,23 @@ func TestApplyAgent_PaneTitleChanged_ClaudeWaiting(t *testing.T) {
 
 	snap := drainUntil(t, sub, 300*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.AgentClaude == "waiting"
+		return p != nil && p.AgentStates["claude"] == "waiting"
 	})
 	proj := findProject(snap.Projects, "alpha")
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.AgentClaude != "waiting" {
-		t.Errorf("AgentClaude = %q; want %q", proj.AgentClaude, "waiting")
+	if proj.AgentStates["claude"] != "waiting" {
+		t.Errorf("AgentStates[claude] = %q; want %q", proj.AgentStates["claude"], "waiting")
 	}
-	if proj.AgentPi != "" {
-		t.Errorf("AgentPi = %q; want %q", proj.AgentPi, "")
+	if proj.AgentStates["pi"] != "" {
+		t.Errorf("AgentStates[pi] = %q; want %q", proj.AgentStates["pi"], "")
 	}
 }
 
 // TestApplyAgent_PaneTitleChanged_ClaudeIdle verifies that a pane titled
 // "✳ Claude Code" (Claude Code v2.1+ idle prompt, no active task) does NOT
-// set AgentClaude="waiting". Without this guard, every Claude session pulses
+// set AgentStates["claude"]="waiting". Without this guard, every Claude session pulses
 // "needs input" on daemon restart simply because every idle Claude pane has
 // that title.
 func TestApplyAgent_PaneTitleChanged_ClaudeIdle(t *testing.T) {
@@ -721,15 +721,15 @@ func TestApplyAgent_PaneTitleChanged_ClaudeIdle(t *testing.T) {
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.AgentClaude != "" {
-		t.Errorf("AgentClaude = %q; want \"\" (idle prompt should not pulse)", proj.AgentClaude)
+	if proj.AgentStates["claude"] != "" {
+		t.Errorf("AgentStates[claude] = %q; want \"\" (idle prompt should not pulse)", proj.AgentStates["claude"])
 	}
-	if proj.AgentPi != "" {
-		t.Errorf("AgentPi = %q; want \"\"", proj.AgentPi)
+	if proj.AgentStates["pi"] != "" {
+		t.Errorf("AgentStates[pi] = %q; want \"\"", proj.AgentStates["pi"])
 	}
 }
 
-// TestApplyAgent_PaneTitleChanged_ClaudeFinished verifies AgentClaude="finished"
+// TestApplyAgent_PaneTitleChanged_ClaudeFinished verifies AgentStates["claude"]="finished"
 // when a pane title is "◆ claude --help".
 func TestApplyAgent_PaneTitleChanged_ClaudeFinished(t *testing.T) {
 	h, cleanup := startHub(t)
@@ -745,21 +745,21 @@ func TestApplyAgent_PaneTitleChanged_ClaudeFinished(t *testing.T) {
 
 	snap := drainUntil(t, sub, 300*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.AgentClaude == "finished"
+		return p != nil && p.AgentStates["claude"] == "finished"
 	})
 	proj := findProject(snap.Projects, "alpha")
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.AgentClaude != "finished" {
-		t.Errorf("AgentClaude = %q; want %q", proj.AgentClaude, "finished")
+	if proj.AgentStates["claude"] != "finished" {
+		t.Errorf("AgentStates[claude] = %q; want %q", proj.AgentStates["claude"], "finished")
 	}
-	if proj.AgentPi != "" {
-		t.Errorf("AgentPi = %q; want %q", proj.AgentPi, "")
+	if proj.AgentStates["pi"] != "" {
+		t.Errorf("AgentStates[pi] = %q; want %q", proj.AgentStates["pi"], "")
 	}
 }
 
-// TestApplyAgent_PaneTitleChanged_Pi verifies AgentPi="waiting" when a
+// TestApplyAgent_PaneTitleChanged_Pi verifies AgentStates["pi"]="waiting" when a
 // pane title is "● pi bench".
 func TestApplyAgent_PaneTitleChanged_Pi(t *testing.T) {
 	t.Skip("260519-hww: pi.dev integration temporarily disabled")
@@ -776,17 +776,17 @@ func TestApplyAgent_PaneTitleChanged_Pi(t *testing.T) {
 
 	snap := drainUntil(t, sub, 300*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.AgentPi == "waiting"
+		return p != nil && p.AgentStates["pi"] == "waiting"
 	})
 	proj := findProject(snap.Projects, "alpha")
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.AgentClaude != "" {
-		t.Errorf("AgentClaude = %q; want %q", proj.AgentClaude, "")
+	if proj.AgentStates["claude"] != "" {
+		t.Errorf("AgentStates[claude] = %q; want %q", proj.AgentStates["claude"], "")
 	}
-	if proj.AgentPi != "waiting" {
-		t.Errorf("AgentPi = %q; want %q", proj.AgentPi, "waiting")
+	if proj.AgentStates["pi"] != "waiting" {
+		t.Errorf("AgentStates[pi] = %q; want %q", proj.AgentStates["pi"], "waiting")
 	}
 }
 
@@ -811,16 +811,16 @@ func TestApplyAgent_PaneTitleChanged_NoAgent(t *testing.T) {
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.AgentClaude != "" {
-		t.Errorf("AgentClaude = %q; want %q (no-agent title)", proj.AgentClaude, "")
+	if proj.AgentStates["claude"] != "" {
+		t.Errorf("AgentStates[claude] = %q; want %q (no-agent title)", proj.AgentStates["claude"], "")
 	}
-	if proj.AgentPi != "" {
-		t.Errorf("AgentPi = %q; want %q (no-agent title)", proj.AgentPi, "")
+	if proj.AgentStates["pi"] != "" {
+		t.Errorf("AgentStates[pi] = %q; want %q (no-agent title)", proj.AgentStates["pi"], "")
 	}
 }
 
 // TestApplyAgent_MultipleAgentsInSession verifies that a session with both a
-// claude and a pi pane returns both AgentClaude and AgentPi populated.
+// claude and a pi pane returns both claude and pi entries populated.
 func TestApplyAgent_MultipleAgentsInSession(t *testing.T) {
 	t.Skip("260519-hww: pi.dev integration temporarily disabled")
 	h, cleanup := startHub(t)
@@ -838,21 +838,21 @@ func TestApplyAgent_MultipleAgentsInSession(t *testing.T) {
 
 	snap := drainUntil(t, sub, 300*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.AgentClaude != "" && p.AgentPi != ""
+		return p != nil && p.AgentStates["claude"] != "" && p.AgentStates["pi"] != ""
 	})
 	proj := findProject(snap.Projects, "alpha")
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.AgentClaude != "waiting" {
-		t.Errorf("AgentClaude = %q; want %q", proj.AgentClaude, "waiting")
+	if proj.AgentStates["claude"] != "waiting" {
+		t.Errorf("AgentStates[claude] = %q; want %q", proj.AgentStates["claude"], "waiting")
 	}
-	if proj.AgentPi != "finished" {
-		t.Errorf("AgentPi = %q; want %q", proj.AgentPi, "finished")
+	if proj.AgentStates["pi"] != "finished" {
+		t.Errorf("AgentStates[pi] = %q; want %q", proj.AgentStates["pi"], "finished")
 	}
 }
 
-// TestApplyAgent_AgentClearsOnTitleChange verifies that after AgentClaude was
+// TestApplyAgent_AgentClearsOnTitleChange verifies that after the claude entry was
 // "waiting", changing the pane title to "shell" clears it to "".
 func TestApplyAgent_AgentClearsOnTitleChange(t *testing.T) {
 	h, cleanup := startHub(t)
@@ -869,21 +869,21 @@ func TestApplyAgent_AgentClearsOnTitleChange(t *testing.T) {
 	// Wait for agent to be "waiting".
 	_ = drainUntil(t, sub, 300*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.AgentClaude == "waiting"
+		return p != nil && p.AgentStates["claude"] == "waiting"
 	})
 
 	// Now change the title to "shell" — agent should clear.
 	mustSubmit(t, h, tmuxctl.PaneTitleChanged{PaneID: "%1", Title: "shell"})
 	snap := drainUntil(t, sub, 300*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.AgentClaude == ""
+		return p != nil && p.AgentStates["claude"] == ""
 	})
 	proj := findProject(snap.Projects, "alpha")
 	if proj == nil {
 		t.Fatal("project 'alpha' not found in snapshot")
 	}
-	if proj.AgentClaude != "" {
-		t.Errorf("AgentClaude = %q; want %q (cleared after title change)", proj.AgentClaude, "")
+	if proj.AgentStates["claude"] != "" {
+		t.Errorf("AgentStates[claude] = %q; want %q (cleared after title change)", proj.AgentStates["claude"], "")
 	}
 }
 
@@ -904,7 +904,7 @@ func TestApplyAgent_PreservesPhase2Status(t *testing.T) {
 
 	snap := drainUntil(t, sub, 300*time.Millisecond, func(s *proto.Snapshot) bool {
 		p := findProject(s.Projects, "alpha")
-		return p != nil && p.AgentClaude == "waiting"
+		return p != nil && p.AgentStates["claude"] == "waiting"
 	})
 	proj := findProject(snap.Projects, "alpha")
 	if proj == nil {
@@ -914,9 +914,9 @@ func TestApplyAgent_PreservesPhase2Status(t *testing.T) {
 	if proj.Status != "waiting" {
 		t.Errorf("Status = %q; want %q (Phase 2 VIS-01 regression — deriveStatus path broken)", proj.Status, "waiting")
 	}
-	// Phase 3 DATA-08: AgentClaude set via ClassifyAgent.
-	if proj.AgentClaude != "waiting" {
-		t.Errorf("AgentClaude = %q; want %q", proj.AgentClaude, "waiting")
+	// Phase 3 DATA-08: the claude state set via the registry.
+	if proj.AgentStates["claude"] != "waiting" {
+		t.Errorf("AgentStates[claude] = %q; want %q", proj.AgentStates["claude"], "waiting")
 	}
 }
 
@@ -1104,8 +1104,8 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		if got := s.projectData["example-agora"].WaitContext; got != "" {
 			t.Errorf("WaitContext = %q after capturer error; want empty", got)
 		}
-		if s.projectData["example-agora"].AgentClaude != "waiting" {
-			t.Errorf("AgentClaude = %q; want waiting (recomputeAgents must still complete)", s.projectData["example-agora"].AgentClaude)
+		if s.projectData["example-agora"].AgentStates["claude"] != "waiting" {
+			t.Errorf("AgentStates[claude] = %q; want waiting (recomputeAgents must still complete)", s.projectData["example-agora"].AgentStates["claude"])
 		}
 	})
 
@@ -1170,11 +1170,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v24 (focus-loop wire
+	// Test H: proto.SchemaVersion must be phase4-v25 (focus-loop wire
 	// metadata — Project.Intent/BdReady, ZDEV_SIDEBAR_INITIATIVE).
 	t.Run("H_schema_version_is_phase4_v24", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v24" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v24")
+		if proto.SchemaVersion != "phase4-v25" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v25")
 		}
 	})
 }
@@ -1509,7 +1509,7 @@ func TestPaneCaptureFailed_EvictsAfterThreshold(t *testing.T) {
 	t.Run("success_resets_counter", func(t *testing.T) {
 		s := buildTestState("live-sess", []string{"%99"}, []string{"● claude"})
 		// Pretend the pane is in waiting state so PaneCaptureReady applies.
-		s.projectData["live-sess"] = projectData{AgentClaude: "waiting"}
+		s.projectData["live-sess"] = projectData{AgentStates: map[string]string{"claude": "waiting"}}
 
 		// Two failures, then a success.
 		applyEvent(s, tmuxctl.PaneCaptureFailed{Session: "live-sess", PaneID: "%99"}, nil)

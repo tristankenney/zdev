@@ -1466,7 +1466,7 @@ func snapWithCurrentSession(base *proto.Snapshot, st *state, sub *Subscriber, no
 
 	needsCopy := false
 	for _, p := range base.Projects {
-		if p.AgentClaude == "" && p.AgentPi == "" {
+		if len(p.AgentStates) == 0 {
 			continue
 		}
 		if suppress(&p) {
@@ -1488,8 +1488,9 @@ func snapWithCurrentSession(base *proto.Snapshot, st *state, sub *Subscriber, no
 		for i := range projects {
 			p := &projects[i]
 			if suppress(p) {
-				p.AgentClaude = ""
-				p.AgentPi = ""
+				// Clearing the FIELD on the cloned Project only redirects
+				// this copy's map header — base's map is never mutated.
+				p.AgentStates = nil
 				if p.Status == "waiting" {
 					p.Status = "alive"
 				}
@@ -1713,8 +1714,6 @@ func projectEquals(a, b proto.Project) bool {
 		a.PRFail != b.PRFail ||
 		a.PRPend != b.PRPend ||
 		a.CelebrateUntil != b.CelebrateUntil ||
-		a.AgentClaude != b.AgentClaude ||
-		a.AgentPi != b.AgentPi ||
 		a.WaitContext != b.WaitContext ||
 		a.CIStatus != b.CIStatus ||
 		a.CIConclusion != b.CIConclusion ||

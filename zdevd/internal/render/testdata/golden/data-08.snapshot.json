@@ -6,8 +6,8 @@
   "sent_at": "2026-05-04T12:00:00Z",
   "sessions": ["alpha", "beta"],
   "projects": [
-    {"name": "alpha", "status": "alive", "agent_claude": "waiting"},
-    {"name": "beta",  "status": "alive", "agent_codex": "finished"}
+    {"name": "alpha", "status": "alive", "agent_states": {"claude": "waiting"}},
+    {"name": "beta",  "status": "alive", "agent_states": {"codex": "finished"}}
   ],
   "current_session": ""
 }

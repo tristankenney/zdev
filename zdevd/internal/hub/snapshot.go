@@ -300,8 +300,6 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			PendingChecks:    pr.PendingChecks,
 			CelebrateUntil:   st.celebrateUntil[dataKey],
 			AgentStates:      projectAgentStates(pd.AgentStates),
-			AgentClaude:      pd.AgentClaude,
-			AgentPi:          pd.AgentPi,
 			WaitContext:      wireWaitContext,
 			CIStatus:         pd.CIStatus,
 			CIConclusion:     pd.CIConclusion,

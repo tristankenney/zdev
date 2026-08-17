@@ -460,11 +460,8 @@ type projectData struct {
 	// raw status strings "waiting" / "finished" / "shell-running" / "" (empty
 	// when no marker for that agent matched any pane). buildSnapshot projects
 	// this into proto.Project.AgentStates[name] = proto.Attention for the
-	// wire. AgentClaude / AgentPi below remain as deprecated projections of
-	// this map for one release of renderer back-compat.
+	// wire.
 	AgentStates       map[string]string
-	AgentClaude       string
-	AgentPi           string
 	WaitContext       string // verbatim capture from tmux at wait-start; cleared on exit; NOT persisted
 	WaitNotifiedTiers uint8  // bit0=60s, bit1=5m, bit2=15m; reset on transition edges; persisted
 	// WaitKind is the cost-class of the current wait, sourced from the
@@ -1223,7 +1220,14 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		if !ok {
 			break
 		}
-		if pd.AgentClaude != "waiting" && pd.AgentPi != "waiting" {
+		anyWaiting := false
+		for _, status := range pd.AgentStates {
+			if status == "waiting" {
+				anyWaiting = true
+				break
+			}
+		}
+		if !anyWaiting {
 			break
 		}
 		pd.WaitContext = e.Text

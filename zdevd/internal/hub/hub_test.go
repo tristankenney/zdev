@@ -292,7 +292,7 @@ func startHubWithNotifier(t *testing.T, debounce time.Duration) (*Hub, *recordin
 	// Pre-seed state before Run starts — hub goroutine is the sole owner
 	// after Run, but it hasn't started yet, so this is safe.
 	h.state.projectData["example-agora"] = projectData{
-		AgentClaude:   "waiting",
+		AgentStates:   map[string]string{"claude": "waiting"},
 		WaitStartedTS: time.Now().Unix() - 70, // 70s in the past → past 60s tier
 	}
 
@@ -357,7 +357,7 @@ func TestWithNotifier_D(t *testing.T) {
 
 	// Pre-seed state before Run starts.
 	h.state.projectData["example-agora"] = projectData{
-		AgentClaude:   "waiting",
+		AgentStates:   map[string]string{"claude": "waiting"},
 		WaitStartedTS: time.Now().Unix() - 70, // 70s — past 60s tier
 	}
 

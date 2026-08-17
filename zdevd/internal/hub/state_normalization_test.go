@@ -224,7 +224,7 @@ func TestSnapWithCurrentSession_WaitAckSuppressesRowMarker(t *testing.T) {
 			{
 				Name:           "example/agora",
 				Status:         "waiting",
-				AgentClaude:    "waiting",
+				AgentStates:    map[string]proto.Attention{"claude": "waiting"},
 				WaitStartedTS:  100,
 				LastActivityTS: 100,
 			},
@@ -250,9 +250,9 @@ func TestSnapWithCurrentSession_WaitAckSuppressesRowMarker(t *testing.T) {
 		t.Errorf("Status = %q; want %q — wait-ack must demote the row marker",
 			p.Status, "alive")
 	}
-	if p.AgentClaude != "" {
-		t.Errorf("AgentClaude = %q; want empty — wait-ack must suppress the agent chip",
-			p.AgentClaude)
+	if len(p.AgentStates) != 0 {
+		t.Errorf("AgentStates = %v; want empty — wait-ack must suppress the agent chip",
+			p.AgentStates)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestSnapWithCurrentSession_UnackedWaitKeepsRowMarker(t *testing.T) {
 			{
 				Name:           "example/agora",
 				Status:         "waiting",
-				AgentClaude:    "waiting",
+				AgentStates:    map[string]proto.Attention{"claude": "waiting"},
 				WaitStartedTS:  300, // newer than any lastVisitTS below
 				LastActivityTS: 300,
 			},
@@ -293,9 +293,9 @@ func TestSnapWithCurrentSession_UnackedWaitKeepsRowMarker(t *testing.T) {
 		t.Errorf("Status = %q; want %q — un-acknowledged wait MUST keep the pulse marker",
 			p.Status, "waiting")
 	}
-	if p.AgentClaude != "waiting" {
-		t.Errorf("AgentClaude = %q; want %q — un-acknowledged wait MUST keep the agent chip",
-			p.AgentClaude, "waiting")
+	if p.AgentStates["claude"] != "waiting" {
+		t.Errorf("AgentStates[claude] = %q; want %q — un-acknowledged wait MUST keep the agent chip",
+			p.AgentStates["claude"], "waiting")
 	}
 }
 
@@ -314,7 +314,7 @@ func TestSnapWithCurrentSession_StaleAckExpiresAtTierCrossing(t *testing.T) {
 			{
 				Name:           "example/agora",
 				Status:         "waiting",
-				AgentClaude:    "waiting",
+				AgentStates:    map[string]proto.Attention{"claude": "waiting"},
 				WaitStartedTS:  0,
 				LastActivityTS: 0,
 			},
@@ -338,8 +338,8 @@ func TestSnapWithCurrentSession_StaleAckExpiresAtTierCrossing(t *testing.T) {
 		t.Errorf("Status = %q; want %q — stale ack must expire at next tier crossing (260511-c9s)",
 			p.Status, "waiting")
 	}
-	if p.AgentClaude != "waiting" {
-		t.Errorf("AgentClaude = %q; want %q — stale ack must expire for agent chip too",
-			p.AgentClaude, "waiting")
+	if p.AgentStates["claude"] != "waiting" {
+		t.Errorf("AgentStates[claude] = %q; want %q — stale ack must expire for agent chip too",
+			p.AgentStates["claude"], "waiting")
 	}
 }

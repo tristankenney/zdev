@@ -129,9 +129,9 @@ func TestDialParkMultipleAreChronological(t *testing.T) {
 }
 
 // TestDialParkSchemaUnchanged is a guard-rail: the focus-loop wire landed
-// already (phase4-v24) and this phase must not bump it again.
+// is pinned independently so unrelated park work cannot bump it silently.
 func TestDialParkSchemaUnchanged(t *testing.T) {
-	if proto.SchemaVersion != "phase4-v24" {
-		t.Errorf("proto.SchemaVersion = %q, want phase4-v24 unchanged by phase 1 park work", proto.SchemaVersion)
+	if proto.SchemaVersion != "phase4-v25" {
+		t.Errorf("proto.SchemaVersion = %q, want phase4-v25", proto.SchemaVersion)
 	}
 }

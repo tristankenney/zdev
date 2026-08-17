@@ -194,7 +194,14 @@ import (
 // compatible in practice, but bumped for strict-equality validation.
 // Restart all zdev-sidebar-render instances after deploying the new zdevd
 // binary.
-const SchemaVersion = "phase4-v24"
+//
+// phase4-v25 (2026-08-17): removes Project.AgentClaude / Project.AgentPi,
+// the deprecated phase4-v8 back-compat projections of AgentStates — no
+// reader remained (renderer and CLI dispatch on the derived Attention; the
+// hub's two internal reads were ported to AgentStates in the same change,
+// generalising them beyond claude/pi). No new fields. Restart all
+// zdev-sidebar-render instances after deploying the new zdevd binary.
+const SchemaVersion = "phase4-v25"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -527,12 +534,10 @@ type Project struct {
 	PRFail           int       `json:"pr_fail,omitempty"`
 	PRPend           int       `json:"pr_pend,omitempty"`
 	CelebrateUntil   int64     `json:"celebrate_until,omitempty"`
-	AgentClaude      string    `json:"agent_claude,omitempty"` // DEPRECATED in v8; projection of AgentStates["claude"]
-	AgentPi          string    `json:"agent_pi,omitempty"`     // DEPRECATED in v8; projection of AgentStates["pi"]
 	// AgentStates is the per-agent attention map keyed by lowercase agent
-	// name (from the registry's [[agent]].name). Replaces the static
-	// AgentClaude/AgentPi pair as of phase4-v8 — the legacy fields remain
-	// on the wire for one release, populated from this map.
+	// name (from the registry's [[agent]].name). Replaced the static
+	// AgentClaude/AgentPi pair in phase4-v8; the legacy projections rode
+	// the wire until their removal in phase4-v25.
 	AgentStates  map[string]Attention `json:"agent_states,omitempty"`
 	WaitContext  string               `json:"wait_context,omitempty"`  // verbatim last ~20 lines of agent pane at wait-start
 	CIStatus     string               `json:"ci_status,omitempty"`     // "queued"|"in_progress"|"completed"|""

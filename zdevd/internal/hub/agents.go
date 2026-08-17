@@ -21,10 +21,8 @@ import (
 // pane's title through state.agents (agents.Registry.Classify) once per
 // pane, and writes the per-agent status map onto projectData.AgentStates.
 //
-// AgentClaude / AgentPi remain populated as deprecated projections of
-// AgentStates["claude"] and AgentStates["pi"] respectively for one release
-// of renderer back-compat. buildSnapshot copies pd.AgentStates onto
-// proto.Project.AgentStates so the wire carries the full map.
+// buildSnapshot copies pd.AgentStates onto proto.Project.AgentStates so
+// the wire carries the full map.
 //
 // Transition handling (set-diff against the prior AgentStates):
 //   - For any agent whose status flips from non-"waiting" to "waiting",
@@ -43,8 +41,6 @@ func recomputeAgents(s *state, sessionName string) {
 		// Session no longer exists — clear chip attribution.
 		pd := s.projectData[sessionName]
 		pd.AgentStates = nil
-		pd.AgentClaude = ""
-		pd.AgentPi = ""
 		s.projectData[sessionName] = pd
 		return
 	}
@@ -152,11 +148,6 @@ func recomputeAgents(s *state, sessionName string) {
 	}
 
 	pd.AgentStates = next
-	// Back-compat projection for one release: legacy AgentClaude/AgentPi
-	// fields stay populated so the renderer + zdev-show don't need to
-	// switch over in the same commit as the registry plumbing.
-	pd.AgentClaude = next["claude"]
-	pd.AgentPi = next["pi"]
 
 	if enteredWaiting != "" && !shouldSkipSession(sessionName) {
 		// phase4-v2: capture the agent pane content so the user can see what

@@ -96,8 +96,8 @@ func TestSnapshotCompactNoIndent(t *testing.T) {
 // --- Phase 3 tests ---
 
 func TestSchemaVersion_IsPhase4(t *testing.T) {
-	if SchemaVersion != "phase4-v24" {
-		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v24")
+	if SchemaVersion != "phase4-v25" {
+		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v25")
 	}
 }
 
@@ -126,7 +126,7 @@ func TestProject_RoundTrip(t *testing.T) {
 		WaitStartedTS:  1714838460,
 		PROpen:         1, PRFail: 0, PRPend: 1,
 		CelebrateUntil: 1714838500,
-		AgentClaude:    "waiting", AgentPi: "",
+		AgentStates:    map[string]Attention{"claude": "waiting"},
 	}
 	out, err := json.Marshal(&in)
 	if err != nil {
@@ -168,8 +168,13 @@ func equalProject(a, b Project) bool {
 	if a.CelebrateUntil != b.CelebrateUntil {
 		return false
 	}
-	if a.AgentClaude != b.AgentClaude || a.AgentPi != b.AgentPi {
+	if len(a.AgentStates) != len(b.AgentStates) {
 		return false
+	}
+	for k, v := range a.AgentStates {
+		if b.AgentStates[k] != v {
+			return false
+		}
 	}
 	return true
 }
@@ -196,7 +201,7 @@ func TestSchemaGolden(t *testing.T) {
 			WaitStartedTS:  1714838460,
 			PROpen:         1, PRFail: 0, PRPend: 1,
 			CelebrateUntil: 1714838500,
-			AgentClaude:    "waiting", AgentPi: "",
+			AgentStates:    map[string]Attention{"claude": "waiting"},
 		}},
 		CurrentSession: "alpha",
 	}

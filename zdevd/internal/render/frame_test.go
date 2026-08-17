@@ -443,12 +443,12 @@ func TestRender_CursorAndClearInvariants(t *testing.T) {
 }
 
 // TestRender_AgentChipSuppressedForCurrentSession verifies that agent chips
-// (AgentClaude / AgentPi) are not rendered for the project matching
+// (AgentStates entries) are not rendered for the project matching
 // CurrentSession. When the user is in the agent pane, the indicator is
 // misleading — the user is present, not an unattended autonomous agent.
 //
 // With the domain-row layout (260511-ohu), the current project's agent domain
-// row only renders chipWaitAge (not chipAgentClaude/chipAgentPi which are
+// row only renders chipWaitAge (not the per-agent chips, which are
 // suppressed for current sessions). Non-current compact rows also have no
 // agent chips by design.
 func TestRender_AgentChipSuppressedForCurrentSession(t *testing.T) {
@@ -461,9 +461,9 @@ func TestRender_AgentChipSuppressedForCurrentSession(t *testing.T) {
 	snap := &proto.Snapshot{
 		Projects: []proto.Project{
 			// "alpha" is the current session — agent chips must be suppressed.
-			{Name: "alpha", Status: "waiting", AgentClaude: "waiting", AgentPi: "waiting"},
+			{Name: "alpha", Status: "waiting", AgentStates: map[string]proto.Attention{"claude": "waiting", "pi": "waiting"}},
 			// "beta" is a different project — compact row has no agent chips by design.
-			{Name: "beta", Status: "waiting", AgentClaude: "waiting"},
+			{Name: "beta", Status: "waiting", AgentStates: map[string]proto.Attention{"claude": "waiting"}},
 		},
 		CurrentSession: "alpha",
 	}
@@ -473,7 +473,7 @@ func TestRender_AgentChipSuppressedForCurrentSession(t *testing.T) {
 	out := Render(snap, 80, anim, fixedNowFn)
 
 	// Assert the full frame does NOT contain agent chip glyphs.
-	// alpha (current): agent chips suppressed in renderMetadataRow (isCurrent zeroes AgentClaude/AgentPi).
+	// alpha (current): agent chips suppressed in renderMetadataRow (isCurrent zeroes the agent states).
 	// beta (non-current): compact row never shows agent chips.
 	if bytes.Contains(out, claudeGlyph) {
 		t.Errorf("frame must NOT contain claude agent chip %q (current session suppresses, compact row never shows)\n%q", claudeGlyph, out)
@@ -886,8 +886,8 @@ func TestRender_AgentChipSuppressedForSlashProject(t *testing.T) {
 
 	snap := &proto.Snapshot{
 		Projects: []proto.Project{
-			{Name: "example/backend", Status: "waiting", AgentClaude: "waiting"},
-			{Name: "dotfiles", Status: "idle", AgentClaude: "waiting"},
+			{Name: "example/backend", Status: "waiting", AgentStates: map[string]proto.Attention{"claude": "waiting"}},
+			{Name: "dotfiles", Status: "idle", AgentStates: map[string]proto.Attention{"claude": "waiting"}},
 		},
 		CurrentSession: "example/backend",
 	}
