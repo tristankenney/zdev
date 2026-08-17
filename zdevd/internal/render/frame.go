@@ -344,29 +344,21 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	// mode re-partitions rendering and may place the closer mid-block,
 	// which is accepted (fold already re-states headers loosely).
 	var lastInGroup []bool
-	// lastInStream[i]: row i is its stream's last VISIBLE member — its
-	// stream rail closes the mini-frame (╰). Same computation, keyed on the
-	// (group, stream) pair.
-	var lastInStream []bool
 	if GroupMode == "prefix" {
 		lastInGroup = make([]bool, len(snap.Projects))
-		lastInStream = make([]bool, len(snap.Projects))
 		for i := range snap.Projects {
 			if snap.Projects[i].Collapsed || groupKeys[i] == "" || isHome[i] {
 				continue
 			}
 			last := true
-			lastS := true
 			for j := i + 1; j < len(snap.Projects); j++ {
 				if snap.Projects[j].Collapsed {
 					continue
 				}
 				last = groupKeys[j] != groupKeys[i]
-				lastS = last || streamKeys[j] != streamKeys[i]
 				break
 			}
 			lastInGroup[i] = last
-			lastInStream[i] = lastS
 		}
 	}
 
@@ -438,24 +430,20 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// ▌ marker in the columns compact rows spend on their indent.
 			// The frame closer still lands here when this row is last; its
 			// metadata rows then hang on blanks below the closed corner.
-			// Stream members carry the second rail too, so the metadata
-			// stays inside the mini-frame.
+			// Stream members stay on the same rail, indented two cells
+			// deeper — their metadata rows indent with them.
 			g := "│"
 			mg := "│"
 			if lastInGroup[i] {
 				g, mg = "╰", " "
 			}
 			if streamKeys[i] != "" {
-				rail, mrail := "│", "│"
-				if lastInStream[i] {
-					rail, mrail = "╰", " "
-				}
 				renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
-					streamGutter(groupKeys[i], streamKeys[i], g, rail,
-						rowMargin(&p, animator, true, false, hovered)))
+					groupGutter(groupKeys[i], true, g,
+						rowMargin(&p, animator, true, false, hovered))+"  ")
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-5, animator, nowFn, urgent,
-					streamGutter(groupKeys[i], streamKeys[i], mg, mrail,
-						rowMargin(&p, animator, true, false, hovered)),
+					groupGutter(groupKeys[i], true, mg,
+						rowMargin(&p, animator, true, false, hovered))+"  ",
 					snap, false)
 				break
 			}
@@ -475,22 +463,18 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// groups, Dim for synthetic ones (projects/) — so belonging
 			// reads as a frame, not just an indent. Width shrinks with
 			// the gutter so truncation still respects the pane edge.
-			// The last visible member closes the frame. Stream members hang
-			// one level deeper: the initiative's rail, then the stream's own
-			// rail under its ╭ header — the nested mini-frame (stream-rows
-			// design review, 2026-08-17).
+			// The last visible member closes the frame. Stream members sit
+			// two cells deeper on the SAME rail, under their subtle label
+			// line — structure by whitespace, one hue per group (stream-rows
+			// calm pass, 2026-08-17 rev 2, option B).
 			g := "│"
 			if lastInGroup[i] {
 				g = "╰"
 			}
 			if streamKeys[i] != "" {
-				rail := "│"
-				if lastInStream[i] {
-					rail = "╰"
-				}
 				renderCompactRow(&buf, &p, width-5, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
-					streamGutter(groupKeys[i], streamKeys[i], g, rail,
-						rowMargin(&p, animator, false, isCursor, hovered)))
+					groupGutter(groupKeys[i], true, g,
+						rowMargin(&p, animator, false, isCursor, hovered))+"  ")
 				break
 			}
 			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
@@ -561,18 +545,24 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				prevGroup = g
 				prevStream = ""
 			}
-			// Stream mini-frame header (workstreams, 2026-08-17): the first
-			// VISIBLE row of each stream opens its frame with a synthetic
-			// "╭ <stream>" line hanging on the initiative's rail. Same
-			// contract as the drawer header above — renderer-only, never a
-			// navigation row, clickable via the stream's first repo.
-			// Collapsed rows are skipped so a folded initiative emits no
-			// stream headers: the home's rollup is its only trace.
+			// Stream labels (workstreams; calm pass 2026-08-17 rev 2): the
+			// first VISIBLE row of each stream gets a subtle label line on
+			// the initiative's rail, and the first stream of the group gets
+			// a rail-only breathing line above it — whitespace separates
+			// the floor from the streams; no second frame competes with the
+			// group's. Labels follow the drawer-header contract — renderer-
+			// only, never navigation rows, clickable via the stream's first
+			// repo; the breathing line is inert like the dividers. Collapsed
+			// rows are skipped so a folded initiative emits neither: the
+			// home's rollup is its only trace.
 			if !snap.Projects[i].Collapsed {
 				if s := streamKeys[i]; s != prevStream {
 					if s != "" {
+						if prevStream == "" {
+							writeStreamGap(&buf, groupKeys[i])
+						}
 						headerY := lineOf()
-						writeStreamHeader(&buf, groupKeys[i], s)
+						writeStreamLabel(&buf, groupKeys[i], s)
 						rows = append(rows, RowRef{Y: headerY, Name: snap.Projects[i].Name})
 					}
 					prevStream = s
@@ -781,23 +771,33 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 	buf.WriteByte('\n')
 }
 
-// writeStreamHeader emits the one-line synthetic header that opens a
-// workstream's mini-frame inside its initiative: the initiative's rail,
-// then "╭ <stream>" in the stream's own identity hue. Hue without Bold —
-// bold stays the group headers' weight, so the hierarchy reads
-// initiative > stream > repo. Renderer-only visual line (never a
-// navigation row), same contract as writeGroupHeader; the caller maps it
-// to the stream's first repo so clicks land somewhere real.
-func writeStreamHeader(buf *bytes.Buffer, groupKey, stream string) {
+// writeStreamLabel emits the one-line label that opens a workstream's run
+// inside its initiative: the initiative's rail, a two-space indent, the
+// stream's name in the subtle tone. A place label, not a competing frame —
+// hue stays the group's alone, and the repos beneath indent two cells
+// deeper than floor members. Renderer-only visual line (never a navigation
+// row), same contract as writeGroupHeader; the caller maps it to the
+// stream's first repo so clicks land somewhere real.
+func writeStreamLabel(buf *bytes.Buffer, groupKey, stream string) {
 	buf.WriteString("  ")
 	buf.WriteString(thPalette(groupKey))
 	buf.WriteString("│")
 	buf.WriteString(Reset)
-	buf.WriteString(" ")
-	hue := thPalette(stream)
-	buf.WriteString(hue)
-	buf.WriteString("╭ ")
+	buf.WriteString("  ")
+	buf.WriteString(thSubtle())
 	buf.WriteString(stream)
+	buf.WriteString(Reset)
+	buf.WriteString(ClearLineEnd)
+	buf.WriteByte('\n')
+}
+
+// writeStreamGap emits the rail-only breathing line between a group's
+// floor members and its first stream — whitespace is the structural
+// medium of the calm pass. Inert like the dividers: no RowRef.
+func writeStreamGap(buf *bytes.Buffer, groupKey string) {
+	buf.WriteString("  ")
+	buf.WriteString(thPalette(groupKey))
+	buf.WriteString("│")
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
@@ -1471,17 +1471,6 @@ func groupGutter(key string, hued bool, glyph, margin string) string {
 		color = thPalette(key)
 	}
 	return margin + color + glyph + Reset
-}
-
-// streamGutter composes the 5-column prefix for rows inside a stream's
-// mini-frame: the row margin, the initiative's frame glyph, a spacer, then
-// the stream's own rail — two nested frames, each in its identity hue.
-// outerGlyph closes (╰) only on the group's final visible row; railGlyph
-// closes on the stream's final visible row. Blank glyphs hold the columns
-// under a closed corner (a current row's metadata lines).
-func streamGutter(groupKey, streamKey, outerGlyph, railGlyph, margin string) string {
-	return margin + thPalette(groupKey) + outerGlyph + Reset + " " +
-		thPalette(streamKey) + railGlyph + Reset
 }
 
 // rowMargin composes the 2-column left margin every row opens with: the

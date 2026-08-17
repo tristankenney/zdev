@@ -53,15 +53,16 @@ func (c rpRGB) lerp(to rpRGB, t float64) rpRGB {
 // same variant the M-p switcher's fzf colors and docs/guide.html's dark
 // mode already use, which is the point: one designed object.
 var (
-	rpBase  = rpRGB{0x23, 0x21, 0x36}
-	rpMuted = rpRGB{0x6e, 0x6a, 0x86}
-	rpText  = rpRGB{0xe0, 0xde, 0xf4}
-	rpLove  = rpRGB{0xeb, 0x6f, 0x92}
-	rpGold  = rpRGB{0xf6, 0xc1, 0x77}
-	rpRose  = rpRGB{0xea, 0x9a, 0x97}
-	rpPine  = rpRGB{0x3e, 0x8f, 0xb0}
-	rpFoam  = rpRGB{0x9c, 0xcf, 0xd8}
-	rpIris  = rpRGB{0xc4, 0xa7, 0xe7}
+	rpBase   = rpRGB{0x23, 0x21, 0x36}
+	rpMuted  = rpRGB{0x6e, 0x6a, 0x86}
+	rpSubtle = rpRGB{0x90, 0x8c, 0xaa}
+	rpText   = rpRGB{0xe0, 0xde, 0xf4}
+	rpLove   = rpRGB{0xeb, 0x6f, 0x92}
+	rpGold   = rpRGB{0xf6, 0xc1, 0x77}
+	rpRose   = rpRGB{0xea, 0x9a, 0x97}
+	rpPine   = rpRGB{0x3e, 0x8f, 0xb0}
+	rpFoam   = rpRGB{0x9c, 0xcf, 0xd8}
+	rpIris   = rpRGB{0xc4, 0xa7, 0xe7}
 )
 
 // rpIdentity is the per-project identity palette: the six Rose Pine
@@ -100,6 +101,16 @@ func thPalette(name string) string {
 func thDim() string {
 	if ThemeMode == "rose-pine" {
 		return rpMuted.fg()
+	}
+	return Dim
+}
+
+// thSubtle is the quiet-structure tone — stream labels: one step brighter
+// than thDim so a place name reads above the dim rows it labels, well
+// below text. Classic has no third grey, so it falls back to Dim.
+func thSubtle() string {
+	if ThemeMode == "rose-pine" {
+		return rpSubtle.fg()
 	}
 	return Dim
 }

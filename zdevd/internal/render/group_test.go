@@ -124,16 +124,17 @@ func streamSnapshot() *proto.Snapshot {
 	return snap
 }
 
-// Nested stream frames (stream-rows design review, 2026-08-17): each
-// stream opens a ╭ header on the initiative's rail; its repos hang under
-// a second rail, bare-named; the group's final row closes both frames.
+// Stream rows, calm pass (2026-08-17 rev 2, option B): a stream is a
+// subtle label line on the initiative's single rail, its repos indented
+// two cells deeper; a rail-only breathing line separates the floor from
+// the streams. One hue per group, one left-edge pattern.
 func TestStreamFrames(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 
 	GroupMode = "off"
 	off := stripAnsi(Render(streamSnapshot(), 50, NewAnimator(), fixedNowFn))
-	if strings.Contains(off, "╭ backend") {
-		t.Fatalf("GroupMode=off must not render stream headers:\n%s", off)
+	if strings.Contains(off, "  |  backend") || strings.Contains(off, "\u2502  backend") {
+		t.Fatalf("GroupMode=off must not render stream labels:\n%s", off)
 	}
 	if !strings.Contains(off, "alpha/backend/pay-app") {
 		t.Errorf("GroupMode=off keeps full stream-member names:\n%s", off)
@@ -141,45 +142,55 @@ func TestStreamFrames(t *testing.T) {
 
 	GroupMode = "prefix"
 	out := stripAnsi(Render(streamSnapshot(), 50, NewAnimator(), fixedNowFn))
+	lines := strings.Split(out, "\n")
 
-	// One header per stream, hanging on the initiative's rail.
-	for _, h := range []string{"  │ ╭ backend", "  │ ╭ emails"} {
-		if n := strings.Count(out, h); n != 1 {
-			t.Errorf("stream header %q count = %d, want 1:\n%s", h, n, out)
+	// One subtle label per stream, on the group rail at member indent.
+	for _, h := range []string{"  \u2502  backend", "  \u2502  emails"} {
+		if n := strings.Count(out, h+"\n"); n != 1 {
+			t.Errorf("stream label %q count = %d, want 1:\n%s", h, n, out)
 		}
 	}
-	// Floor members keep the single-rail form.
-	if !strings.Contains(out, "  │  · pay-app") || !strings.Contains(out, "  │  · pay-id") {
-		t.Errorf("floor members must keep the single-rail gutter:\n%s", out)
+	// Exactly one rail-only breathing line between floor and streams.
+	gap := 0
+	for _, l := range lines {
+		if l == "  \u2502" {
+			gap++
+		}
 	}
-	// A single-repo stream closes its own rail while the initiative's runs on.
-	if !strings.Contains(out, "  │ ╰  · pay-app") {
-		t.Errorf("backend's only repo must close the stream rail under a running group rail:\n%s", out)
+	if gap != 1 {
+		t.Errorf("breathing lines = %d, want exactly 1:\n%s", gap, out)
 	}
-	// A two-repo stream: first repo rides both rails, last closes the rail —
-	// and, being the group's final row, the group frame too.
-	if !strings.Contains(out, "  │ │  · pay-app") {
-		t.Errorf("emails' first repo must ride both rails:\n%s", out)
+	// Floor members keep their indent; stream repos sit two cells deeper.
+	if !strings.Contains(out, "  \u2502  \u00b7 pay-id") {
+		t.Errorf("floor members keep the standard indent:\n%s", out)
 	}
-	if !strings.Contains(out, "  ╰ ╰  · pay-mailer") {
-		t.Errorf("the group's final stream row closes both frames:\n%s", out)
+	if !strings.Contains(out, "  \u2502    \u00b7 pay-app") {
+		t.Errorf("stream repos indent two cells deeper:\n%s", out)
 	}
-	// Stream repos are bare-named — the header carries the stream.
+	// The group's final row still closes the one frame, at stream indent.
+	if !strings.Contains(out, "  \u2570    \u00b7 pay-mailer") {
+		t.Errorf("the last stream repo closes the group frame:\n%s", out)
+	}
+	// No second frame, no per-stream brackets.
+	if strings.Contains(out, "\u256d backend") || strings.Contains(out, "\u2502 \u2502") || strings.Contains(out, "\u2570 \u2570") {
+		t.Errorf("streams must not draw their own frame:\n%s", out)
+	}
+	// Stream repos are bare-named — the label carries the stream.
 	if strings.Contains(out, "backend/pay-app") || strings.Contains(out, "emails/pay-app") {
 		t.Errorf("stream members must not repeat the stream prefix:\n%s", out)
 	}
-	// Order: floor, then backend's frame, then emails' frame.
-	iFloor := strings.Index(out, "· pay-id")
-	iBackend := strings.Index(out, "╭ backend")
-	iEmails := strings.Index(out, "╭ emails")
+	// Order: floor, then gap, then backend's run, then emails'.
+	iFloor := strings.Index(out, "\u00b7 pay-id")
+	iBackend := strings.Index(out, "\u2502  backend")
+	iEmails := strings.Index(out, "\u2502  emails")
 	if !(iFloor < iBackend && iBackend < iEmails) {
 		t.Errorf("streams must cluster after the floor: floor=%d backend=%d emails=%d:\n%s",
 			iFloor, iBackend, iEmails, out)
 	}
 }
 
-// A collapsed stream leaves no header behind; a pierced (working) member
-// re-opens its stream's frame.
+// A collapsed stream leaves no label (and no breathing line) behind; a
+// pierced (working) member re-opens its stream's run.
 func TestStreamFramesCollapse(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 	GroupMode = "prefix"
@@ -190,19 +201,20 @@ func TestStreamFramesCollapse(t *testing.T) {
 		{Name: "alpha/emails/pay-app", Status: "shell-running", Attention: proto.AttWorking},
 	}}
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	if strings.Contains(out, "╭ backend") {
-		t.Errorf("a fully folded stream must not emit its header:\n%s", out)
+	if strings.Contains(out, "\u2502  backend") {
+		t.Errorf("a fully folded stream must not emit its label:\n%s", out)
 	}
-	if n := strings.Count(out, "╭ emails"); n != 1 {
-		t.Errorf("a pierced stream keeps its header, count = %d:\n%s", n, out)
+	if n := strings.Count(out, "  \u2502  emails\n"); n != 1 {
+		t.Errorf("a pierced stream keeps its label, count = %d:\n%s", n, out)
 	}
-	if !strings.Contains(out, "╭ alpha ·2") {
+	if !strings.Contains(out, "\u256d alpha \u00b72") {
 		t.Errorf("home rollup counts folded floor and stream members alike:\n%s", out)
 	}
 }
 
-// The current session inside a stream keeps both rails, ▌ still in the
-// margin at column 0; metadata rows hang inside the mini-frame.
+// The current session inside a stream keeps the rail and the deeper
+// indent, \u258c still in the margin at column 0; metadata rows hang at the
+// same depth.
 func TestStreamCurrentMember(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 	GroupMode = "prefix"
@@ -210,11 +222,11 @@ func TestStreamCurrentMember(t *testing.T) {
 	snap.CurrentSession = "alpha/emails/pay-app"
 	snap.Projects[4].Branch = "emails/build"
 	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
-	if !strings.Contains(out, "▌ │ │") {
-		t.Errorf("current stream member must carry ▌ in the margin ahead of both rails:\n%s", out)
+	if !strings.Contains(out, "\u258c \u2502   ") {
+		t.Errorf("current stream member must carry \u258c in the margin ahead of the rail, indented:\n%s", out)
 	}
-	if strings.Contains(out, "│▌") || strings.Contains(out, "││") {
-		t.Errorf("rails must never fuse:\n%s", out)
+	if strings.Contains(out, "\u2502\u258c") || strings.Contains(out, "\u2502 \u2502") {
+		t.Errorf("no fused glyphs, no second rail:\n%s", out)
 	}
 }
 
