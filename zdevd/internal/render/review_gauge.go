@@ -72,19 +72,19 @@ func renderReviewGauge(buf *bytes.Buffer, snap *proto.Snapshot, width int) int {
 			break
 		}
 
-		// Lead glyph + color by dominant bucket: ready (green ◆ — landable
-		// now) outranks needs-fix (orange ✗) outranks will-rot (yellow ⌁).
-		// classic byte-shape untouched (raw Green/Orange/Yellow); this is
-		// pre-existing code, not the new rose-pine work below, so it stays
-		// on the raw constants it was authored with.
+		// Lead glyph + color by dominant bucket: ready (landable now)
+		// outranks needs-fix outranks will-rot. Colors route through the
+		// theme seam — classic byte-shape unchanged (each th* falls back
+		// to the constant this was authored with); rose-pine stops mixing
+		// classic xterm glyphs into truecolor rows.
 		var glyph, color string
 		switch {
 		case r.Ready > 0:
-			glyph, color = "◆", Green
+			glyph, color = "◆", thChipAccent(Green)
 		case r.NeedsFix > 0:
-			glyph, color = "✗", Orange
+			glyph, color = "✗", thChipAccent(Orange)
 		default:
-			glyph, color = "⌁", Yellow
+			glyph, color = "⌁", thChipAccent(Yellow)
 		}
 
 		buf.WriteString("  ")
@@ -107,16 +107,16 @@ func renderReviewGauge(buf *bytes.Buffer, snap *proto.Snapshot, width int) int {
 
 			// Non-zero bucket counts only, each in its bucket color. Ready is
 			// the headline (green); fix orange; rot dim-yellow.
-			writeCount(buf, r.Ready, "ready", Green)
-			writeCount(buf, r.NeedsFix, "fix", Orange)
-			writeCount(buf, r.WillRot, "rot", Yellow)
+			writeCount(buf, r.Ready, "ready", thChipAccent(Green))
+			writeCount(buf, r.NeedsFix, "fix", thChipAccent(Orange))
+			writeCount(buf, r.WillRot, "rot", thChipAccent(Yellow))
 
 			// Longest-rotting age (the repo's OldestSec) in dim — the "how
 			// long has the readiest thing waited" signal that drives the
 			// ordering.
 			if r.OldestSec > 0 {
 				buf.WriteString(" ")
-				buf.WriteString(Dim)
+				buf.WriteString(thDim())
 				buf.WriteString(formatAge(r.OldestSec))
 				buf.WriteString(Reset)
 			}
@@ -133,7 +133,7 @@ func renderReviewGauge(buf *bytes.Buffer, snap *proto.Snapshot, width int) int {
 	// Closing divider — same shape as the header/triage dividers so the gauge
 	// reads as its own boxed region above the stable project list.
 	buf.WriteString("  ")
-	buf.WriteString(Dim)
+	buf.WriteString(thDim())
 	buf.WriteString(strings.Repeat("─", 17))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)

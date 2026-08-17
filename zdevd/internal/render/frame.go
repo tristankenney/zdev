@@ -1428,7 +1428,7 @@ func renderMemberRows(buf *bytes.Buffer, groups []*proto.TeamGroup, width, baseI
 			buf.WriteString(glyph)
 			buf.WriteString(Reset)
 			buf.WriteString(" ")
-			nameColor, ok := teamMemberColors[m.Color]
+			nameColor, ok := teamMemberColor(m.Color)
 			if ok {
 				buf.WriteString(nameColor)
 			}

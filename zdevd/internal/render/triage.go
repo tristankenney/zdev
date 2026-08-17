@@ -74,17 +74,17 @@ func renderTriageSection(buf *bytes.Buffer, snap *proto.Snapshot, width int, ani
 		var glyph, color string
 		switch {
 		case p.Attention == proto.AttDead:
-			glyph, color = "✗", RedPulse
+			glyph, color = "✗", thDead()
 		case p.Attention == proto.AttWaiting && p.WaitKind == proto.WaitKindPermission:
-			glyph, color = "⚡", Orange
+			glyph, color = "⚡", thChipAccent(Orange)
 		case p.Attention == proto.AttWaiting:
 			var ageSec int64
 			if p.WaitStartedTS > 0 {
 				ageSec = now - p.WaitStartedTS
 			}
-			glyph, color = animator.PulseGlyphAt(ageSec), RedPulse
+			glyph, color = animator.PulseGlyphAt(ageSec), thWaiting(ageSec)
 		default: // finished
-			glyph, color = "◆", Yellow
+			glyph, color = "◆", thDone()
 		}
 
 		var age string
@@ -110,7 +110,7 @@ func renderTriageSection(buf *bytes.Buffer, snap *proto.Snapshot, width int, ani
 		buf.WriteString(truncateRunes(p.Name, nameCap))
 		if age != "" {
 			buf.WriteString(" ")
-			buf.WriteString(Dim)
+			buf.WriteString(thDim())
 			buf.WriteString(age)
 			buf.WriteString(Reset)
 		}
@@ -125,7 +125,7 @@ func renderTriageSection(buf *bytes.Buffer, snap *proto.Snapshot, width int, ani
 	// Closing divider — same shape as the header divider so the strip
 	// reads as its own boxed region.
 	buf.WriteString("  ")
-	buf.WriteString(Dim)
+	buf.WriteString(thDim())
 	buf.WriteString(strings.Repeat("─", 17))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)

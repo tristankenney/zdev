@@ -1716,7 +1716,7 @@ func TestRender_TeamBadge(t *testing.T) {
 	if !bytes.Contains(out, []byte("⊛slice2")) {
 		t.Fatalf("missing team badge in output\n%q", out)
 	}
-	if !bytes.Contains(out, []byte(teamMemberColors["blue"]+"•")) {
+	if !bytes.Contains(out, []byte(mustTeamColor("blue")+"•")) {
 		t.Errorf("missing blue member bullet")
 	}
 	if !bytes.Contains(out, []byte(Dim+"•")) {
@@ -1781,10 +1781,10 @@ func TestRender_TeamRows(t *testing.T) {
 		}
 	}
 	// Member names appear in their team colors.
-	if !bytes.Contains(out, []byte(teamMemberColors["blue"]+"impl"+Reset)) {
+	if !bytes.Contains(out, []byte(mustTeamColor("blue")+"impl"+Reset)) {
 		t.Errorf("working member name missing/uncolored\n%q", out)
 	}
-	if !bytes.Contains(out, []byte(teamMemberColors["green"]+"rev"+Reset)) {
+	if !bytes.Contains(out, []byte(mustTeamColor("green")+"rev"+Reset)) {
 		t.Errorf("waiting member name missing/uncolored\n%q", out)
 	}
 }
@@ -1825,7 +1825,7 @@ func TestRender_TeamRows_CursorOnMember(t *testing.T) {
 	snap := mkSnap(2)
 	anim.OnSnapshot(snap)
 	out := Render(snap, 50, anim, fixedNowFn)
-	if !bytes.Contains(out, []byte("  ▶ "+RedPulse+"●"+Reset+" "+teamMemberColors["green"]+"rev")) {
+	if !bytes.Contains(out, []byte("  ▶ "+RedPulse+"●"+Reset+" "+mustTeamColor("green")+"rev")) {
 		t.Errorf("cursor row 2 must mark rev's member row with ▶\n%q", out)
 	}
 	// impl's row (flattened 1) must NOT be selected.
@@ -1843,4 +1843,14 @@ func TestRender_TeamRows_CursorOnMember(t *testing.T) {
 	if bytes.Contains(out0, []byte("  ▶ ")) {
 		t.Errorf("no member row should carry ▶ when the project row is selected\n%q", out0)
 	}
+}
+
+// mustTeamColor resolves a team member color name under the active theme,
+// failing loudly in tests if the name is unknown.
+func mustTeamColor(name string) string {
+	c, ok := teamMemberColor(name)
+	if !ok {
+		panic("unknown team color: " + name)
+	}
+	return c
 }

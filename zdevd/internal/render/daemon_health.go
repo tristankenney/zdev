@@ -61,23 +61,23 @@ func daemonIsDegraded(snap *proto.Snapshot, nowFn func() int64) bool {
 //
 // Row format (non-empty body):
 //
-//	"  ⚠ " + Orange glyph + Dim "daemon:" + Reset + condition(s) + ClearLineEnd + LF
+//	"  ⚠ " + warn-hued glyph + dim "daemon:" + Reset + condition(s) + ClearLineEnd + LF
 func renderDaemonHealthRow(buf *bytes.Buffer, snap *proto.Snapshot, nowFn func() int64) {
 	now := nowFn()
 
 	buf.WriteString("  ")
-	buf.WriteString(Orange)
+	buf.WriteString(thChipAccent(Orange))
 	buf.WriteString("⚠")
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
-	buf.WriteString(Dim)
+	buf.WriteString(thDim())
 	buf.WriteString("daemon:")
 	buf.WriteString(Reset)
 
 	wrote := false
 	sep := func() {
 		if wrote {
-			buf.WriteString(Dim)
+			buf.WriteString(thDim())
 			buf.WriteString(" ·")
 			buf.WriteString(Reset)
 		}
@@ -87,7 +87,7 @@ func renderDaemonHealthRow(buf *bytes.Buffer, snap *proto.Snapshot, nowFn func()
 	if snap.DaemonErrors1h >= DaemonDegradedErrorThreshold {
 		sep()
 		buf.WriteString(" ")
-		buf.WriteString(Orange)
+		buf.WriteString(thChipAccent(Orange))
 		fmt.Fprintf(buf, "%d errors/h", snap.DaemonErrors1h)
 		buf.WriteString(Reset)
 	}
@@ -96,7 +96,7 @@ func renderDaemonHealthRow(buf *bytes.Buffer, snap *proto.Snapshot, nowFn func()
 		if age >= DaemonDegradedIdleSecThreshold {
 			sep()
 			buf.WriteString(" idle ")
-			buf.WriteString(Dim)
+			buf.WriteString(thDim())
 			buf.WriteString(formatAge(age))
 			buf.WriteString(Reset)
 		}

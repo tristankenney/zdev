@@ -47,27 +47,31 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/render"
 	"github.com/tristankenney/zdev/zdevd/internal/socket"
 )
 
-// ANSI codes mirror internal/render/ansi.go so the legend renders in the
-// SAME colors the sidebar actually uses — the legend IS the source of truth
-// for "what does this glyph mean", not a description that drifts.
+// ANSI codes IMPORT internal/render's constants so the legend renders in
+// the SAME colors the sidebar actually uses — the legend is the source of
+// truth for "what does this glyph mean", which is only true while the
+// bytes are shared, not mirrored (a mirrored icy drifted to an abandoned
+// theme-mapped bright-cyan before this aliased the real constants; calm
+// pass lane A, 2026-08-18).
 const (
-	dim      = "\x1b[90m"
-	reset    = "\x1b[0m"
-	bold     = "\x1b[1m"
-	cyan     = "\x1b[36m"
-	icy      = "\x1b[96m"
-	yellow   = "\x1b[33m"
-	orange   = "\x1b[38;5;208m" // 260511-h2: real orange, distinct from yellow
-	green    = "\x1b[32m"
-	red      = "\x1b[31m"
-	redPulse = "\x1b[1;91m"
-	// Mood block hues — mirror internal/render/theme.go MoodRed/Green/Idle.
-	moodRed   = "\x1b[38;5;196m"
-	moodGreen = "\x1b[38;5;46m"
-	moodIdle  = "\x1b[38;5;245m"
+	dim      = render.Dim
+	reset    = render.Reset
+	bold     = render.Bold
+	cyan     = render.Cyan
+	icy      = render.Icy
+	yellow   = render.Yellow
+	orange   = render.Orange
+	green    = render.Green
+	red      = "\x1b[31m" // chipInlineAlerts' raw red — the one non-const
+	redPulse = render.RedPulse
+	// Mood block hues — theme.go's MoodRed/Green/Idle.
+	moodRed   = render.MoodRed
+	moodGreen = render.MoodGreen
+	moodIdle  = render.MoodIdle
 )
 
 func main() {
@@ -321,7 +325,7 @@ func formatLegend() string {
 
 	section("Row marker (left of project name)")
 	row(redPulse+"●"+reset, "agent waiting (pulses faster as the wait ages)")
-	row(icy+"◐◓◑◒"+reset, "working / shell-running (cyan spinner)")
+	row(icy+"◐◓◑◒"+reset, "working / shell-running (spinner)")
 	row(yellow+"◆"+reset, "agent finished")
 	row(redPulse+"✗"+reset, "agent died (unclean exit — static, relaunch it)")
 	row("·", "alive (palette ·, full-brightness name)")
@@ -396,8 +400,8 @@ func formatLegend() string {
 	row("", "ZDEV_SIDEBAR_FOOTER=compact restores the glyph tally; =off hides it")
 
 	section("Visual cues")
-	row(cyan+"▌"+reset+" (left edge)", "breath bar — marks THIS sidebar's own session")
-	row(bold+cyan+"project-name"+reset, "current session, bold cyan")
+	row(render.PaletteFor("project")+"▌"+reset+" (left edge)", "breath bar — the project's identity hue, breathing")
+	row(bold+render.PaletteFor("project")+"project-name"+reset, "current session, bold in its identity hue")
 	row(dim+"dimmed row"+reset, "stale (>1h activity) or daemon outage")
 	row("", "ZDEV_SIDEBAR_DEMOTE=fold sinks stale sessions below a dim ─── divider; =off disables stale treatment")
 

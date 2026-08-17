@@ -124,19 +124,36 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 	}
 }
 
-// teamMemberColors maps Agent Teams member colors (the config.json
-// "color" field — blue/green/... assigned by Claude Code at join time)
-// to xterm-256 foreground codes. Unknown colors render Dim — fail-soft,
-// the chip still counts the member.
-var teamMemberColors = map[string]string{
-	"blue":   "\x1b[38;5;75m",
-	"green":  "\x1b[38;5;114m",
-	"yellow": "\x1b[38;5;221m",
-	"red":    "\x1b[38;5;203m",
-	"purple": "\x1b[38;5;135m",
-	"orange": "\x1b[38;5;215m",
-	"pink":   "\x1b[38;5;212m",
-	"cyan":   "\x1b[38;5;80m",
+// teamMemberColor maps an Agent Teams member color name (the config.json
+// "color" field — blue/green/... assigned by Claude Code at join time) to
+// a themed foreground. Classic keeps the original xterm-256 codes byte for
+// byte; rose-pine maps each name onto the nearest identity token so a team
+// badge stops mixing palettes (calm pass lane A). Unknown colors render
+// dim — fail-soft, the chip still counts the member.
+func teamMemberColor(name string) (string, bool) {
+	if ThemeMode == "rose-pine" {
+		m := map[string]rpRGB{
+			"blue": rpPine, "green": rpFoam, "yellow": rpGold,
+			"red": rpLove, "purple": rpIris, "orange": rpRose,
+			"pink": rpRose, "cyan": rpFoam,
+		}
+		if c, ok := m[name]; ok {
+			return c.fg(), true
+		}
+		return "", false
+	}
+	m := map[string]string{
+		"blue":   "\x1b[38;5;75m",
+		"green":  "\x1b[38;5;114m",
+		"yellow": "\x1b[38;5;221m",
+		"red":    "\x1b[38;5;203m",
+		"purple": "\x1b[38;5;135m",
+		"orange": "\x1b[38;5;215m",
+		"pink":   "\x1b[38;5;212m",
+		"cyan":   "\x1b[38;5;80m",
+	}
+	c, ok := m[name]
+	return c, ok
 }
 
 // chipTeamBadge composes the Agent Teams badge for a lead's row
@@ -166,14 +183,14 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup, teamRows bool) {
 		return
 	}
 	for _, m := range g.Members {
-		c, ok := teamMemberColors[m.Color]
+		c, ok := teamMemberColor(m.Color)
 		if !ok {
-			c = Dim
+			c = thDim()
 		}
 		if m.Status == "waiting" {
 			// Blocked on input outranks the member's identity color —
-			// same red the row markers use for waiting.
-			c = RedPulse
+			// same hue the row markers use for waiting.
+			c = thChipAccent(RedPulse)
 		}
 		buf.WriteString(c)
 		if m.Status == "idle" {
@@ -198,14 +215,14 @@ func chipOneTeamBadge(buf *bytes.Buffer, g *proto.TeamGroup, teamRows bool) {
 func memberGlyph(status string) (glyph, color string) {
 	switch status {
 	case "working":
-		return "✳", Icy
+		return "✳", thWorking()
 	case "waiting":
-		return "●", RedPulse
+		return "●", thChipAccent(RedPulse)
 	case "done":
-		return "◆", Yellow
+		return "◆", thDone()
 	default:
 		// idle, "", and any unrecognised value recede to a dim dot.
-		return "·", Dim
+		return "·", thDim()
 	}
 }
 
