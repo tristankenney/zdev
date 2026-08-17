@@ -18,14 +18,16 @@ func TestOrderingIsRowSort(t *testing.T) {
 	s := buildTestState("scratch-session", []string{"%1"}, []string{"shell"})
 	s.projectListNames = []string{
 		"zdev", "projects/pay-app", "marketplace",
-		"marketplace/backend/pay-app", "marketplace/area-selector/pay-app",
+		"marketplace/backend/pay-app", "marketplace/backend",
+		"marketplace/area-selector/pay-app",
 		"marketplace/pay-app", "dotfiles", "projects/onboarding",
 	}
 
 	fromOrdered := orderedRowNames(s)
 	want := []string{
 		"dotfiles", "marketplace", "marketplace/pay-app",
-		"marketplace/area-selector/pay-app", "marketplace/backend/pay-app",
+		"marketplace/area-selector/pay-app",
+		"marketplace/backend", "marketplace/backend/pay-app",
 		"projects/onboarding", "projects/pay-app",
 		"scratch-session", "zdev",
 	}

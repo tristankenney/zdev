@@ -283,6 +283,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	// nothing rides the wire.
 	var groupKeys []string
 	var streamKeys []string
+	var isStreamHome []bool
 	var isHome []bool
 	hasHome := map[string]bool{}       // group key → has a home row (marked group)
 	collapsedN := map[string]int{}     // group key → hidden member count
@@ -304,17 +305,29 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 		homes = proto.HomeSet(names)
 	}
 	if GroupMode == "prefix" {
+		names := make([]string, len(snap.Projects))
+		for i := range snap.Projects {
+			names[i] = snap.Projects[i].Name
+		}
+		streamHomes := proto.StreamHomeSet(names)
 		groupKeys = make([]string, len(snap.Projects))
 		streamKeys = make([]string, len(snap.Projects))
+		isStreamHome = make([]bool, len(snap.Projects))
 		isHome = make([]bool, len(snap.Projects))
 		for i := range snap.Projects {
 			p := &snap.Projects[i]
 			groupKeys[i] = proto.EffectiveGroupKey(p.Name, homes)
 			// Stream membership is structural, like home-ness: the middle
-			// segment of a 3-segment name (workstreams, 2026-08-17). The
-			// daemon's RowSort clusters a group's streams after its floor,
-			// so each stream is one contiguous run here.
+			// segment of a 3-segment name (workstreams, 2026-08-17), or —
+			// for the stream's own folder row (STREAM HOME, 2026-08-18) —
+			// its trailing segment. The daemon's RowSort clusters a
+			// group's streams after its floor with each home heading its
+			// members, so each stream is one contiguous run here.
 			streamKeys[i] = proto.StreamKey(p.Name)
+			if streamKeys[i] == "" && streamHomes[p.Name] {
+				isStreamHome[i] = true
+				streamKeys[i] = p.Name[strings.IndexByte(p.Name, '/')+1:]
+			}
 			isHome[i] = homes[p.Name]
 			if isHome[i] {
 				hasHome[groupKeys[i]] = true
@@ -437,7 +450,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if lastInGroup[i] {
 				g, mg = "╰", " "
 			}
-			if streamKeys[i] != "" {
+			if streamKeys[i] != "" && !isStreamHome[i] {
 				renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
 					groupGutter(groupKeys[i], true, g,
 						rowMargin(&p, animator, true, false, hovered))+"  ")
@@ -471,7 +484,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			if lastInGroup[i] {
 				g = "╰"
 			}
-			if streamKeys[i] != "" {
+			if streamKeys[i] != "" && !isStreamHome[i] {
 				renderCompactRow(&buf, &p, width-5, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
 					groupGutter(groupKeys[i], true, g,
 						rowMargin(&p, animator, false, isCursor, hovered))+"  ")
@@ -561,9 +574,16 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 						if prevStream == "" {
 							writeStreamGap(&buf, groupKeys[i])
 						}
-						headerY := lineOf()
-						writeStreamLabel(&buf, groupKeys[i], s)
-						rows = append(rows, RowRef{Y: headerY, Name: snap.Projects[i].Name})
+						// The stream's HOME row (its folder — a real,
+						// navigable place since 2026-08-18) opens the run
+						// itself; the synthetic label only stands in when
+						// no home row is visible (older layouts, or a
+						// collapsed home over a pierced member).
+						if !isStreamHome[i] {
+							headerY := lineOf()
+							writeStreamLabel(&buf, groupKeys[i], s)
+							rows = append(rows, RowRef{Y: headerY, Name: snap.Projects[i].Name})
+						}
 					}
 					prevStream = s
 				}

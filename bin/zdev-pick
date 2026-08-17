@@ -64,22 +64,33 @@ projects_feed() {
 }
 
 # _row_sort mirrors proto.RowSort (the daemon's row order): LC_ALL=C byte
-# order, except a group's floor members (<group>/<repo>) sort before its
-# stream members (<group>/<stream>/<repo>) so streams cluster after the
-# floor. Decorate/sort/undecorate: the key rewrites the first "/" to "/0/"
-# (floor) or "/1/" (stream); bare names key as themselves. "0" and "1"
-# both sort after "/" and before every name byte that matters, so the key
-# order equals plain byte order whenever no 3-segment names exist —
+# order, except a group's floor members sort before its stream block, and
+# within it each stream's HOME row (<init>/<stream>, proto.StreamHomeSet)
+# heads its members. Universe-aware decorate/sort/undecorate: first pass
+# marks 2-segment names that prefix a 3-segment row as stream homes; keys
+# are <g>/0/<repo> (floor), <g>/1/<stream>/0 (home), <g>/1/<stream>/1/<r>
+# (member). Byte-identical to plain sort when no 3-segment names exist —
 # the same compatibility claim proto.RowSort makes.
 _row_sort() {
     awk '{
-        key=$0
-        i=index($0, "/")
-        if (i > 1) {
-            rest=substr($0, i+1)
-            key=substr($0, 1, i-1) (index(rest, "/") ? "/1/" : "/0/") rest
+        lines[NR] = $0
+        n = split($0, seg, "/")
+        if (n >= 3) shome[seg[1] "/" seg[2]] = 1
+    }
+    END {
+        for (i = 1; i <= NR; i++) {
+            l = lines[i]
+            n = split(l, seg, "/")
+            key = l
+            if (n == 2) {
+                if (l in shome) key = seg[1] "/1/" seg[2] "/0"
+                else            key = seg[1] "/0/" seg[2]
+            } else if (n >= 3) {
+                rest = substr(l, length(seg[1]) + length(seg[2]) + 3)
+                key = seg[1] "/1/" seg[2] "/1/" rest
+            }
+            printf "%s\t%s\n", key, l
         }
-        printf "%s\t%s\n", key, $0
     }' | LC_ALL=C sort | cut -f2
 }
 

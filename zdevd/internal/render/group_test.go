@@ -113,7 +113,7 @@ func TestGroupedFrameFlat(t *testing.T) {
 func streamSnapshot() *proto.Snapshot {
 	names := []string{
 		"alpha", "alpha/pay-app", "alpha/pay-id",
-		"alpha/backend/pay-app",
+		"alpha/backend", "alpha/backend/pay-app",
 		"alpha/emails/pay-app", "alpha/emails/pay-mailer",
 		"zdev",
 	}
@@ -144,11 +144,14 @@ func TestStreamFrames(t *testing.T) {
 	out := stripAnsi(Render(streamSnapshot(), 50, NewAnimator(), fixedNowFn))
 	lines := strings.Split(out, "\n")
 
-	// One subtle label per stream, on the group rail at member indent.
-	for _, h := range []string{"  \u2502  backend", "  \u2502  emails"} {
-		if n := strings.Count(out, h+"\n"); n != 1 {
-			t.Errorf("stream label %q count = %d, want 1:\n%s", h, n, out)
-		}
+	// backend has a HOME row (its folder rows since 2026-08-18): a real
+	// member-shaped row heads the run — no synthetic label for it.
+	if n := strings.Count(out, "  \u2502  \u00b7 backend\n"); n != 1 {
+		t.Errorf("stream home row count = %d, want 1:\n%s", n, out)
+	}
+	// emails has no home row: the synthetic subtle label stands in.
+	if n := strings.Count(out, "  \u2502  emails\n"); n != 1 {
+		t.Errorf("synthetic stream label count = %d, want 1:\n%s", n, out)
 	}
 	// Exactly one rail-only breathing line between floor and streams.
 	gap := 0
@@ -181,7 +184,7 @@ func TestStreamFrames(t *testing.T) {
 	}
 	// Order: floor, then gap, then backend's run, then emails'.
 	iFloor := strings.Index(out, "\u00b7 pay-id")
-	iBackend := strings.Index(out, "\u2502  backend")
+	iBackend := strings.Index(out, "\u00b7 backend")
 	iEmails := strings.Index(out, "\u2502  emails")
 	if !(iFloor < iBackend && iBackend < iEmails) {
 		t.Errorf("streams must cluster after the floor: floor=%d backend=%d emails=%d:\n%s",

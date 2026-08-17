@@ -73,6 +73,7 @@ func TestRowSort(t *testing.T) {
 	names := []string{
 		"zdev",
 		"marketplace/backend/pay-app",
+		"marketplace/backend",
 		"marketplace/area-selector/pay-app",
 		"marketplace/pay-toggles",
 		"marketplace",
@@ -87,12 +88,32 @@ func TestRowSort(t *testing.T) {
 		"marketplace/pay-app",
 		"marketplace/pay-toggles",
 		"marketplace/area-selector/pay-app",
+		"marketplace/backend",
 		"marketplace/backend/pay-app",
 		"projects/pay-app",
 		"zdev",
 	}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("RowSort:\n got %v\nwant %v", names, want)
+	}
+}
+
+func TestStreamHomeSet(t *testing.T) {
+	names := []string{
+		"marketplace", "marketplace/pay-app",
+		"marketplace/backend", "marketplace/backend/pay-app",
+		"marketplace/area-selector/pay-app", // members without a home row: no home
+		"projects/pay-app",
+	}
+	homes := StreamHomeSet(names)
+	if !homes["marketplace/backend"] {
+		t.Errorf("marketplace/backend must be a stream home")
+	}
+	if homes["marketplace/pay-app"] || homes["marketplace"] || homes["projects/pay-app"] {
+		t.Errorf("unexpected stream homes: %v", homes)
+	}
+	if len(homes) != 1 {
+		t.Errorf("homes = %v; want exactly the one rowed prefix", homes)
 	}
 }
 

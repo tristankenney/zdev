@@ -78,31 +78,76 @@ func StreamKey(name string) string {
 	return ""
 }
 
-// RowSort orders sidebar row names: plain lexicographic — the tree mirrors
-// the disk; homes naturally precede their members — except within one
-// group, where FLOOR members (<group>/<repo>) sort before STREAM members
-// (<group>/<stream>/<repo>), clustering streams after the floor
-// (workstreams decision 2026-08-17: the floor is stream zero; streams are
-// the second concurrent concern onward, so they hang below the floor
-// instead of interleaving with it alphabetically).
-//
-// Byte-identical to sort.Strings on any universe without 3-segment names:
-// the comparator only deviates for two names sharing a group key, and the
-// floor/stream split permutes names inside the "<group>/" prefix block —
-// contiguous under lexicographic order — so the order stays total and
-// transitive. Applied by BOTH hub ordering sites (buildSnapshot and
-// orderedRowNames — the Invariant-9 drift class) and mirrored by
-// bin/zdev-pick's decorated sort. Pure.
-func RowSort(names []string) {
-	sort.Slice(names, func(i, j int) bool { return rowLess(names[i], names[j]) })
+// StreamHomeSet returns the set of 2-segment names that are STREAM HOMES:
+// names that are the <initiative>/<stream> prefix of at least one
+// 3-segment row (the stream folder itself, rowed by the registry since
+// 2026-08-18 — the runner and the stream CLAUDE.md live there). Structural
+// and derived from the names alone, exactly like HomeSet, so the hub, the
+// renderer, and the switcher compute the identical set and stream-home-ness
+// never rides the wire. Pure.
+func StreamHomeSet(names []string) map[string]bool {
+	prefixes := make(map[string]bool)
+	for _, n := range names {
+		if sk := StreamKey(n); sk != "" {
+			prefixes[n[:strings.IndexByte(n, '/')+1+len(sk)]] = true
+		}
+	}
+	homes := make(map[string]bool)
+	for _, n := range names {
+		if prefixes[n] {
+			homes[n] = true
+		}
+	}
+	return homes
 }
 
-func rowLess(a, b string) bool {
+// RowSort orders sidebar row names: plain lexicographic — the tree mirrors
+// the disk; homes naturally precede their members — except within one
+// group, where FLOOR members (<group>/<repo>) sort before the STREAM block
+// (workstreams decision 2026-08-17: the floor is stream zero; streams are
+// the second concurrent concern onward, so they hang below the floor
+// instead of interleaving with it alphabetically). Within the stream
+// block, streams order by name and each stream's HOME row (the 2-segment
+// folder row, StreamHomeSet) heads its members — the same home-precedes-
+// members shape the group level has.
+//
+// Byte-identical to sort.Strings on any universe without 3-segment names:
+// every deviation is keyed off StreamKey/StreamHomeSet, which are empty
+// there, and the permutations stay inside the contiguous "<group>/" prefix
+// block, so the order stays total and transitive. Applied by BOTH hub
+// ordering sites (buildSnapshot and orderedRowNames — the Invariant-9
+// drift class) and mirrored by bin/zdev-pick's decorated sort. Pure.
+func RowSort(names []string) {
+	streamHomes := StreamHomeSet(names)
+	sort.Slice(names, func(i, j int) bool { return rowLess(names[i], names[j], streamHomes) })
+}
+
+// rowStream resolves the stream segment a name belongs to: the middle
+// segment for members, the trailing segment for stream homes, "" for
+// everything else.
+func rowStream(name string, streamHomes map[string]bool) string {
+	if sk := StreamKey(name); sk != "" {
+		return sk
+	}
+	if streamHomes[name] {
+		return name[strings.IndexByte(name, '/')+1:]
+	}
+	return ""
+}
+
+func rowLess(a, b string, streamHomes map[string]bool) bool {
 	if ka, kb := GroupKey(a), GroupKey(b); ka == "" || ka != kb {
 		return a < b
 	}
-	if sa, sb := StreamKey(a) != "", StreamKey(b) != ""; sa != sb {
-		return sb
+	sa, sb := rowStream(a, streamHomes), rowStream(b, streamHomes)
+	if (sa == "") != (sb == "") {
+		return sa == "" // floor before the stream block
+	}
+	if sa != sb {
+		return sa < sb // streams cluster by name
+	}
+	if sa != "" && streamHomes[a] != streamHomes[b] {
+		return streamHomes[a] // the stream's home heads its members
 	}
 	return a < b
 }

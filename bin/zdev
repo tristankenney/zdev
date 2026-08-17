@@ -115,7 +115,18 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
                     # folder holding repos is a stream — one pay-cli stack
                     # (= one set of containers, one runner, its own DNS
                     # namespace <service>.<init>-<stream>.orb.local). Each
-                    # repo inside rows as <init>/<stream>/<repo>.
+                    # repo inside rows as <init>/<stream>/<repo>, and the
+                    # folder itself rows as <init>/<stream> — the STREAM
+                    # HOME (2026-08-18): the runner and the stream
+                    # CLAUDE.md live there, so work happens there too.
+                    # Home first, so the row order matches proto.RowSort.
+                    _stream_has_repo=0
+                    for _w in "$_r"*/; do
+                        [[ -d "$_w" && -e "$_w/.git" ]] && { _stream_has_repo=1; break; }
+                    done
+                    if [[ "$_stream_has_repo" == "1" || -f "$_r/.pay/stack.yml" ]]; then
+                        _add_project "$_b/$_rb" "initiative-stream-home"
+                    fi
                     for _w in "$_r"*/; do
                         [[ -d "$_w" ]] || continue
                         _wb="${_w%/}"; _wb="${_wb##*/}"
@@ -214,6 +225,12 @@ build_layout() {
             local binary launch
             while IFS=$'\t' read -r binary launch; do
                 [[ -z "$binary" || -z "$launch" ]] && continue
+                # Defense in depth behind the daemon's config validation:
+                # $binary is interpolated into the generated chain, so an
+                # unexpected token must be skipped, never executed.
+                case "$binary" in
+                    -*|*[!A-Za-z0-9._/+-]*) continue ;;
+                esac
                 if [[ -n "$chain" ]]; then
                     chain="$chain "
                 fi
