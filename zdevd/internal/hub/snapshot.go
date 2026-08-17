@@ -832,8 +832,8 @@ func orderedRowNames(st *state) []string {
 // Reads only state maps (projectData displayed Attention, clientSessions) —
 // no derivation side effects — so buildSnapshot and cursorFlatRows can both
 // call it and MUST both call it: it participates in navigation row order,
-// the single-authority contract sortRowNames also lives under. Hub goroutine
-// only.
+// the single-authority contract proto.RowSort also lives under. Hub
+// goroutine only.
 func collapsedNames(st *state, names []string) map[string]struct{} {
 	if !st.collapseGroups {
 		return nil
