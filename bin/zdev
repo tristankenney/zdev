@@ -918,29 +918,92 @@ STREAMEOF
                 ;;
             rm)
                 stream_path="${1:-}"
-                if [[ -z "$stream_path" || "$stream_path" != */* ]]; then
+                # Exactly two validated segments — this string reaches rm -rf.
+                # Segments may not be empty, dot-led (also kills . and ..),
+                # option-like, or contain anything beyond [A-Za-z0-9._-];
+                # extra depth and absolute paths fail the two-segment split.
+                stream_init="${stream_path%%/*}"
+                stream_name="${stream_path#*/}"
+                _seg_ok() {
+                    case "$1" in
+                        ''|-*|.*) return 1 ;;
+                        *[!A-Za-z0-9._-]*) return 1 ;;
+                    esac
+                    return 0
+                }
+                if [[ -z "$stream_path" || "$stream_path" != */* || "$stream_name" == */* ]]                     || ! _seg_ok "$stream_init" || ! _seg_ok "$stream_name"; then
                     echo "usage: zdev stream rm <initiative>/<name>" >&2
                     exit 2
                 fi
                 stream_dir="$WORKSPACE/$stream_path"
-                if [[ ! -f "$stream_dir/.pay/stack.yml" && ! -d "$stream_dir" ]]; then
+                if [[ ! -d "$stream_dir" ]]; then
                     echo "zdev stream: no such workstream: $stream_path" >&2
                     exit 1
                 fi
-                # Refuse while any repo inside is dirty or unpushed — full
-                # clones share nothing, so rm -rf is unrecoverable.
-                for _r in "$stream_dir"/*/; do
+                # Canonicalise (symlinks resolved) and prove the target sits
+                # strictly beneath its initiative, which sits in the
+                # workspace — a symlinked or traversal-crafted target lands
+                # outside this chain and is refused before any teardown.
+                _ws_real=$(cd "$WORKSPACE" 2>/dev/null && pwd -P)
+                _init_real=$(cd "$WORKSPACE/$stream_init" 2>/dev/null && pwd -P)
+                _target_real=$(cd "$stream_dir" 2>/dev/null && pwd -P)
+                if [[ -z "$_ws_real" || -z "$_init_real" || -z "$_target_real"                     || "$_init_real" != "$_ws_real/$stream_init"                     || "$_target_real" != "$_init_real/$stream_name" ]]; then
+                    echo "zdev stream: $stream_path does not resolve inside the workspace — refusing" >&2
+                    exit 1
+                fi
+                # Identity is the zdev-owned marker, never mere existence: a
+                # stream folder carries .pay/stack.yml naming this exact
+                # stream, and is not itself a repository — an ordinary
+                # initiative member (a clone) is both of those things
+                # inverted, and deleting one loses a working copy.
+                if [[ -e "$_target_real/.git" ]]; then
+                    echo "zdev stream: $stream_path is a repository, not a workstream — refusing" >&2
+                    exit 1
+                fi
+                _qname=$(sed -n 's/^name: //p' "$_target_real/.pay/stack.yml" 2>/dev/null | head -1 || true)
+                if [[ "$_qname" != "$stream_init-$stream_name" ]]; then
+                    echo "zdev stream: $stream_path has no valid stream marker (.pay/stack.yml name: $stream_init-$stream_name) — refusing" >&2
+                    exit 1
+                fi
+                # Refuse while any repo inside is dirty, mid-merge/rebase,
+                # or carries commits not proven to exist on the remote —
+                # full clones share nothing, so rm -rf is unrecoverable.
+                # Failed git inspection counts as unsafe, never as clean.
+                for _r in "$_target_real"/*/; do
                     [[ -e "$_r/.git" ]] || continue
+                    _rb=$(basename "$_r")
                     if [[ -n "$(git -C "$_r" status --porcelain 2>/dev/null)" ]]; then
-                        echo "zdev stream: $(basename "$_r") has uncommitted changes — commit/stash first" >&2
+                        echo "zdev stream: $_rb has uncommitted changes — commit/stash first" >&2
                         exit 1
                     fi
-                    _ahead=$(git -C "$_r" rev-list --count @{upstream}..HEAD 2>/dev/null || echo 0)
-                    if [[ "$_ahead" != "0" ]]; then
-                        echo "zdev stream: $(basename "$_r") has $_ahead unpushed commit(s) — push first" >&2
+                    _gd=$(git -C "$_r" rev-parse --git-dir 2>/dev/null)
+                    if [[ -z "$_gd" ]]; then
+                        echo "zdev stream: $_rb: git inspection failed — refusing" >&2
                         exit 1
+                    fi
+                    case "$_gd" in /*) ;; *) _gd="$_r/$_gd" ;; esac
+                    if [[ -e "$_gd/MERGE_HEAD" || -d "$_gd/rebase-merge" || -d "$_gd/rebase-apply" ]]; then
+                        echo "zdev stream: $_rb has a merge/rebase in progress — finish or abort it first" >&2
+                        exit 1
+                    fi
+                    if git -C "$_r" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
+                        _ahead=$(git -C "$_r" rev-list --count '@{upstream}..HEAD' 2>/dev/null)
+                        if [[ -z "$_ahead" || "$_ahead" != "0" ]]; then
+                            echo "zdev stream: $_rb has ${_ahead:-unknown} unpushed commit(s) — push first" >&2
+                            exit 1
+                        fi
+                    else
+                        # No upstream (stream add's checkout -b never sets
+                        # one): fail closed unless HEAD is reachable from
+                        # some remote-tracking ref. Also the detached-HEAD
+                        # path — no upstream there either.
+                        if [[ -z "$(git -C "$_r" branch -r --contains HEAD 2>/dev/null)" ]]; then
+                            echo "zdev stream: $_rb has no upstream and HEAD is not on any remote — push first (git push -u origin <branch>)" >&2
+                            exit 1
+                        fi
                     fi
                 done
+                stream_dir="$_target_real"
                 # Runner teardown BEFORE deletion: streams pop in and out,
                 # and every popped stream would otherwise leave orphaned
                 # containers and VOLUMES behind its compose project. The
@@ -958,6 +1021,13 @@ STREAMEOF
                         fi
                     fi
                 fi
+                # Final revalidation of the exact resolved target: the
+                # marker must still be present at the path rm receives.
+                if [[ ! -f "$stream_dir/.pay/stack.yml" ]]; then
+                    echo "zdev stream: $stream_dir lost its stream marker mid-teardown — refusing" >&2
+                    exit 1
+                fi
+                echo "zdev stream: removing $stream_dir"
                 rm -rf "$stream_dir"
                 echo "zdev stream: removed $stream_path (runner down, remote branches kept)"
                 ;;
