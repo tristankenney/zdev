@@ -286,6 +286,8 @@ test: $(PLIST_BUILT)
 	bash "$(ZDEVD_DIR)/scripts/check-no-tmux-poll.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-shell-out.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-lipgloss-scatter.sh"
+	cd "$(ZDEVD_DIR)" && fmtout="$$(gofmt -l .)" && test -z "$$fmtout" || { echo "gofmt: unformatted files:"; echo "$$fmtout"; exit 1; }
+	cd "$(ZDEVD_DIR)" && go vet ./...
 	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
 else
 test: $(ZDEVD_UNIT_BUILT)
@@ -297,6 +299,8 @@ test: $(ZDEVD_UNIT_BUILT)
 	bash "$(ZDEVD_DIR)/scripts/check-no-tmux-poll.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-shell-out.sh"
 	bash "$(ZDEVD_DIR)/scripts/check-no-lipgloss-scatter.sh"
+	cd "$(ZDEVD_DIR)" && fmtout="$$(gofmt -l .)" && test -z "$$fmtout" || { echo "gofmt: unformatted files:"; echo "$$fmtout"; exit 1; }
+	cd "$(ZDEVD_DIR)" && go vet ./...
 	cd "$(ZDEVD_DIR)" && go test -race -count=1 ./...
 endif
 

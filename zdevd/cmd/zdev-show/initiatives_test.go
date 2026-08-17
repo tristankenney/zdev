@@ -379,7 +379,12 @@ func TestDeriveMember_LiveGit(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
+		// Hermetic against the developer's real git setup: global config
+		// (commit.gpgsign in particular — a GPG prompt fails the test),
+		// system config, and any template hooks.
 		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+			"GIT_TEMPLATE_DIR=",
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@x", "GIT_AUTHOR_DATE=2026-01-01T00:00:00Z",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z")
 		if out, err := cmd.CombinedOutput(); err != nil {
