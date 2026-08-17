@@ -30,10 +30,11 @@ func TestDisplayName(t *testing.T) {
 
 	GroupMode = "prefix"
 	cases := map[string]string{
-		"marketplace/pay-app": "pay-app",
-		"projects/pay-app":    "pay-app",
-		"marketplace":         "marketplace",
-		"zdev":                "zdev",
+		"marketplace/pay-app":         "pay-app",
+		"marketplace/backend/pay-app": "pay-app",
+		"projects/pay-app":            "pay-app",
+		"marketplace":                 "marketplace",
+		"zdev":                        "zdev",
 	}
 	for name, want := range cases {
 		if got := displayName(name); got != want {
@@ -103,6 +104,117 @@ func TestGroupedFrameFlat(t *testing.T) {
 	}
 	if strings.Contains(out, "\n  ──────\n") {
 		t.Errorf("no bare separators in the flat layout:\n%s", out)
+	}
+}
+
+// streamSnapshot mirrors an initiative with workstreams, in daemon
+// (proto.RowSort) order: home, floor members, then streams clustered —
+// one single-repo stream, one two-repo stream.
+func streamSnapshot() *proto.Snapshot {
+	names := []string{
+		"alpha", "alpha/pay-app", "alpha/pay-id",
+		"alpha/backend/pay-app",
+		"alpha/emails/pay-app", "alpha/emails/pay-mailer",
+		"zdev",
+	}
+	snap := &proto.Snapshot{}
+	for _, n := range names {
+		snap.Projects = append(snap.Projects, proto.Project{Name: n, Status: "alive"})
+	}
+	return snap
+}
+
+// Nested stream frames (stream-rows design review, 2026-08-17): each
+// stream opens a ╭ header on the initiative's rail; its repos hang under
+// a second rail, bare-named; the group's final row closes both frames.
+func TestStreamFrames(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+
+	GroupMode = "off"
+	off := stripAnsi(Render(streamSnapshot(), 50, NewAnimator(), fixedNowFn))
+	if strings.Contains(off, "╭ backend") {
+		t.Fatalf("GroupMode=off must not render stream headers:\n%s", off)
+	}
+	if !strings.Contains(off, "alpha/backend/pay-app") {
+		t.Errorf("GroupMode=off keeps full stream-member names:\n%s", off)
+	}
+
+	GroupMode = "prefix"
+	out := stripAnsi(Render(streamSnapshot(), 50, NewAnimator(), fixedNowFn))
+
+	// One header per stream, hanging on the initiative's rail.
+	for _, h := range []string{"  │ ╭ backend", "  │ ╭ emails"} {
+		if n := strings.Count(out, h); n != 1 {
+			t.Errorf("stream header %q count = %d, want 1:\n%s", h, n, out)
+		}
+	}
+	// Floor members keep the single-rail form.
+	if !strings.Contains(out, "  │  · pay-app") || !strings.Contains(out, "  │  · pay-id") {
+		t.Errorf("floor members must keep the single-rail gutter:\n%s", out)
+	}
+	// A single-repo stream closes its own rail while the initiative's runs on.
+	if !strings.Contains(out, "  │ ╰  · pay-app") {
+		t.Errorf("backend's only repo must close the stream rail under a running group rail:\n%s", out)
+	}
+	// A two-repo stream: first repo rides both rails, last closes the rail —
+	// and, being the group's final row, the group frame too.
+	if !strings.Contains(out, "  │ │  · pay-app") {
+		t.Errorf("emails' first repo must ride both rails:\n%s", out)
+	}
+	if !strings.Contains(out, "  ╰ ╰  · pay-mailer") {
+		t.Errorf("the group's final stream row closes both frames:\n%s", out)
+	}
+	// Stream repos are bare-named — the header carries the stream.
+	if strings.Contains(out, "backend/pay-app") || strings.Contains(out, "emails/pay-app") {
+		t.Errorf("stream members must not repeat the stream prefix:\n%s", out)
+	}
+	// Order: floor, then backend's frame, then emails' frame.
+	iFloor := strings.Index(out, "· pay-id")
+	iBackend := strings.Index(out, "╭ backend")
+	iEmails := strings.Index(out, "╭ emails")
+	if !(iFloor < iBackend && iBackend < iEmails) {
+		t.Errorf("streams must cluster after the floor: floor=%d backend=%d emails=%d:\n%s",
+			iFloor, iBackend, iEmails, out)
+	}
+}
+
+// A collapsed stream leaves no header behind; a pierced (working) member
+// re-opens its stream's frame.
+func TestStreamFramesCollapse(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "alpha", Status: "alive"},
+		{Name: "alpha/pay-app", Status: "alive", Collapsed: true},
+		{Name: "alpha/backend/pay-app", Status: "alive", Collapsed: true},
+		{Name: "alpha/emails/pay-app", Status: "shell-running", Attention: proto.AttWorking},
+	}}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	if strings.Contains(out, "╭ backend") {
+		t.Errorf("a fully folded stream must not emit its header:\n%s", out)
+	}
+	if n := strings.Count(out, "╭ emails"); n != 1 {
+		t.Errorf("a pierced stream keeps its header, count = %d:\n%s", n, out)
+	}
+	if !strings.Contains(out, "╭ alpha ·2") {
+		t.Errorf("home rollup counts folded floor and stream members alike:\n%s", out)
+	}
+}
+
+// The current session inside a stream keeps both rails, ▌ still in the
+// margin at column 0; metadata rows hang inside the mini-frame.
+func TestStreamCurrentMember(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := streamSnapshot()
+	snap.CurrentSession = "alpha/emails/pay-app"
+	snap.Projects[4].Branch = "emails/build"
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	if !strings.Contains(out, "▌ │ │") {
+		t.Errorf("current stream member must carry ▌ in the margin ahead of both rails:\n%s", out)
+	}
+	if strings.Contains(out, "│▌") || strings.Contains(out, "││") {
+		t.Errorf("rails must never fuse:\n%s", out)
 	}
 }
 
