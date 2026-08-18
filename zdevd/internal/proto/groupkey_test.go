@@ -117,6 +117,31 @@ func TestStreamHomeSet(t *testing.T) {
 	}
 }
 
+// TestRowSortPrefixAdjacentStreams pins the order for stream names where
+// one is a byte prefix of another ("backend" / "backend-v2"): Go string
+// comparison puts the prefix first, and bin/zdev-pick's decorated sort
+// must agree — its stream-segment terminator is \x01 precisely so the key
+// bytes reproduce this (invariants review of 068c586, finding 1).
+func TestRowSortPrefixAdjacentStreams(t *testing.T) {
+	names := []string{
+		"init/backend-v2/pay-app", "init/backend-v2",
+		"init/backend/pay-app", "init/backend",
+		"init/a-b/r1", "init/a-b", "init/a/r1", "init/a",
+		"init/floor-repo", "init",
+	}
+	RowSort(names)
+	want := []string{
+		"init", "init/floor-repo",
+		"init/a", "init/a/r1",
+		"init/a-b", "init/a-b/r1",
+		"init/backend", "init/backend/pay-app",
+		"init/backend-v2", "init/backend-v2/pay-app",
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("prefix-adjacent streams:\n got %v\nwant %v", names, want)
+	}
+}
+
 // TestRowSortMatchesPlainSortWithoutStreams pins the compatibility claim:
 // on a universe with no 3-segment names RowSort is byte-identical to
 // sort.Strings, including the prefix-adjacent shapes where a naive

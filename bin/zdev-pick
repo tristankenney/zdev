@@ -71,8 +71,14 @@ projects_feed() {
 # are <g>/0/<repo> (floor), <g>/1/<stream>/0 (home), <g>/1/<stream>/1/<r>
 # (member). Byte-identical to plain sort when no 3-segment names exist —
 # the same compatibility claim proto.RowSort makes.
+# The stream segment terminates with \x01, not "/": "/" (0x2F) sorts
+# AFTER "-" and "." so a "/" terminator put stream "backend-v2" before
+# "backend" while Go's plain string compare puts the prefix first
+# (invariants review of 068c586, finding 1). \x01 sorts before every
+# legal name byte, reproducing Go's order.
 _row_sort() {
-    awk '{
+    awk 'BEGIN { sep = sprintf("%c", 1) }
+    {
         lines[NR] = $0
         n = split($0, seg, "/")
         if (n >= 3) shome[seg[1] "/" seg[2]] = 1
@@ -83,11 +89,11 @@ _row_sort() {
             n = split(l, seg, "/")
             key = l
             if (n == 2) {
-                if (l in shome) key = seg[1] "/1/" seg[2] "/0"
+                if (l in shome) key = seg[1] "/1/" seg[2] sep "0"
                 else            key = seg[1] "/0/" seg[2]
             } else if (n >= 3) {
                 rest = substr(l, length(seg[1]) + length(seg[2]) + 3)
-                key = seg[1] "/1/" seg[2] "/1/" rest
+                key = seg[1] "/1/" seg[2] sep "1/" rest
             }
             printf "%s\t%s\n", key, l
         }

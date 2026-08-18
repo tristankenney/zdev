@@ -118,7 +118,16 @@ func StreamHomeSet(names []string) map[string]bool {
 // ordering sites (buildSnapshot and orderedRowNames — the Invariant-9
 // drift class) and mirrored by bin/zdev-pick's decorated sort. Pure.
 func RowSort(names []string) {
-	streamHomes := StreamHomeSet(names)
+	RowSortWith(names, StreamHomeSet(names))
+}
+
+// RowSortWith is RowSort with the StreamHomeSet supplied by the caller —
+// for callers that sort several slices of ONE name universe (the hub's
+// managed and unmanaged blocks): computing the set per slice would let a
+// stream home land in one block and its members in another, giving each
+// sort a different answer than the renderer's union-derived set
+// (invariants review of 068c586, finding 2).
+func RowSortWith(names []string, streamHomes map[string]bool) {
 	sort.Slice(names, func(i, j int) bool { return rowLess(names[i], names[j], streamHomes) })
 }
 

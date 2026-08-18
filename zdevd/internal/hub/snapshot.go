@@ -81,8 +81,15 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 			names = append(names, sess.Name)
 		}
 	}
-	proto.RowSort(names)
-	proto.RowSort(unmanagedNames) // no-op when hide (default)
+	// One StreamHomeSet over the FULL union: the managed and unmanaged
+	// blocks sort separately, but a stream home and its members can split
+	// across them (UNMANAGED=show), and the renderer derives its set from
+	// the union — same universe or the sets drift.
+	universe := make([]string, 0, len(names)+len(unmanagedNames))
+	universe = append(append(universe, names...), unmanagedNames...)
+	streamHomes := proto.StreamHomeSet(universe)
+	proto.RowSortWith(names, streamHomes)
+	proto.RowSortWith(unmanagedNames, streamHomes) // no-op when hide (default)
 
 	// Lead de-aggregation (Agent Teams slice B): when teamWindows is on,
 	// collect the panes claimed by team members once so each session's
@@ -805,8 +812,13 @@ func orderedRowNames(st *state) []string {
 			names = append(names, sess.Name)
 		}
 	}
-	proto.RowSort(names)
-	proto.RowSort(unmanagedNames)
+	// Same union-derived StreamHomeSet as buildSnapshot — the drift-class
+	// contract covers the comparator's INPUTS, not just its code.
+	universe := make([]string, 0, len(names)+len(unmanagedNames))
+	universe = append(append(universe, names...), unmanagedNames...)
+	streamHomes := proto.StreamHomeSet(universe)
+	proto.RowSortWith(names, streamHomes)
+	proto.RowSortWith(unmanagedNames, streamHomes)
 
 	return append(names, unmanagedNames...)
 }
