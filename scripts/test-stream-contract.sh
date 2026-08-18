@@ -112,6 +112,94 @@ else
     [[ $fails -eq 0 ]] && ok "clean pushed stream removes exactly the resolved target"
 fi
 
+# ===========================================================================
+# stream add — transactional contract (adversarial review follow-up: no
+# partial stream may survive a failed or malformed add; a partial folder
+# would row as a phantom stream home).
+# ===========================================================================
+
+# expect_add_refusal <exit-code> <label> <arg...>: refuse with the code and
+# leave NO stream directory behind — the transactional guarantee.
+expect_add_refusal() {
+    local want="$1" label="$2" streamdir="$3"
+    shift 3
+    local got=0
+    zstream add "$@" >/dev/null 2>&1 || got=$?
+    if [[ "$got" != "$want" ]]; then
+        fail "$label: exit $got, want $want"
+        return
+    fi
+    if [[ -n "$streamdir" && -e "$WS/$streamdir" ]]; then
+        fail "$label: refused but left a partial stream at $streamdir"
+        return
+    fi
+    ok "$label"
+}
+
+build_add_fixture() {
+    rm -rf "$WS"
+    mkdir -p "$WS/init" "$WS/projects"
+    touch "$WS/init/INITIATIVE.md"
+    for r in repo1 repo2; do
+        git init -q -b master "$WS/init/$r"
+        git -C "$WS/init/$r" -c user.email=t@x -c user.name=t \
+            commit -q --allow-empty -m seed
+    done
+    # A drawer-sourced repo too — the second clone-source lookup path.
+    git init -q -b master "$WS/projects/repo3"
+    git -C "$WS/projects/repo3" -c user.email=t@x -c user.name=t \
+        commit -q --allow-empty -m seed
+}
+
+build_add_fixture
+
+# ---- malformed options: refused before anything is created ----------------
+expect_add_refusal 2 "add: no args" ""
+expect_add_refusal 2 "add: missing repos" "" init solo
+expect_add_refusal 2 "add: traversal initiative" "" "../evil" s1 repo1
+expect_add_refusal 2 "add: option-like initiative" "" "-rf" s1 repo1
+expect_add_refusal 2 "add: option-like stream name" "init/-rf" init "-rf" repo1
+expect_add_refusal 2 "add: dotted stream name" "init/s.1" init "s.1" repo1
+expect_add_refusal 2 "add: slashed repo name" "init/s1" init s1 "re/po"
+expect_add_refusal 2 "add: --branch without value" "init/s1" init s1 repo1 --branch
+expect_add_refusal 1 "add: not an initiative" "nope/s1" nope s1 repo1
+
+# ---- partial failures roll the whole folder back ---------------------------
+expect_add_refusal 1 "add: no local source rolls back" "init/s1" init s1 ghost-repo
+expect_add_refusal 1 "add: second-repo failure rolls back first clone" "init/s1" init s1 repo1 ghost-repo
+expect_add_refusal 1 "add: missing --branch target rolls back" "init/s1" init s1 repo1 --branch no-such-branch
+
+# ---- happy path ------------------------------------------------------------
+if ! out=$(zstream add init s1 repo1 repo2 repo3 2>&1); then
+    fail "add happy path refused: $out"
+else
+    d="$WS/init/s1"
+    [[ -f "$d/.pay/stack.yml" ]] || fail "add: stack.yml missing"
+    grep -q '^name: init-s1$' "$d/.pay/stack.yml" || fail "add: unqualified stack name"
+    grep -q '^primary: repo1$' "$d/.pay/stack.yml" || fail "add: wrong primary"
+    [[ -f "$d/CLAUDE.md" ]] || fail "add: stream CLAUDE.md missing"
+    for r in repo1 repo2 repo3; do
+        [[ -e "$d/$r/.git" ]] || fail "add: $r not cloned"
+    done
+    b=$(git -C "$d/repo1" symbolic-ref --short HEAD)
+    [[ "$b" == "init/s1" ]] || fail "add: primary branch = $b, want init/s1"
+    b=$(git -C "$d/repo2" symbolic-ref --short HEAD)
+    [[ "$b" == "master" ]] || fail "add: supporting repo moved off master ($b)"
+    [[ $fails -eq 0 ]] && ok "add: happy path — qualified stack, CLAUDE.md, clones, primary branch"
+fi
+
+# add-then-rm round trip: what add creates, rm accepts and removes exactly.
+git -C "$WS/init/s1/repo1" update-ref "refs/remotes/origin/init/s1" HEAD
+if ! zstream rm "init/s1" >/dev/null 2>&1; then
+    fail "round trip: rm refused the stream add just built"
+elif [[ -e "$WS/init/s1" ]]; then
+    fail "round trip: rm did not remove the stream"
+elif [[ ! -e "$WS/init/repo1" || ! -e "$WS/projects/repo3" ]]; then
+    fail "round trip: rm touched a clone source"
+else
+    ok "round trip: add → rm removes exactly the stream"
+fi
+
 if [[ $fails -gt 0 ]]; then
     echo "stream contract: $fails failure(s)" >&2
     exit 1

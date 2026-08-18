@@ -832,6 +832,17 @@ case "$1" in
         # (or projects/) so disk cost is untracked files only.
         shift
         stream_op="${1:-}"; shift || true
+        # Shared segment validation for every stream verb: names reach
+        # mkdir/git/rm -rf, so nothing empty, dot-led (kills . and ..),
+        # option-like, or outside [A-Za-z0-9._-] may pass. Extra depth and
+        # absolute paths fail the callers' own splitting.
+        _seg_ok() {
+            case "$1" in
+                ''|-*|.*) return 1 ;;
+                *[!A-Za-z0-9._-]*) return 1 ;;
+            esac
+            return 0
+        }
         case "$stream_op" in
             add)
                 stream_init="${1:-}"; stream_name="${2:-}"; shift 2 || true
@@ -839,12 +850,16 @@ case "$1" in
                     echo "usage: zdev stream add <initiative> <name> <primary-repo> [repo...] [--branch <existing>]" >&2
                     exit 2
                 fi
+                if ! _seg_ok "$stream_init"; then
+                    echo "zdev stream: invalid initiative name: $stream_init" >&2
+                    exit 2
+                fi
+                if ! _seg_ok "$stream_name" || [[ "$stream_name" == *[._]* ]]; then
+                    echo "zdev stream: stream name must be plain kebab-case" >&2
+                    exit 2
+                fi
                 if [[ ! -f "$WORKSPACE/$stream_init/INITIATIVE.md" ]]; then
                     echo "zdev stream: not an initiative: $stream_init" >&2
-                    exit 1
-                fi
-                if [[ "$stream_name" == *[/._]* ]]; then
-                    echo "zdev stream: stream name must be plain kebab-case" >&2
                     exit 1
                 fi
                 stream_dir="$WORKSPACE/$stream_init/$stream_name"
@@ -856,13 +871,34 @@ case "$1" in
                 stream_repos=()
                 while [[ $# -gt 0 ]]; do
                     case "$1" in
-                        --branch)   stream_branch="$2"; shift 2 ;;
+                        --branch)
+                            if [[ $# -lt 2 || -z "$2" ]]; then
+                                echo "zdev stream: --branch needs a value" >&2
+                                exit 2
+                            fi
+                            stream_branch="$2"; shift 2 ;;
                         --branch=*) stream_branch="${1#*=}"; shift ;;
-                        *)          stream_repos+=("$1"); shift ;;
+                        *)
+                            if ! _seg_ok "$1"; then
+                                echo "zdev stream: invalid repo name: $1" >&2
+                                exit 2
+                            fi
+                            stream_repos+=("$1"); shift ;;
                     esac
                 done
                 stream_primary="${stream_repos[0]}"
-                mkdir -p "$stream_dir/.pay"
+                # TRANSACTIONAL from here: the dir did not exist (checked
+                # above), so any failure or interruption before the success
+                # line rolls the whole folder back — a partial stream would
+                # otherwise row as a phantom stream home (the registry keys
+                # on .pay/stack.yml, written first) and orphan clones.
+                _stream_add_fail() {
+                    echo "zdev stream: $1 — rolling back $stream_dir" >&2
+                    rm -rf "$stream_dir"
+                    exit 1
+                }
+                trap '_stream_add_fail interrupted' INT TERM
+                mkdir -p "$stream_dir/.pay" || _stream_add_fail "mkdir failed"
                 {
                     printf '# Written by `zdev stream add` — the qualified name keeps compose\n'
                     printf '# projects (and so <service>.<name>.orb.local DNS) globally unique.\n'
@@ -879,7 +915,7 @@ case "$1" in
                     if [[ -z "$_src" ]]; then
                         echo "zdev stream: no local source for $_repo (looked in $stream_init/ and projects/)" >&2
                         echo "             clone it into one of those first" >&2
-                        exit 1
+                        _stream_add_fail "no source for $_repo"
                     fi
                     # Freshness: fetch ONCE at the source — every hardlinked
                     # clone then inherits current refs for free. Streams pop
@@ -888,9 +924,13 @@ case "$1" in
                     # non-fatal: an offline stream is better than no stream.
                     git -C "$_src" fetch --quiet origin 2>/dev/null \
                         || echo "zdev stream: (offline? fetch failed — $_repo cloned from local refs as-is)"
-                    git clone --quiet "$_src" "$stream_dir/$_repo" || exit 1
+                    git clone --quiet "$_src" "$stream_dir/$_repo" \
+                        || _stream_add_fail "clone failed for $_repo"
                     _origin=$(git -C "$_src" remote get-url origin 2>/dev/null || echo "")
-                    [[ -n "$_origin" ]] && git -C "$stream_dir/$_repo" remote set-url origin "$_origin"
+                    if [[ -n "$_origin" ]]; then
+                        git -C "$stream_dir/$_repo" remote set-url origin "$_origin" \
+                            || _stream_add_fail "origin rewrite failed for $_repo"
+                    fi
                     # Supporting repos: fast-forward the checkout to the
                     # freshly-fetched remote head so the stream starts
                     # CURRENT, not wherever the source's working copy sat.
@@ -901,9 +941,11 @@ case "$1" in
                     if [[ "$_repo" == "$stream_primary" ]]; then
                         if [[ -n "$stream_branch" ]]; then
                             git -C "$stream_dir/$_repo" fetch --quiet origin "$stream_branch" 2>/dev/null || true
-                            git -C "$stream_dir/$_repo" checkout --quiet "$stream_branch" || exit 1
+                            git -C "$stream_dir/$_repo" checkout --quiet "$stream_branch" \
+                                || _stream_add_fail "branch $stream_branch not found in $_repo"
                         else
-                            git -C "$stream_dir/$_repo" checkout --quiet -b "$stream_init/$stream_name"
+                            git -C "$stream_dir/$_repo" checkout --quiet -b "$stream_init/$stream_name" \
+                                || _stream_add_fail "branch $stream_init/$stream_name creation failed in $_repo"
                         fi
                     fi
                     git -C "$stream_dir/$_repo" submodule update --init --recursive >/dev/null 2>&1 || true
@@ -929,6 +971,7 @@ independent of the initiative's other streams.
 - When this stream's purpose ends: 'zdev stream rm $stream_init/$stream_name'
   (tears down the runner; refuses if anything is dirty or unpushed)
 STREAMEOF
+                trap - INT TERM
                 echo "zdev stream: added $stream_init/$stream_name (stack: $stream_init-$stream_name, primary: $stream_primary)"
                 echo "             rows: $stream_init/$stream_name/<repo> · runner: pay dev up in $stream_dir"
                 echo "             DNS: <service>.$stream_init-$stream_name.orb.local"
