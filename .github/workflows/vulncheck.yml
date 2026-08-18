@@ -1,0 +1,29 @@
+# Scheduled vulnerability scan (QA plan section A follow-up; adversarial
+# review 2026-08-17 tooling status). Separate from CI's per-push gate
+# because govulncheck needs network access to vuln.go.dev and must fail
+# VISIBLY when it can't reach it — folding it into `check` would let an
+# offline skip read as "scanned clean". Weekly plus manual dispatch, like
+# the opencode canary; a failure means a new vulnerability (or an
+# unreachable database), not that a commit broke something.
+name: vulncheck
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "0 6 * * 2" # Tuesdays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  vulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: zdevd/go.mod
+          cache-dependency-path: zdevd/go.sum
+      - name: govulncheck (pinned)
+        run: make -C zdevd vulncheck

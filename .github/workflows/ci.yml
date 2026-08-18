@@ -67,8 +67,11 @@ jobs:
       - name: remote-push notify adapter contract
         run: bash scripts/test-notify-adapters.sh
 
-      - name: make test (lint + anti-fork gates + go test -race)
-        run: make -C zdevd test
+      - name: stream rm destructive-command contract
+        run: bash scripts/test-stream-contract.sh
+
+      - name: make check (test gate + pinned staticcheck)
+        run: make -C zdevd check
 
   # Agent-simulation smoke (Linux): real tmux server, real daemon, and
   # synthetic agent lifecycles driven through the SAME entry points the
