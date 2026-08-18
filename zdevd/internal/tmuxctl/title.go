@@ -49,18 +49,25 @@ const (
 	brailleRangeEnd   = 0x28FF
 )
 
+// spinner glyph ranges: the Braille Patterns block (U+2800–U+28FF, the
+// classic Claude Code generating spinner) and the circle-quadrant set
+// ◐◓◑◒ (U+25D0–U+25D3), which newer Claude Code builds title with while
+// working — observed live 2026-08-18, when three visibly-generating
+// sessions all derived bare "alive" and the sidebar showed a quiet fleet.
 // isBrailleSpinnerTitle returns true when the title starts with a Braille
 // Patterns character (U+2800–U+28FF) followed by a space. This is the
 // "Claude is working/generating" state in Claude Code v2.1+.
 func isBrailleSpinnerTitle(title string) bool {
-	if len(title) < 4 { // 3 bytes for Braille char + 1 space minimum
+	if len(title) < 4 { // 3 bytes for spinner char + 1 space minimum
 		return false
 	}
 	r, size := utf8.DecodeRuneInString(title)
 	if r == utf8.RuneError {
 		return false
 	}
-	if r < brailleRangeStart || r > brailleRangeEnd {
+	braille := r >= brailleRangeStart && r <= brailleRangeEnd
+	quadrant := r >= 0x25D0 && r <= 0x25D3 // ◐ ◓ ◑ ◒
+	if !braille && !quadrant {
 		return false
 	}
 	// Check that the rune is followed by a space.

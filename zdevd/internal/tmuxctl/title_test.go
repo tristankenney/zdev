@@ -118,6 +118,36 @@ func TestClassifyPaneTitleBrailleSpinner(t *testing.T) {
 	}
 }
 
+// TestClassifyPaneTitleQuadrantSpinner pins the circle-quadrant spinner
+// ◐◓◑◒ (U+25D0–U+25D3) as working — the title shape newer Claude Code
+// builds set while generating (observed live 2026-08-18: three visibly
+// working sessions derived bare "alive" and the sidebar showed a quiet
+// fleet). Adjacent circle glyphs stay non-working: ◎ is the legacy
+// shell-running MARKER (handled by its own case), ● waiting, ◆ finished,
+// and ◔ (U+25D4, outside the quadrant set) defaults to alive.
+func TestClassifyPaneTitleQuadrantSpinner(t *testing.T) {
+	working := []string{
+		"◐ marketplace-listing-form-frontend", // U+25D0
+		"◑ Area selector design",              // U+25D1
+		"◒ HANDOFF-backend.md",                // U+25D2
+		"◓ Building the calm pass",            // U+25D3
+	}
+	for _, c := range working {
+		if got := ClassifyPaneTitle(c); got != StatusShellRunning {
+			t.Errorf("ClassifyPaneTitle(%q) = %q, want %q (quadrant spinner = working)", c, got, StatusShellRunning)
+		}
+	}
+	if got := ClassifyPaneTitle("◐nospace"); got != StatusAlive {
+		t.Errorf("quadrant without trailing space must stay alive, got %q", got)
+	}
+	if got := ClassifyPaneTitle("◔ almost"); got != StatusAlive {
+		t.Errorf("U+25D4 is outside the spinner set, got %q", got)
+	}
+	if got := ClassifyPaneTitle("● question?"); got != StatusWaiting {
+		t.Errorf("legacy waiting marker regressed, got %q", got)
+	}
+}
+
 // TestClassifyPaneTitleBrailleNoSpace verifies that a Braille character NOT
 // followed by a space does NOT classify as StatusShellRunning. The space is
 // part of the spinner format.
