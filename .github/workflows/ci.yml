@@ -67,6 +67,9 @@ jobs:
       - name: remote-push notify adapter contract
         run: bash scripts/test-notify-adapters.sh
 
+      - name: notify lifecycle-marker reset contract
+        run: bash scripts/test-notify-lifecycle-reset.sh
+
       - name: stream rm destructive-command contract
         run: bash scripts/test-stream-contract.sh
 

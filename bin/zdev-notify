@@ -312,12 +312,25 @@ case "$STATE" in
                 OLD_KIND=$(sed -n '2p' "$TS_FILE" 2>/dev/null || echo "")
                 OLD_SUMMARY=$(sed -n '3p' "$TS_FILE" 2>/dev/null || echo "")
             fi
-            # A leftover death/liveness/ack marker means a NEW wait cycle
-            # is starting — don't inherit the previous marker's
+            # A leftover LIFECYCLE marker (not a wait-kind) means a NEW
+            # wait cycle is starting — don't inherit the previous marker's
             # timestamp, kind, or text as if the wait began back then.
-            if [ "$OLD_KIND" = "dead" ] || [ "$OLD_KIND" = "alive" ] || [ "$OLD_KIND" = "ack" ]; then
-                OLD_TS=""; OLD_KIND=""; OLD_SUMMARY=""
-            fi
+            # Bug found live 2026-08-18: this list omitted "working" and
+            # "done", so a Notification firing right after a working-signal
+            # (line 2 of the existing file literally reading "working")
+            # inherited that as NEW_KIND when the new fire's own KIND
+            # classification was empty (an untagged/non-permission-worded
+            # wait) — kind="working" then routes the daemon's NotifSeen
+            # dispatch (state.go, e.Kind == proto.WaitKindWorking) into the
+            # WORKING branch, which WIPES WaitStartedTS/WaitKind/WaitSummary
+            # outright. A genuine permission/decision wait was silently
+            # swallowed as "still working", with only the slower title-poll
+            # path (up to ~5s + dwell) ever surfacing it. All five lifecycle
+            # values from this file's own format doc above must reset here,
+            # not just three.
+            case "$OLD_KIND" in
+                dead|alive|ack|working|done) OLD_TS=""; OLD_KIND=""; OLD_SUMMARY="" ;;
+            esac
             TS="$OLD_TS"
             [ -n "$TS" ] || TS=$(date +%s)
             NEW_KIND="${KIND:-$OLD_KIND}"
