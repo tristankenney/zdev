@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
 
@@ -87,6 +90,14 @@ type boundaryModel struct {
 
 	polling bool
 
+	// keys/help/spin: same bubbles spine as cmd/zdev-round (calm lane C) —
+	// the footer legend is generated from the dispatch bindings (the two
+	// popups' hand-written legends had already diverged for identical
+	// handlers), and the polling indicator actually spins.
+	keys boundaryKeys
+	help help.Model
+	spin spinner.Model
+
 	tickSeq int
 	width   int
 
@@ -108,8 +119,14 @@ func newBoundaryModel(ctx context.Context, socketPath string, snap *proto.Snapsh
 		deferred:   map[string]bool{},
 		dropped:    map[string]bool{},
 		width:      70,
+		keys:       newBoundaryKeys(),
+		help:       help.New(),
 		nowFn:      func() int64 { return time.Now().Unix() },
 	}
+	m.spin = spinner.New(spinner.WithSpinner(spinner.Spinner{
+		Frames: []string{"◐", "◓", "◑", "◒"},
+		FPS:    time.Second / 8,
+	}))
 	m.pollFn = func(ctx context.Context) (*proto.Snapshot, error) {
 		dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
@@ -178,7 +195,15 @@ func (m *boundaryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // superseded chain — drop
 		}
 		m.polling = true
-		return m, tea.Batch(m.pollCmd(), m.scheduleTick())
+		return m, tea.Batch(m.pollCmd(), m.scheduleTick(), m.spin.Tick)
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		if m.polling {
+			return m, cmd // keep spinning only while a poll is in flight
+		}
+		return m, nil
 
 	case boundarySnapshotMsg:
 		m.polling = false
@@ -204,17 +229,17 @@ func (m *boundaryModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	switch msg.String() {
-	case "enter":
+	switch {
+	case key.Matches(msg, m.keys.Pick):
 		row := m.rows[m.cursor]
 		return m, m.pickCmd(row)
 
-	case "d":
+	case key.Matches(msg, m.keys.Defer):
 		row := m.rows[m.cursor]
 		m.markDeferred(row.ZoneKey)
 		return m, nil
 
-	case "D":
+	case key.Matches(msg, m.keys.Drop):
 		row := m.rows[m.cursor]
 		if row.HeldID == "" {
 			return m, nil // no-op on a demand/triage row — nothing to drop
@@ -222,24 +247,49 @@ func (m *boundaryModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.markDropped(row.HeldID)
 		return m, m.dropCmd(row.HeldID)
 
-	case "j", "down":
+	case key.Matches(msg, m.keys.Down):
 		m.moveCursor(1)
 		return m, nil
 
-	case "k", "up":
+	case key.Matches(msg, m.keys.Up):
 		m.moveCursor(-1)
 		return m, nil
 
-	case "r":
+	case key.Matches(msg, m.keys.Poll):
 		m.polling = true
 		m.tickSeq++ // restart the auto-repoll cadence from now
-		return m, tea.Batch(m.pollCmd(), m.scheduleTick())
+		return m, tea.Batch(m.pollCmd(), m.scheduleTick(), m.spin.Tick)
 
-	case "q", "esc", "ctrl+c":
+	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	}
 	return m, nil
 }
+
+// boundaryKeys is the boundary's keymap — one source for dispatch and the
+// help footer, same shape as roundKeys.
+type boundaryKeys struct {
+	Down, Up, Move, Pick, Defer, Drop, Poll, Quit key.Binding
+}
+
+func newBoundaryKeys() boundaryKeys {
+	return boundaryKeys{
+		Down:  key.NewBinding(key.WithKeys("j", "down")),
+		Up:    key.NewBinding(key.WithKeys("k", "up")),
+		Move:  key.NewBinding(key.WithHelp("↑/↓", "move")),
+		Pick:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter/click", "pick")),
+		Defer: key.NewBinding(key.WithKeys("d"), key.WithHelp("d/rclick", "defer")),
+		Drop:  key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "drop")),
+		Poll:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "poll")),
+		Quit:  key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "later")),
+	}
+}
+
+func (k boundaryKeys) ShortHelp() []key.Binding {
+	return []key.Binding{k.Move, k.Pick, k.Defer, k.Drop, k.Poll, k.Quit}
+}
+
+func (k boundaryKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
 
 // handleMouse mirrors cmd/zdev-round's: hover moves the cursor, left-click
 // picks the row under the pointer, right-click defers it, wheel moves the

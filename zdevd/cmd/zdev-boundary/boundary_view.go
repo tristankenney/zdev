@@ -106,14 +106,19 @@ func (m *boundaryModel) viewEmpty() string {
 	return b.String()
 }
 
-// viewFooter renders the spinner-while-polling + the brief's exact key
-// legend text.
+// viewFooter renders the spinner-while-polling + the key legend GENERATED
+// from the dispatch bindings (bubbles help/key — the hand-written legend
+// here had drifted from round's for identical handlers). The spinner is
+// bubbles/spinner over the sidebar's work frames — it spins.
 func (m *boundaryModel) viewFooter() string {
 	var b strings.Builder
 	if m.polling {
-		fmt.Fprintf(&b, "%s%s%s ", render.Icy, render.WorkFrames[0], render.Reset)
+		fmt.Fprintf(&b, "%s%s%s ", render.Icy, m.spin.View(), render.Reset)
 	}
-	fmt.Fprintf(&b, "%s↑/↓ move · enter pick · d defer · D drop · q later%s\n", render.Dim, render.Reset)
+	b.WriteString(render.Dim)
+	b.WriteString(m.help.ShortHelpView(m.keys.ShortHelp()))
+	b.WriteString(render.Reset)
+	b.WriteByte('\n')
 	return b.String()
 }
 
@@ -176,12 +181,9 @@ func demandGlyph(att proto.Attention, cheap bool) string {
 }
 
 // truncateBoundaryGist caps the gist/title column exactly like
-// cmd/zdev-round's truncateGist.
+// cmd/zdev-round's truncateGist — cell-safe over user/agent-authored text.
 func truncateBoundaryGist(gist string) string {
-	if len(gist) > gistMaxLen {
-		return gist[:gistMaxLen-3] + "..."
-	}
-	return gist
+	return render.CellTruncate(gist, gistMaxLen, "...")
 }
 
 // formatBoundaryAge mirrors cmd/zdev-round's formatRoundAge exactly (same
@@ -210,7 +212,7 @@ func formatBoundaryAge(sec int64) string {
 // `-w 70% -h 60%`), unlike park's fixed 60x5.
 func boxTop(title string, width int) string {
 	label := " " + title + " "
-	fill := width - 4 - len(label)
+	fill := width - 4 - render.CellWidth(label)
 	if fill < 0 {
 		fill = 0
 	}

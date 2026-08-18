@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/tristankenney/zdev/zdevd/internal/render"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -174,7 +175,10 @@ func (m *parkModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Reserve the prefix ("  park › ") and the key legend so the
 			// whole prompt stays on ONE line; textinput pads to its Width,
 			// so this is what stops it shoving the legend off the edge.
-			reserve := len(m.label) + 6 + len(m.help.ShortHelpView(m.keys.ShortHelp())) + 4
+			// CellWidth, not len: the label is user text and the rendered
+			// help string carries ANSI escapes — byte length over-reserves
+			// and mis-sizes the input (calm lane C).
+			reserve := render.CellWidth(m.label) + 6 + render.CellWidth(m.help.ShortHelpView(m.keys.ShortHelp())) + 4
 			w := msg.Width - reserve
 			if w < 12 {
 				w = 12

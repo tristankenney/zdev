@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/tristankenney/zdev/zdevd/internal/render"
 	"os"
 	"path/filepath"
 	"sort"
@@ -206,10 +207,7 @@ func loopsSubcmd(args []string) int {
 		start = len(runs) - 15
 	}
 	for _, r := range runs[start:] {
-		goal := r.Goal
-		if len(goal) > 44 {
-			goal = goal[:43] + "…"
-		}
+		goal := render.CellTruncate(r.Goal, 44, "…")
 		ticket := r.Ticket
 		if ticket == "" {
 			ticket = "-"
@@ -223,8 +221,5 @@ func loopsSubcmd(args []string) int {
 }
 
 func truncateRight(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
+	return render.CellTruncate(s, n, "…")
 }

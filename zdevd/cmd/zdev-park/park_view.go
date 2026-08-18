@@ -41,7 +41,7 @@ func (m *parkModel) View() string {
 			render.Dim + m.help.ShortHelpView(m.keys.ShortHelp()) + render.Reset
 	}
 	label := " " + m.label + " "
-	fill := boxWidth - 4 - len(label) // 4 = the two corner-adjacent dashes on each end
+	fill := boxWidth - 4 - render.CellWidth(label) // 4 = the two corner-adjacent dashes on each end
 	if fill < 0 {
 		fill = 0
 	}

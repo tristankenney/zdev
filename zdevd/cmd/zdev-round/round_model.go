@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
 
@@ -85,6 +88,25 @@ type roundModel struct {
 
 	polling bool
 
+	// keys + help are bubbles' key.Binding / help.Model — the footer legend
+	// is GENERATED from the same bindings handleKey dispatches on (calm
+	// lane C / QA plan T5), so the legend can never drift from the handlers
+	// the way the hand-written round/boundary footers already had. spin is
+	// bubbles/spinner with the sidebar's own work frames — it actually
+	// spins while polling (a frozen ◐ reads as a hung process; the exact
+	// failure frame.go documents from the damped-mode incident).
+	keys roundKeys
+	help help.Model
+	spin spinner.Model
+
+	// Scroll window (calm lane C / QA plan T2): offset is the first
+	// visible row; visN how many fit the popup body. ensureVisible keeps
+	// the cursor inside [offset, offset+visN) across every transition, so
+	// the selection can never walk below the popup edge.
+	offset int
+	visN   int
+	height int
+
 	// receipt is the one-line end-of-Round summary (buildReceipt), set by
 	// handleKey the instant q/esc/ctrl+c fires and printed by main() to the
 	// real stdout AFTER p.Run() returns and the alt screen has been torn
@@ -111,8 +133,15 @@ func newRoundModel(ctx context.Context, socketPath string, snap *proto.Snapshot)
 		handled:    map[string]bool{},
 		deferred:   map[string]bool{},
 		width:      80,
+		height:     0, // unknown until the first WindowSizeMsg — no clipping
+		keys:       newRoundKeys(),
+		help:       help.New(),
 		nowFn:      func() int64 { return time.Now().Unix() },
 	}
+	m.spin = spinner.New(spinner.WithSpinner(spinner.Spinner{
+		Frames: []string{"◐", "◓", "◑", "◒"},
+		FPS:    time.Second / 8,
+	}))
 	m.pollFn = func(ctx context.Context) (*proto.Snapshot, error) {
 		dctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
@@ -163,6 +192,18 @@ func (m *roundModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Width > 0 {
 			m.width = msg.Width
 		}
+		if msg.Height > 0 {
+			m.height = msg.Height
+		}
+		m.ensureVisible()
+		return m, nil
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		if m.polling {
+			return m, cmd // keep spinning only while a poll is in flight
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -176,7 +217,7 @@ func (m *roundModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // superseded chain (a manual `r` restarted it) — drop
 		}
 		m.polling = true
-		return m, tea.Batch(m.pollCmd(), m.scheduleTick())
+		return m, tea.Batch(m.pollCmd(), m.scheduleTick(), m.spin.Tick)
 
 	case roundSnapshotMsg:
 		m.polling = false
@@ -205,35 +246,97 @@ func (m *roundModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	switch msg.String() {
-	case "enter":
+	switch {
+	case key.Matches(msg, m.keys.Jump):
 		row := m.rows[m.cursor]
 		m.markHandled(row.Name)
 		return m, m.jumpCmd(row.Name)
 
-	case "d":
+	case key.Matches(msg, m.keys.Defer):
 		row := m.rows[m.cursor]
 		m.markDeferred(row.Name)
 		return m, nil
 
-	case "j", "down":
+	case key.Matches(msg, m.keys.Down):
 		m.moveCursor(1)
 		return m, nil
 
-	case "k", "up":
+	case key.Matches(msg, m.keys.Up):
 		m.moveCursor(-1)
 		return m, nil
 
-	case "r":
+	case key.Matches(msg, m.keys.Poll):
 		m.polling = true
 		m.tickSeq++ // restart the auto-repoll cadence from now
-		return m, tea.Batch(m.pollCmd(), m.scheduleTick())
+		return m, tea.Batch(m.pollCmd(), m.scheduleTick(), m.spin.Tick)
 
-	case "q", "esc", "ctrl+c":
+	case key.Matches(msg, m.keys.Quit):
 		m.receipt = buildReceipt(m.handledN, m.deferredN, len(m.rows))
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// roundKeys is the Round's keymap — the single source both handleKey's
+// dispatch and the help footer render from. Down/Up are the dispatch
+// bindings; Move is their display-only merge so the legend reads "↑/↓/j/k
+// move" as one entry. Jump/Defer fold the mouse affordances into their
+// help text (handleMouse dispatches those — zones, not bindings).
+type roundKeys struct {
+	Down, Up, Move, Jump, Defer, Poll, Quit key.Binding
+}
+
+func newRoundKeys() roundKeys {
+	return roundKeys{
+		Down:  key.NewBinding(key.WithKeys("j", "down")),
+		Up:    key.NewBinding(key.WithKeys("k", "up")),
+		Move:  key.NewBinding(key.WithHelp("↑/↓", "move")),
+		Jump:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter/click", "jump")),
+		Defer: key.NewBinding(key.WithKeys("d"), key.WithHelp("d/rclick", "defer")),
+		Poll:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "poll")),
+		Quit:  key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "end")),
+	}
+}
+
+func (k roundKeys) ShortHelp() []key.Binding {
+	return []key.Binding{k.Move, k.Jump, k.Defer, k.Poll, k.Quit}
+}
+
+func (k roundKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+// ensureVisible recomputes the scroll window: how many rows fit the popup
+// body (height minus the fixed chrome: header + blank, blank + tally +
+// help, and the two possible "· N more ·" markers) and an offset that
+// keeps the cursor inside it. height 0 means no WindowSizeMsg yet — no
+// clipping.
+func (m *roundModel) ensureVisible() {
+	if m.height <= 0 {
+		m.visN = len(m.rows)
+		m.offset = 0
+		return
+	}
+	const chrome = 7
+	m.visN = m.height - chrome
+	if m.visN < 1 {
+		m.visN = 1
+	}
+	if m.visN >= len(m.rows) {
+		m.visN = len(m.rows)
+		m.offset = 0
+		return
+	}
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+m.visN {
+		m.offset = m.cursor - m.visN + 1
+	}
+	if m.offset > len(m.rows)-m.visN {
+		m.offset = len(m.rows) - m.visN
+	}
+	if m.offset < 0 {
+		m.offset = 0
+	}
 }
 
 // handleMouse gives the Round direct manipulation: hover moves the cursor
@@ -282,8 +385,12 @@ func (m *roundModel) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // View() registered, or -1 (header, footer, blank lines, or a row that
 // vanished since the last paint).
 func (m *roundModel) rowIndexAt(msg tea.MouseMsg) int {
-	for i, r := range m.rows {
-		if z := zone.Get(r.Name); z != nil && z.InBounds(msg) {
+	start, end := m.offset, m.offset+m.visN
+	if end > len(m.rows) || m.visN == 0 {
+		end = len(m.rows)
+	}
+	for i := start; i < end; i++ {
+		if z := zone.Get(m.rows[i].Name); z != nil && z.InBounds(msg) {
 			return i
 		}
 	}
@@ -326,6 +433,7 @@ func (m *roundModel) moveCursor(delta int) {
 	if m.cursor >= len(m.rows) {
 		m.cursor = len(m.rows) - 1
 	}
+	m.ensureVisible()
 }
 
 // recomputeRows rebuilds m.rows from the current snapshot and marks, then
@@ -340,6 +448,7 @@ func (m *roundModel) recomputeRows(now int64) {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+	m.ensureVisible()
 }
 
 // computeRoundRows is the pure heart of the burn-down: walk Snapshot.Triage

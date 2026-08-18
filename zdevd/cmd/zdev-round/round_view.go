@@ -47,7 +47,15 @@ func (m *roundModel) View() string {
 	fmt.Fprintf(&b, "%sRound%s %s— %d in queue%s\n\n",
 		render.Bold, render.Reset, render.Dim, len(m.rows), render.Reset)
 
-	for i, r := range m.rows {
+	start, end := m.offset, m.offset+m.visN
+	if m.visN == 0 || end > len(m.rows) {
+		end = len(m.rows)
+	}
+	if start > 0 {
+		fmt.Fprintf(&b, "%s      · %d above ·%s\n", render.Dim, start, render.Reset)
+	}
+	for i := start; i < end; i++ {
+		r := m.rows[i]
 		cursor := "  "
 		if i == m.cursor {
 			cursor = render.Bold + render.Cyan + "▶ " + render.Reset
@@ -60,6 +68,9 @@ func (m *roundModel) View() string {
 		// the cursor, click jumps, right-click defers (see handleMouse).
 		b.WriteString(zone.Mark(r.Name, line))
 		b.WriteByte('\n')
+	}
+	if end < len(m.rows) {
+		fmt.Fprintf(&b, "%s      · %d more ·%s\n", render.Dim, len(m.rows)-end, render.Reset)
 	}
 
 	b.WriteString("\n")
@@ -79,14 +90,22 @@ func (m *roundModel) viewEmpty() string {
 	return b.String()
 }
 
-// viewFooter renders the live tally + spinner-while-polling + key legend.
+// viewFooter renders the live tally + spinner-while-polling + the key
+// legend GENERATED from the same bindings handleKey dispatches on
+// (bubbles help/key — park's precedent; a hand-written legend had already
+// drifted between this popup and boundary's for identical handlers). The
+// spinner is bubbles/spinner over the sidebar's own work frames — it
+// spins; a frozen ◐ reads as a hung process.
 func (m *roundModel) viewFooter() string {
 	var b strings.Builder
 	if m.polling {
-		fmt.Fprintf(&b, "%s%s%s ", render.Icy, render.WorkFrames[0], render.Reset)
+		fmt.Fprintf(&b, "%s%s%s ", render.Icy, m.spin.View(), render.Reset)
 	}
 	fmt.Fprintf(&b, "%d handled · %d deferred · %d left\n", m.handledN, m.deferredN, len(m.rows))
-	fmt.Fprintf(&b, "%senter/click jump · d/right-click defer · j/k move · r poll · q/esc end%s\n", render.Dim, render.Reset)
+	b.WriteString(render.Dim)
+	b.WriteString(m.help.ShortHelpView(m.keys.ShortHelp()))
+	b.WriteString(render.Reset)
+	b.WriteByte('\n')
 	return b.String()
 }
 
@@ -111,11 +130,10 @@ func glyphFor(r roundRow) string {
 }
 
 // truncateGist caps the gist column exactly like zdev-show's triage view.
+// Cell-safe (calm lane C): gists are agent-authored UTF-8 — a byte slice
+// can cut a rune in half and emit invalid bytes into the frame.
 func truncateGist(gist string) string {
-	if len(gist) > gistMaxLen {
-		return gist[:gistMaxLen-3] + "..."
-	}
-	return gist
+	return render.CellTruncate(gist, gistMaxLen, "...")
 }
 
 // formatRoundAge mirrors zdev-show's formatAge buckets exactly (seconds,
