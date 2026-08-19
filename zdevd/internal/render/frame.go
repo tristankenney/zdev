@@ -535,17 +535,6 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	// the same knob.)
 	prevGroup := ""
 	prevStream := ""
-	// floorVisible tracks whether the CURRENT group has painted at least one
-	// visible floor row (a non-home, non-stream member) — the breathing gap
-	// only separates the floor block from the streams when there IS a floor
-	// block to separate from. Without this, a group whose floor is entirely
-	// quiet-and-collapsed (found live 2026-08-19: marketplace with both
-	// pay-app and pay-toggles folded, only its working streams piercing) got
-	// a stray rail-only line sitting directly under the header with nothing
-	// above it — the gap's own purpose, orphaned. RowSort's floor-before-
-	// streams guarantee means every floor row for a group is visited before
-	// its first stream row, so a simple running flag suffices.
-	floorVisible := false
 	renderGrouped := func(i int) {
 		if GroupMode == "prefix" {
 			if g := groupKeys[i]; g != prevGroup {
@@ -568,27 +557,18 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				}
 				prevGroup = g
 				prevStream = ""
-				floorVisible = false
 			}
 			// Stream labels (workstreams; calm pass 2026-08-17 rev 2): the
 			// first VISIBLE row of each stream gets a subtle label line on
-			// the initiative's rail, and the first stream of the group gets
-			// a rail-only breathing line above it, IF the floor painted a
-			// visible row to separate FROM — whitespace has to have two
-			// sides to mean anything. Labels follow the drawer-header
-			// contract — renderer-only, never navigation rows, clickable
-			// via the stream's first repo; the breathing line is inert like
-			// the dividers. Collapsed rows are skipped so a folded
-			// initiative emits neither: the home's rollup is its only trace.
+			// the initiative's rail. No separate breathing line above the
+			// first stream any more — that rail-only blank row read as odd
+			// dead space between the floor and the streams (live feedback,
+			// 2026-08-19); the label line alone is enough of a seam.
+			// Collapsed rows are skipped so a folded initiative emits
+			// nothing: the home's rollup is its only trace.
 			if !snap.Projects[i].Collapsed {
-				if streamKeys[i] == "" && !isHome[i] {
-					floorVisible = true
-				}
 				if s := streamKeys[i]; s != prevStream {
 					if s != "" {
-						if prevStream == "" && floorVisible {
-							writeStreamGap(&buf)
-						}
 						// The stream's HOME row (its folder — a real,
 						// navigable place since 2026-08-18) opens the run
 						// itself; the synthetic label only stands in when
@@ -641,7 +621,6 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			// Stream tracking restarts with it, for the same reason.
 			prevGroup = ""
 			prevStream = ""
-			floorVisible = false
 			for _, i := range demotedIdx {
 				renderGrouped(i)
 			}
@@ -841,18 +820,6 @@ func writeStreamLabel(buf *bytes.Buffer, stream string) {
 	buf.WriteString("  ")
 	buf.WriteString(thSubtle())
 	buf.WriteString(stream)
-	buf.WriteString(Reset)
-	buf.WriteString(ClearLineEnd)
-	buf.WriteByte('\n')
-}
-
-// writeStreamGap emits the rail-only breathing line between a group's
-// floor members and its first stream — whitespace is the structural
-// medium of the calm pass. Inert like the dividers: no RowRef.
-func writeStreamGap(buf *bytes.Buffer) {
-	buf.WriteString("  ")
-	buf.WriteString(thDim())
-	buf.WriteString("│")
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
