@@ -141,9 +141,19 @@ func thWorking() string {
 	return Icy
 }
 
+// thDone is Iris (purple) in rose-pine — deliberately NOT rpGold, which
+// thWaiting's fresh tier already owns. Sharing a hue there meant "just
+// finished, nothing left to do" and "just started waiting, will need you
+// soon" were color-identical (only the glyph, ◆ vs ●, told them apart) —
+// two states with opposite implications for whether you need to look.
+// Semantic colors were the explicit ask (operator feedback, 2026-08-20)
+// that also reverted the working-state identity-hue experiment; this is
+// the other half of that same audit. Classic is untouched (Yellow, and
+// waiting there is a flat RedPulse regardless of age, so it never
+// collided in the first place).
 func thDone() string {
 	if ThemeMode == "rose-pine" {
-		return rpGold.fg()
+		return rpIris.fg()
 	}
 	return Yellow
 }

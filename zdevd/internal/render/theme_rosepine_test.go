@@ -64,6 +64,17 @@ func TestThemeWaitRamp(t *testing.T) {
 	}
 }
 
+// Semantic colors (operator feedback, 2026-08-20): Done must not collide
+// with the fresh-waiting tier — "just finished" and "just started waiting"
+// mean opposite things (nothing left to do vs. will need you soon) and
+// used to share rpGold, distinguishable only by glyph.
+func TestThemeDoneDistinctFromFreshWaiting(t *testing.T) {
+	withTheme(t, "rose-pine")
+	if thDone() == thWaiting(0) {
+		t.Errorf("done and fresh-waiting must not share a color, both %q", thDone())
+	}
+}
+
 // Identity: deterministic per name, on-palette, and the breath bar uses the
 // same hue as the marker — identity is ONE color per project everywhere.
 func TestThemeIdentityCoherence(t *testing.T) {
