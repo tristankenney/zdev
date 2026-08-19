@@ -141,6 +141,26 @@ func thWorking() string {
 	return Icy
 }
 
+// thWorkingBreath is thWorking()'s hue with a shared brightness breath —
+// the SAME BreathBrightness cycle the current-session ▌ uses, but no hue
+// shift (that's reserved for the current session specifically; every
+// working row uses this plain intensity cycle). One shared frame means
+// every working row in the fleet breathes in the SAME phase together —
+// motion without reintroducing per-project identity color, the thing
+// live feedback rejected the same day (2026-08-20). Classic is untouched:
+// flat Icy regardless of frame, same as thWorking().
+//
+// Deliberately its own function rather than a thWorking(frame) signature
+// change — memberGlyph's Agent Teams working glyph has no animator frame
+// threaded to it (out of scope for this whole delight arc) and keeps
+// calling the plain thWorking().
+func thWorkingBreath(frame int) string {
+	if ThemeMode != "rose-pine" {
+		return Icy
+	}
+	return rpFoam.fgBright(BreathBrightness[frame%len(BreathBrightness)])
+}
+
 // thDone is Iris (purple) in rose-pine — deliberately NOT rpGold, which
 // thWaiting's fresh tier already owns. Sharing a hue there meant "just
 // finished, nothing left to do" and "just started waiting, will need you

@@ -75,6 +75,26 @@ func TestThemeDoneDistinctFromFreshWaiting(t *testing.T) {
 	}
 }
 
+// thWorkingBreath (delight, 2026-08-20): a shared brightness cycle on
+// thWorking()'s hue — motion without reintroducing identity color. Two
+// different projects at the SAME frame must match (shared, not identity);
+// two different frames must differ (it actually breathes); classic mode
+// must ignore frame entirely.
+func TestThemeWorkingBreath(t *testing.T) {
+	withTheme(t, "rose-pine")
+	if thWorkingBreath(0) == thWorkingBreath(2) {
+		t.Errorf("peak (frame 0) and trough (frame 2) must differ: %q", thWorkingBreath(0))
+	}
+	if !strings.Contains(thWorkingBreath(1), "38;2;") {
+		t.Errorf("rose-pine tokens are truecolor, got %q", thWorkingBreath(1))
+	}
+
+	withTheme(t, "classic")
+	if thWorkingBreath(0) != Icy || thWorkingBreath(2) != Icy {
+		t.Errorf("classic must ignore frame entirely, got %q / %q", thWorkingBreath(0), thWorkingBreath(2))
+	}
+}
+
 // Identity: deterministic per name, on-palette, and the breath bar uses the
 // same hue as the marker — identity is ONE color per project everywhere.
 func TestThemeIdentityCoherence(t *testing.T) {

@@ -397,6 +397,15 @@ func TestMarkerFor_Working_IsSharedNotIdentity(t *testing.T) {
 	if colorA != Icy {
 		t.Errorf("working color = %q, want Icy (thWorking(), classic mode)", colorA)
 	}
+
+	// Same check in rose-pine mode, through MarkerFor end-to-end — the
+	// working-breath addition (2026-08-20) must not reopen this either.
+	withTheme(t, "rose-pine")
+	_, colorA = MarkerFor(a, anim, 1000)
+	_, colorB = MarkerFor(b, anim, 1000)
+	if colorA != colorB {
+		t.Errorf("rose-pine working color must not vary by identity: %q (alpha) vs %q (zeta)", colorA, colorB)
+	}
 }
 
 // TestMarkerFor_Idle_NoIdentityColor pins the color-budget rule's other

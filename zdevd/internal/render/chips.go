@@ -133,10 +133,13 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 	case proto.AttWorking:
 		// Animated spinner (dogfood 2026-06-06): running work is the
 		// convention for motion, not a static ring. The footer tally
-		// keeps the static ◎ as the bucket's label. thWorking() — semantic,
-		// not identity-hued (tried and reverted 2026-08-20, see the doc
-		// comment above).
-		return animator.WorkGlyph(), thWorking()
+		// keeps the static ◎ as the bucket's label. thWorkingBreath —
+		// semantic, not identity-hued (tried and reverted 2026-08-20, see
+		// the doc comment above) — adds a shared brightness breath so
+		// every working row in the fleet pulses together in the SAME
+		// phase (delight, 2026-08-20): motion in intensity as well as
+		// spinner rotation, without differentiating by project.
+		return animator.WorkGlyph(), thWorkingBreath(animator.BreathFrame())
 	case proto.AttFinished:
 		return "◆", thDone()
 	case proto.AttDead:
