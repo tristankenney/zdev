@@ -227,21 +227,44 @@ func thDivider(moodClassic string, n int) string {
 		}
 		return out
 	}
-	var from rpRGB
+	// The divider is the one place a flat, near-zero-information line is
+	// deliberately spent on pure richness (delight pass, 2026-08-20) — it's
+	// a single fixed row, never multiplied per-project, so enriching it
+	// doesn't reopen the color-budget problem (many rows competing for
+	// attention). But the mood tier IS real information (MoodFor's doc
+	// comment: it replaced a whole header row), so cell 0 stays the exact
+	// mood hue and idle keeps its original subdued single-stop fade — only
+	// the three ACTIVE tiers (red/orange/green) get a second stop, a
+	// complementary hue the gradient passes through before settling to
+	// Muted, instead of racing straight to background. Nothing happening
+	// stays quiet; something happening gets to be pretty.
+	if moodClassic == MoodIdle {
+		out := ""
+		for i := 0; i < n; i++ {
+			t := float64(i) / float64(n-1)
+			out += rpMuted.lerp(rpBase, t*0.85).fg() + "─"
+		}
+		return out
+	}
+	var from, mid rpRGB
 	switch moodClassic {
 	case MoodRed:
-		from = rpLove
+		from, mid = rpLove, rpRose
 	case Orange:
-		from = rpGold
-	case MoodGreen:
-		from = rpFoam
-	default:
-		from = rpMuted
+		from, mid = rpGold, rpRose
+	default: // MoodGreen
+		from, mid = rpFoam, rpPine
 	}
 	out := ""
 	for i := 0; i < n; i++ {
 		t := float64(i) / float64(n-1)
-		out += from.lerp(rpBase, t*0.85).fg() + "─"
+		var c rpRGB
+		if t <= 0.5 {
+			c = from.lerp(mid, t*2)
+		} else {
+			c = mid.lerp(rpMuted, (t-0.5)*2)
+		}
+		out += c.fg() + "─"
 	}
 	return out
 }
