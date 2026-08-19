@@ -1679,10 +1679,16 @@ func TestRender_OffMode_NoStaleDim(t *testing.T) {
 	anim.OnSnapshot(snap)
 	out := Render(snap, 50, anim, fixedNowFn)
 
-	// Palette color for alpha must appear (not suppressed by Dim).
-	paletteColor := PaletteFor("alpha")
-	if !bytes.Contains(out, []byte(paletteColor)) {
-		t.Errorf("off mode: stale row must render with palette color (no dim-out); paletteColor=%q\n%q", paletteColor, out)
+	// The marker itself is always Dim now regardless of DemoteMode — idle
+	// carries no decorative identity color (color budget, 2026-08-19), so
+	// palette color is no longer the signal "off mode" preserves. What's
+	// left: the NAME text must not be additionally dimmed the way a stale
+	// row's name is under "dim" mode.
+	if bytes.Contains(out, []byte(thDim()+"alpha")) {
+		t.Errorf("off mode: stale row's name must not be dimmed\n%q", out)
+	}
+	if !bytes.Contains(out, []byte("alpha")) {
+		t.Errorf("off mode: row must still render its name\n%q", out)
 	}
 	// No demote divider either.
 	demoteDivider := []byte(Dim + strings.Repeat("─", 8) + Reset)

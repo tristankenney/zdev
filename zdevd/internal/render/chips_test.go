@@ -348,7 +348,10 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 		// Status-only fixture has no WaitStartedTS, so MarkerFor sees
 		// age 0 — the calm ÷4 pace tier of PulseGlyphAt.
 		{"waiting", anim.PulseGlyphAt(0), RedPulse},
-		{"shell-running", anim.WorkGlyph(), Icy},
+		// Working is identity-hued (color budget, 2026-08-19) — see
+		// TestMarkerFor_Working_UsesPalette for the dedicated case; "test"
+		// is this fixture's project name.
+		{"shell-running", anim.WorkGlyph(), PaletteFor("test")},
 		{"finished", "◆", Yellow},
 		{"absent", "·", Dim},
 		{"unknown", "·", Dim},
@@ -365,13 +368,30 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 	}
 }
 
-func TestMarkerFor_Alive_UsesPalette(t *testing.T) {
+// TestMarkerFor_Working_UsesPalette pins the delight-pass centerpiece
+// (2026-08-19): a working row is identity-hued, not one flat institutional
+// color shared by every working row fleet-wide — two projects working at
+// once now glow differently.
+func TestMarkerFor_Working_UsesPalette(t *testing.T) {
 	anim := NewAnimator()
-	p := proto.Project{Name: "myproject", Status: "alive"}
+	p := proto.Project{Name: "myproject", Status: "shell-running"}
 	_, color := MarkerFor(p, anim, 1000)
 	expected := PaletteFor("myproject")
 	if color != expected {
-		t.Errorf("MarkerFor alive: want PaletteFor result %q, got %q", expected, color)
+		t.Errorf("MarkerFor working: want PaletteFor result %q, got %q", expected, color)
+	}
+}
+
+// TestMarkerFor_Idle_NoIdentityColor pins the color-budget rule's other
+// half: idle carries no decorative identity color, regardless of session
+// existence — color budget, 2026-08-19 (this test replaces
+// TestMarkerFor_Alive_UsesPalette, which asserted the opposite).
+func TestMarkerFor_Idle_NoIdentityColor(t *testing.T) {
+	anim := NewAnimator()
+	p := proto.Project{Name: "myproject", Status: "alive"}
+	_, color := MarkerFor(p, anim, 1000)
+	if color != Dim {
+		t.Errorf("MarkerFor idle: want Dim (no identity color), got %q", color)
 	}
 }
 

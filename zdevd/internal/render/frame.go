@@ -434,7 +434,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				collapsedN[groupKeys[i]] > 0 && visibleMembers[groupKeys[i]] == 0)
 			if isCurrent {
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-					groupGutter(groupKeys[i], true, "│",
+					groupGutter("│",
 						rowMargin(&p, animator, true, false, hovered)),
 					snap, true)
 			}
@@ -452,19 +452,19 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			}
 			if streamKeys[i] != "" && !isStreamHome[i] {
 				renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
-					groupGutter(groupKeys[i], true, g,
+					groupGutter(g,
 						rowMargin(&p, animator, true, false, hovered))+"  ")
 				renderMetadataRow(&buf, &p, snap.CurrentSession, width-5, animator, nowFn, urgent,
-					groupGutter(groupKeys[i], true, mg,
+					groupGutter(mg,
 						rowMargin(&p, animator, true, false, hovered))+"  ",
 					snap, false)
 				break
 			}
 			renderProjectRow(&buf, &p, snap.CurrentSession, animator, nowFn, urgent, hovered, teamsByLead[p.Name], teamRows,
-				groupGutter(groupKeys[i], true, g,
+				groupGutter(g,
 					rowMargin(&p, animator, true, false, hovered)))
 			renderMetadataRow(&buf, &p, snap.CurrentSession, width-3, animator, nowFn, urgent,
-				groupGutter(groupKeys[i], true, mg,
+				groupGutter(mg,
 					rowMargin(&p, animator, true, false, hovered)),
 				snap, false)
 		case isCurrent:
@@ -486,12 +486,12 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 			}
 			if streamKeys[i] != "" && !isStreamHome[i] {
 				renderCompactRow(&buf, &p, width-5, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
-					groupGutter(groupKeys[i], true, g,
+					groupGutter(g,
 						rowMargin(&p, animator, false, isCursor, hovered))+"  ")
 				break
 			}
 			renderCompactRow(&buf, &p, width-3, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows,
-				groupGutter(groupKeys[i], true, g,
+				groupGutter(g,
 					rowMargin(&p, animator, false, isCursor, hovered)))
 		default:
 			renderCompactRow(&buf, &p, width, animator, nowFn, urgent, isCursor, hovered, teamsByLead[p.Name], teamRows, "")
@@ -587,7 +587,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 				if s := streamKeys[i]; s != prevStream {
 					if s != "" {
 						if prevStream == "" && floorVisible {
-							writeStreamGap(&buf, groupKeys[i])
+							writeStreamGap(&buf)
 						}
 						// The stream's HOME row (its folder — a real,
 						// navigable place since 2026-08-18) opens the run
@@ -596,7 +596,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 						// collapsed home over a pierced member).
 						if !isStreamHome[i] {
 							headerY := lineOf()
-							writeStreamLabel(&buf, groupKeys[i], s)
+							writeStreamLabel(&buf, s)
 							rows = append(rows, RowRef{Y: headerY, Name: snap.Projects[i].Name})
 						}
 					}
@@ -774,22 +774,33 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 	buf.WriteString("  ")
 	{
 		// A group is a group: this header renders exactly like an
-		// initiative's home row — same ╭/▸ glyph, same identity hue from
-		// PaletteFor, same Bold. No trailing dash fill.
+		// initiative's home row — same ╭/▸ glyph, same Bold. No trailing
+		// dash fill.
 		//
-		// This deliberately REVERSES the earlier dim treatment. Dimming
-		// made sense while group-ness was INFERRED ("a root dir that
-		// happens to lack .git"), where a drawer really was accidental
-		// scaffolding. With the explicit .zdev marker a drawer is a
-		// declared thing, equal in standing to an initiative — the
+		// Color budget (2026-08-19): a drawer never carries "its own"
+		// attention the way an initiative's home directory can (there is
+		// no home project row for it — a drawer's only signal is the
+		// collapsedN rollup already shown below), so it stays the one
+		// quiet structural tone always. This is NOT a reversal of the
+		// equal-standing decision below — renderHomeRow's identity hue
+		// went quiet-by-default in the same pass, so a drawer and an idle
+		// initiative now render identically; the two only diverge when
+		// the initiative's home itself has real attention to show, which
+		// a drawer structurally never can.
+		//
+		// Historical note (still true): this WAS a deliberate reversal of
+		// an earlier dim-always treatment, back when group-ness was
+		// INFERRED ("a root dir that happens to lack .git") and a drawer
+		// really was accidental scaffolding. The .zdev marker made
+		// group-ness explicit and equal in standing to an initiative — the
 		// difference between them is semantic (metadata, journal, the
-		// initiative skill), not hierarchy, so it must not read as a
-		// visual demotion.
+		// initiative skill), not hierarchy, and must not read as a visual
+		// demotion. That equality holds; both are quiet now, together.
 		//
 		// A collapsed drawer shows its rollup here — this line is its only
 		// remaining trace. No spinner: working rows pierce per-row, so a
 		// folded row is by definition quiet.
-		hue := thPalette(name)
+		hue := thDim()
 		buf.WriteString(hue)
 		if folded {
 			buf.WriteString("▸ ")
@@ -797,7 +808,6 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 			buf.WriteString("╭ ")
 		}
 		buf.WriteString(Bold)
-		buf.WriteString(hue)
 		buf.WriteString(name)
 		buf.WriteString(Reset)
 		if collapsedN > 0 {
@@ -812,15 +822,20 @@ func writeGroupHeader(buf *bytes.Buffer, name string, width int, collapsedN int,
 }
 
 // writeStreamLabel emits the one-line label that opens a workstream's run
-// inside its initiative: the initiative's rail, a two-space indent, the
-// stream's name in the subtle tone. A place label, not a competing frame —
-// hue stays the group's alone, and the repos beneath indent two cells
-// deeper than floor members. Renderer-only visual line (never a navigation
-// row), same contract as writeGroupHeader; the caller maps it to the
-// stream's first repo so clicks land somewhere real.
-func writeStreamLabel(buf *bytes.Buffer, groupKey, stream string) {
+// inside its initiative: the rail, a two-space indent, the stream's name
+// in the subtle tone. A place label, not a competing frame — the repos
+// beneath indent two cells deeper than floor members. Renderer-only
+// visual line (never a navigation row), same contract as
+// writeGroupHeader; the caller maps it to the stream's first repo so
+// clicks land somewhere real.
+//
+// Color budget (2026-08-19): the rail is now the one structural tone,
+// same as groupGutter — it never carried information, only decoration.
+// thSubtle() was already a single fixed label tone, not a per-stream hue,
+// so the name itself needed no change.
+func writeStreamLabel(buf *bytes.Buffer, stream string) {
 	buf.WriteString("  ")
-	buf.WriteString(thPalette(groupKey))
+	buf.WriteString(thDim())
 	buf.WriteString("│")
 	buf.WriteString(Reset)
 	buf.WriteString("  ")
@@ -834,9 +849,9 @@ func writeStreamLabel(buf *bytes.Buffer, groupKey, stream string) {
 // writeStreamGap emits the rail-only breathing line between a group's
 // floor members and its first stream — whitespace is the structural
 // medium of the calm pass. Inert like the dividers: no RowRef.
-func writeStreamGap(buf *bytes.Buffer, groupKey string) {
+func writeStreamGap(buf *bytes.Buffer) {
 	buf.WriteString("  ")
-	buf.WriteString(thPalette(groupKey))
+	buf.WriteString(thDim())
 	buf.WriteString("│")
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
@@ -845,16 +860,28 @@ func writeStreamGap(buf *bytes.Buffer, groupKey string) {
 
 // renderHomeRow draws an initiative's HOME project (initiatives/<name>,
 // the directory holding INITIATIVE.md and notes/) as its group's header:
-// attention glyph (a dim ─ when idle, so a quiet initiative reads as a
-// pure section rule), Bold initiative name, dim dash fill. One row — it
-// replaces both the synthetic header and the home's compact row, so the
-// group costs no extra line and the home stays a real, navigable FlatRow
-// whose agent attention lights the header.
+// attention glyph (a dim ╭ when idle, so a quiet initiative reads as a
+// pure section rule), Bold initiative name, one row — it replaces both
+// the synthetic header and the home's compact row, so the group costs no
+// extra line and the home stays a real, navigable FlatRow whose agent
+// attention lights the header.
+//
+// Color budget (calm pass, 2026-08-19): the header used to carry its
+// identity hue unconditionally — decoration, since the row's fixed
+// position and its own name already say which group this is. Now color
+// is reserved for the SAME thing MarkerFor already reserves it for
+// everywhere else: real attention. Idle/absent renders Bold in plain ink,
+// same weight-not-hue distinction a leaf row's dim gets; any active state
+// reuses the exact (glyph, color) MarkerFor derived for the corner, so a
+// working home lights up in its OWN identity hue (the centerpiece of the
+// delight pass — two initiatives working at once now glow differently,
+// not as two copies of one institutional teal) while waiting/dead/
+// finished keep their existing, meaningful state colors.
 //
 // hovered (ZDEV_SIDEBAR_HOVER, tea engine only) overrides the name's
-// identity-hue coloring with thHover() — foreground-only, so it layers
-// safely regardless of isCurrent/isCursor, which own the MARGIN column
-// (▌/▶) and are untouched here.
+// coloring with thHover() — foreground-only, so it layers safely
+// regardless of isCurrent/isCursor, which own the MARGIN column (▌/▶)
+// and are untouched here.
 func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Animator, nowFn func() int64, isCursor, isCurrent, hovered bool, collapsedN int, folded bool) {
 	switch {
 	case isCurrent:
@@ -880,11 +907,15 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// gutter on member rows hangs off it); any real attention state
 	// replaces the corner with its marker — attention outranks
 	// decoration. The split keys on ATTENTION, not the glyph — the
-	// waiting pulse's off-phase frame is itself "·".
+	// waiting pulse's off-phase frame is itself "·". nameColor mirrors
+	// whichever branch fires: "" (plain ink) when idle, MarkerFor's own
+	// color when active — so the header's name always agrees with its
+	// own corner glyph instead of carrying a separate, unconditional hue.
 	name := p.Name
 	att := projectAttention(p)
+	var nameColor string
 	if att == "" || att == proto.AttIdle || p.Status == "absent" {
-		buf.WriteString(thPalette(name))
+		buf.WriteString(thDim())
 		// ╭ promises a frame below it; a fully folded group has none, so
 		// it opens with the disclosure triangle instead.
 		if folded {
@@ -896,21 +927,25 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 		glyph, color := MarkerFor(*p, animator, nowFn())
 		buf.WriteString(color)
 		buf.WriteString(glyph)
+		nameColor = color
 	}
 	buf.WriteString(Reset)
 	buf.WriteString(" ")
-	// The initiative's name carries its stable PaletteFor hue — the same
-	// per-name color identity project names already use — so each
-	// initiative is recognizable by color before it is read. No trailing
-	// dash fill and no glyph+dash combo: live dogfood showed both read
-	// as clutter (a pane half-full of ragged rules; "◐─ name" noise) —
-	// the corner/marker, hue, and Bold carry "this is a header" alone.
+	// Color budget: an idle header carries no color at all — Bold alone
+	// says "this is a header", the same weight-not-hue distinction the
+	// rest of the palette now uses. An active header reuses the corner's
+	// own color, so a WORKING initiative glows in ITS OWN identity hue
+	// (MarkerFor's centerpiece change) while waiting/dead/finished keep
+	// their existing, meaningful state ramps. No trailing dash fill and no
+	// glyph+dash combo: live dogfood showed both read as clutter (a pane
+	// half-full of ragged rules; "◐─ name" noise) — the corner/marker,
+	// hue, and Bold carry "this is a header" alone.
 	switch {
 	case hovered:
 		buf.WriteString(thHover())
 	default:
 		buf.WriteString(Bold)
-		buf.WriteString(thPalette(name))
+		buf.WriteString(nameColor)
 	}
 	buf.WriteString(name)
 	buf.WriteString(Reset)
@@ -1490,19 +1525,19 @@ func spaceIf(buf *bytes.Buffer) {
 
 // groupGutter composes the 3-column frame prefix for rows inside a group:
 // the row's left margin then the frame glyph (│ run, ╰ closer, or a blank
-// continuation under a closed corner), hued for initiatives and Dim for
-// containers. margin is rowMargin's 2-column output — the marker sits
-// BEFORE the frame, never after it.
-func groupGutter(key string, hued bool, glyph, margin string) string {
-	// hued is now always true in practice: every group carries its identity
-	// hue since the .zdev marker made group-ness explicit (see
-	// writeGroupHeader). The parameter stays so a caller can still render a
-	// frame without identity — nothing does today.
-	color := thDim()
-	if hued {
-		color = thPalette(key)
-	}
-	return margin + color + glyph + Reset
+// continuation under a closed corner). margin is rowMargin's 2-column
+// output — the marker sits BEFORE the frame, never after it.
+//
+// Always the one quiet structural tone (calm pass, color-budget review
+// 2026-08-19): rails never varied by information, only by decoration —
+// every group used to carry its own identity hue on its rail regardless
+// of whether anything inside it needed attention, which was the single
+// largest contributor to a quiet fleet still reading as a rainbow. The
+// key parameter this used to hue by (proto.GroupKey) is gone with it;
+// identity is now carried by name and fixed row position alone, same as
+// it already had to be the second time you looked at your own sidebar.
+func groupGutter(glyph, margin string) string {
+	return margin + thDim() + glyph + Reset
 }
 
 // rowMargin composes the 2-column left margin every row opens with: the

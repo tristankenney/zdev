@@ -443,12 +443,19 @@ func TestGroupHeadersFoldRestatesBelowTheFold(t *testing.T) {
 	}
 }
 
-// A declared group is a group: the drawer header and the initiative home
-// render with the SAME weight — identity hue + bold — because the .zdev
-// marker made group-ness explicit. The difference between them is semantic
-// (metadata, journal, tooling), never a visual demotion. This replaces an
-// earlier test that asserted the opposite, from when group-ness was
-// inferred from the absence of .git and a drawer really was accidental.
+// A declared group is a group: the drawer header and an IDLE initiative
+// home render with the SAME weight — Bold, one quiet structural tone,
+// neither hued nor dimmed relative to the other — because the .zdev marker
+// made group-ness explicit. The difference between them is semantic
+// (metadata, journal, tooling), never a visual demotion.
+//
+// Color budget (2026-08-19) changed WHICH quiet tone both share — from
+// "both carry their own identity hue" to "both carry none while idle" —
+// but the equal-standing claim this test protects is unchanged: neither
+// header is a lesser citizen of the other. (This test previously asserted
+// the identity-hue version of that claim; it replaced an even earlier
+// test asserting the opposite, from when group-ness was inferred from the
+// absence of .git and a drawer really was accidental scaffolding.)
 func TestDrawerHeaderMatchesInitiativeHome(t *testing.T) {
 	defer func(m string) { GroupMode = m }(GroupMode)
 	GroupMode = "prefix"
@@ -472,17 +479,20 @@ func TestDrawerHeaderMatchesInitiativeHome(t *testing.T) {
 	if drawer == "" || home == "" {
 		t.Fatalf("need both headers:\n%s", stripAnsi([]byte(out)))
 	}
-	for _, c := range []struct {
-		label, row, hue string
-	}{{"drawer", drawer, PaletteFor("projects")}, {"home", home, PaletteFor("alpha")}} {
+	for _, c := range []struct{ label, row string }{{"drawer", drawer}, {"home", home}} {
 		if !strings.Contains(c.row, Bold) {
 			t.Errorf("%s header must be bold: %q", c.label, c.row)
 		}
-		if !strings.Contains(c.row, c.hue) {
-			t.Errorf("%s header must carry its own identity hue: %q", c.label, c.row)
+		// Neither carries decorative identity color while idle — that's
+		// the shared quiet tone both now render with, not a demotion of
+		// either relative to the other.
+		if strings.Contains(c.row, PaletteFor("projects")) || strings.Contains(c.row, PaletteFor("alpha")) {
+			t.Errorf("%s header must not carry decorative identity color while idle: %q", c.label, c.row)
 		}
-		if strings.Contains(c.row, Dim) {
-			t.Errorf("%s header must not be dimmed — no group is scaffolding: %q", c.label, c.row)
-		}
+	}
+	// Both headers share the exact same structural tone — this IS the
+	// equal-standing claim now: same weight, same quiet color, together.
+	if !strings.Contains(drawer, thDim()) || !strings.Contains(home, thDim()) {
+		t.Errorf("both headers must share the same quiet structural tone:\n drawer=%q\n home=%q", drawer, home)
 	}
 }

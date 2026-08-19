@@ -64,11 +64,22 @@ func isDemotedRow(p *proto.Project, now int64) bool {
 // MarkerFor returns the (glyph, ansiColor) pair for the given project's
 // current Attention state, per VIS-01 / bash baseline lines 484-517.
 //
-//   - Waiting   → animator.PulseGlyphAt(age) + RedPulse (age-paced pulse)
-//   - Working   → animator.WorkGlyph() spinner + Icy
+//   - Waiting   → animator.PulseGlyphAt(age) + the age-paced wait ramp
+//   - Working   → animator.WorkGlyph() spinner + PaletteFor(p.Name)
 //   - Finished  → "◆" + Yellow
-//   - Idle      → "·" + PaletteFor(p.Name) (when session exists)
-//   - absent or unknown → "·" + Dim
+//   - Idle, absent, or unknown → "·" + Dim
+//
+// Color budget (calm pass, 2026-08-19): color is spent on STATE, not
+// identity — idle used to carry PaletteFor(p.Name) unconditionally
+// (decoration: the row's fixed position and its own name already say
+// which project this is), which was the single largest source of a quiet
+// fleet still reading as a rainbow of unrelated hues. Idle is now always
+// Dim, full stop. Working moves the OTHER way, from one flat institutional
+// color shared by every working row fleet-wide to the row's own identity
+// hue — the delight-pass centerpiece: two projects working at once now
+// glow differently, not as two copies of one teal spinner. Waiting keeps
+// its existing age ramp (thWaiting) because that color already IS real
+// information — how stale the wait is — not decoration, so it stays put.
 //
 // Falls back to the legacy Status string when Attention is empty — the
 // daemon may be running a binary built before the Attention field was
@@ -105,8 +116,10 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 	case proto.AttWorking:
 		// Animated spinner (dogfood 2026-06-06): running work is the
 		// convention for motion, not a static ring. The footer tally
-		// keeps the static ◎ as the bucket's label.
-		return animator.WorkGlyph(), thWorking()
+		// keeps the static ◎ as the bucket's label. Identity-hued
+		// (2026-08-19), not thWorking()'s old flat institutional color —
+		// see the doc comment above.
+		return animator.WorkGlyph(), thPalette(p.Name)
 	case proto.AttFinished:
 		return "◆", thDone()
 	case proto.AttDead:
@@ -115,10 +128,9 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 		// urgency; the glyph carries the difference.
 		return "✗", thDead()
 	case proto.AttIdle:
-		if p.Status == "absent" {
-			return "·", thDim()
-		}
-		return "·", thPalette(p.Name)
+		// Always Dim (2026-08-19) — idle carries no decorative identity
+		// color regardless of session existence; see the doc comment above.
+		return "·", thDim()
 	default:
 		return "·", thDim()
 	}
