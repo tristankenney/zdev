@@ -67,7 +67,7 @@ func isDemotedRow(p *proto.Project, now int64) bool {
 //   - Waiting   → animator.PulseGlyphAt(age) + the age-paced wait ramp
 //   - Working   → animator.WorkGlyph() spinner + PaletteFor(p.Name)
 //   - Finished  → "◆" + Yellow
-//   - Idle, absent, or unknown → "·" + Dim
+//   - Idle, absent, or unknown → " " (blank) + Dim
 //
 // Color budget (calm pass, 2026-08-19): color is spent on STATE, not
 // identity — idle used to carry PaletteFor(p.Name) unconditionally
@@ -80,6 +80,16 @@ func isDemotedRow(p *proto.Project, now int64) bool {
 // glow differently, not as two copies of one teal spinner. Waiting keeps
 // its existing age ramp (thWaiting) because that color already IS real
 // information — how stale the wait is — not decoration, so it stays put.
+//
+// Glyph budget (2026-08-19, same pass): once the idle dot lost its color it
+// stopped carrying anything either — a live A/B compared a column of dim
+// "·"s against a blank column feeding the same fixture, and the blank read
+// as quieter with no loss of scanability (the fixed 2-space margin still
+// lines every name up), while the real markers (spinner, pulse, ✗) stood
+// out MORE against true blank than against a wash of identical grey dots.
+// Idle/absent/unknown now render a blank space instead of "·" — same
+// column width, so alignment is unchanged; only a real attention state
+// puts ink in that column now.
 //
 // Falls back to the legacy Status string when Attention is empty — the
 // daemon may be running a binary built before the Attention field was
@@ -100,8 +110,8 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 		case "alive":
 			att = proto.AttIdle
 		default:
-			// "absent" or unknown — dim dot.
-			return "·", thDim()
+			// "absent" or unknown — blank, Dim (glyph budget, 2026-08-19).
+			return " ", thDim()
 		}
 	}
 	switch att {
@@ -128,11 +138,11 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 		// urgency; the glyph carries the difference.
 		return "✗", thDead()
 	case proto.AttIdle:
-		// Always Dim (2026-08-19) — idle carries no decorative identity
-		// color regardless of session existence; see the doc comment above.
-		return "·", thDim()
+		// Blank, not "·" (glyph budget, 2026-08-19) — see the doc comment
+		// above.
+		return " ", thDim()
 	default:
-		return "·", thDim()
+		return " ", thDim()
 	}
 }
 

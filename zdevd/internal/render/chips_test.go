@@ -353,8 +353,9 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 		// is this fixture's project name.
 		{"shell-running", anim.WorkGlyph(), PaletteFor("test")},
 		{"finished", "◆", Yellow},
-		{"absent", "·", Dim},
-		{"unknown", "·", Dim},
+		// Idle/absent/unknown are blank, not "·" (glyph budget, 2026-08-19).
+		{"absent", " ", Dim},
+		{"unknown", " ", Dim},
 	}
 	for _, tc := range tests {
 		p := proto.Project{Name: "test", Status: tc.status}

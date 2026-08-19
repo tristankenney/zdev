@@ -325,11 +325,11 @@ func formatLegend() string {
 
 	section("Row marker (left of project name)")
 	row(redPulse+"●"+reset, "agent waiting (pulses faster as the wait ages)")
-	row(icy+"◐◓◑◒"+reset, "working / shell-running (spinner)")
+	row(icy+"◐◓◑◒"+reset, "working / shell-running (spinner, own identity hue per project)")
 	row(yellow+"◆"+reset, "agent finished")
 	row(redPulse+"✗"+reset, "agent died (unclean exit — static, relaunch it)")
-	row("·", "alive (palette ·, full-brightness name)")
-	row(dim+"· name"+reset, "stale (>1h) or no session — whole row dims")
+	row(" ", "alive (blank — idle carries no glyph or color, color/glyph budget)")
+	row(dim+" name"+reset, "stale (>1h) or no session — whole row dims")
 
 	section("Groups & initiatives (ZDEV_SIDEBAR_GROUP=prefix)")
 	row("╭─ name ──", "initiative header — IS its home row (notes/INITIATIVE.md);")

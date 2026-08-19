@@ -13,16 +13,15 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 func stripAnsi(b []byte) string { return ansiRE.ReplaceAllString(string(b), "") }
 
-// runeCol returns the rune (screen-column) index of r in s, or -1. Byte
-// offsets are useless for column assertions here — the frame glyphs, the
-// markers, and the status dots are all multibyte.
-func runeCol(s string, r rune) int {
-	for i, c := range []rune(s) {
-		if c == r {
-			return i
-		}
+// runeColOfSubstring returns the rune (screen-column) index where sub
+// begins in s, or -1. Byte offsets from strings.Index are useless for
+// column assertions — the frame glyphs are multibyte.
+func runeColOfSubstring(s, sub string) int {
+	byteIdx := strings.Index(s, sub)
+	if byteIdx < 0 {
+		return -1
 	}
-	return -1
+	return len([]rune(s[:byteIdx]))
 }
 
 func TestDisplayName(t *testing.T) {
@@ -86,18 +85,18 @@ func TestGroupedFrameFlat(t *testing.T) {
 		t.Errorf("projects synthetic header count = %d, want 1:\n%s", n, out)
 	}
 	// Members: leaf display, gutter, closer on the last.
-	if !strings.Contains(out, "  │  · pay-app") || !strings.Contains(out, "  ╰  · pay-id") {
+	if !strings.Contains(out, "  │    pay-app") || !strings.Contains(out, "  ╰    pay-id") {
 		t.Errorf("alpha members must gutter and close:\n%s", out)
 	}
-	if !strings.Contains(out, "  ╰  · pay-app") {
+	if !strings.Contains(out, "  ╰    pay-app") {
 		t.Errorf("projects' last member closes the frame:\n%s", out)
 	}
 	// ALPHA order preserved — dotfiles sits BETWEEN the groups, no
 	// separators anywhere.
 	iAlpha := strings.Index(out, "╭ alpha")
-	iDot := strings.Index(out, "· dotfiles")
+	iDot := strings.Index(out, "  dotfiles")
 	iProj := strings.Index(out, "╭ projects")
-	iZdev := strings.Index(out, "· zdev")
+	iZdev := strings.Index(out, "  zdev")
 	if !(iAlpha < iDot && iDot < iProj && iProj < iZdev) {
 		t.Errorf("alpha order must interleave singles: a=%d d=%d p=%d z=%d:\n%s",
 			iAlpha, iDot, iProj, iZdev, out)
@@ -146,7 +145,7 @@ func TestStreamFrames(t *testing.T) {
 
 	// backend has a HOME row (its folder rows since 2026-08-18): a real
 	// member-shaped row heads the run — no synthetic label for it.
-	if n := strings.Count(out, "  \u2502  \u00b7 backend\n"); n != 1 {
+	if n := strings.Count(out, "  \u2502    backend\n"); n != 1 {
 		t.Errorf("stream home row count = %d, want 1:\n%s", n, out)
 	}
 	// emails has no home row: the synthetic subtle label stands in.
@@ -162,14 +161,14 @@ func TestStreamFrames(t *testing.T) {
 		}
 	}
 	// Floor members keep their indent; stream repos sit two cells deeper.
-	if !strings.Contains(out, "  \u2502  \u00b7 pay-id") {
+	if !strings.Contains(out, "  \u2502    pay-id") {
 		t.Errorf("floor members keep the standard indent:\n%s", out)
 	}
-	if !strings.Contains(out, "  \u2502    \u00b7 pay-app") {
+	if !strings.Contains(out, "  \u2502      pay-app") {
 		t.Errorf("stream repos indent two cells deeper:\n%s", out)
 	}
 	// The group's final row still closes the one frame, at stream indent.
-	if !strings.Contains(out, "  \u2570    \u00b7 pay-mailer") {
+	if !strings.Contains(out, "  \u2570      pay-mailer") {
 		t.Errorf("the last stream repo closes the group frame:\n%s", out)
 	}
 	// No second frame, no per-stream brackets.
@@ -181,8 +180,8 @@ func TestStreamFrames(t *testing.T) {
 		t.Errorf("stream members must not repeat the stream prefix:\n%s", out)
 	}
 	// Order: floor, then gap, then backend's run, then emails'.
-	iFloor := strings.Index(out, "\u00b7 pay-id")
-	iBackend := strings.Index(out, "\u00b7 backend")
+	iFloor := strings.Index(out, " pay-id")
+	iBackend := strings.Index(out, " backend")
 	iEmails := strings.Index(out, "\u2502  emails")
 	if !(iFloor < iBackend && iBackend < iEmails) {
 		t.Errorf("streams must cluster after the floor: floor=%d backend=%d emails=%d:\n%s",
@@ -272,7 +271,7 @@ func TestGroupedCollapseFlat(t *testing.T) {
 	if !strings.Contains(out, "▸ alpha ·2") {
 		t.Errorf("fully folded marked group: ▸ + rollup:\n%s", out)
 	}
-	if !strings.Contains(out, "╭ beta") || !strings.Contains(out, "  ╰  · repo-c") {
+	if !strings.Contains(out, "╭ beta") || !strings.Contains(out, "  ╰    repo-c") {
 		t.Errorf("open group renders frame + members:\n%s", out)
 	}
 	// projects: partially folded — working member visible, header keeps ╭
@@ -280,7 +279,7 @@ func TestGroupedCollapseFlat(t *testing.T) {
 	if !strings.Contains(out, "╭ projects ·1") {
 		t.Errorf("partially folded unmarked group: ╭ + rollup:\n%s", out)
 	}
-	if !strings.Contains(out, "pay-id") || strings.Contains(out, "· pay-app") {
+	if !strings.Contains(out, "pay-id") || strings.Contains(out, "pay-app") {
 		t.Errorf("working member visible, quiet member hidden:\n%s", out)
 	}
 }
@@ -362,9 +361,9 @@ func TestMarkerPreservesFrameAndContentColumn(t *testing.T) {
 	var marked, plain string
 	for _, l := range strings.Split(out, "\n") {
 		switch {
-		case strings.Contains(l, "· pay-app") && strings.HasPrefix(l, "▶"):
+		case strings.Contains(l, "pay-app") && strings.HasPrefix(l, "▶"):
 			marked = l
-		case strings.Contains(l, "· pay-id"):
+		case strings.Contains(l, "pay-id"):
 			plain = l
 		}
 	}
@@ -374,10 +373,11 @@ func TestMarkerPreservesFrameAndContentColumn(t *testing.T) {
 	if !strings.Contains(marked, "▶ │") {
 		t.Errorf("cursor row lost its frame gutter: %q", marked)
 	}
-	// Compare RUNE columns — box-drawing glyphs and the marker are all
-	// multibyte, so byte offsets are not screen columns.
-	if got, want := runeCol(marked, '·'), runeCol(plain, '·'); got != want {
-		t.Errorf("marker shifted the content column:\n  marked %q (· at col %d)\n  plain  %q (· at col %d)",
+	// Compare RUNE columns — box-drawing glyphs are multibyte, so byte
+	// offsets are not screen columns. The idle glyph is blank (glyph
+	// budget, 2026-08-19), so the name itself is the anchor now.
+	if got, want := runeColOfSubstring(marked, "pay-app"), runeColOfSubstring(plain, "pay-id"); got != want {
+		t.Errorf("cursor shifted the content column:\n  marked %q (name at col %d)\n  plain  %q (name at col %d)",
 			marked, got, plain, want)
 	}
 }
