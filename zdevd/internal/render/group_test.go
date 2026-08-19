@@ -210,8 +210,42 @@ func TestStreamFramesCollapse(t *testing.T) {
 	if n := strings.Count(out, "  \u2502  emails\n"); n != 1 {
 		t.Errorf("a pierced stream keeps its label, count = %d:\n%s", n, out)
 	}
+	// Bug found live 2026-08-19: alpha's only floor member is collapsed, so
+	// the floor paints NO visible row \u2014 the breathing gap must not appear
+	// either, or it's a stray blank rail line sitting under the header with
+	// nothing above it to separate from.
+	lines := strings.Split(out, "\n")
+	for _, l := range lines {
+		if l == "  \u2502" {
+			t.Errorf("no floor row is visible \u2014 the breathing gap must not render:\n%s", out)
+		}
+	}
 	if !strings.Contains(out, "\u256d alpha \u00b72") {
 		t.Errorf("home rollup counts folded floor and stream members alike:\n%s", out)
+	}
+}
+
+// The gap's counterpart case: a floor member IS visible, so the breathing
+// gap must still appear before the first (pierced) stream \u2014 a floor with
+// content genuinely has something to separate from a stream block.
+func TestStreamFramesGapWithVisibleFloor(t *testing.T) {
+	defer func(m string) { GroupMode = m }(GroupMode)
+	GroupMode = "prefix"
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "alpha", Status: "alive"},
+		{Name: "alpha/pay-app", Status: "alive"}, // visible floor row
+		{Name: "alpha/backend/pay-app", Status: "shell-running", Attention: proto.AttWorking},
+	}}
+	out := stripAnsi(Render(snap, 50, NewAnimator(), fixedNowFn))
+	lines := strings.Split(out, "\n")
+	gaps := 0
+	for _, l := range lines {
+		if l == "  \u2502" {
+			gaps++
+		}
+	}
+	if gaps != 1 {
+		t.Errorf("a visible floor row must still get exactly one breathing gap before its stream, got %d:\n%s", gaps, out)
 	}
 }
 
