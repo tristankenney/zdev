@@ -90,7 +90,7 @@ keeps its other three surfaces (`zdev next`, fzf popup, notifications), and
 the freed slot is reserved for S3's review gauge — which must clear the bar
 the strip failed: show information NOT already visible in the list.
 
-### ✅ 7. Remote push fan-out (ntfy/Pushover via the exec seam) — `40751c2`
+### ✅ 4. Remote push fan-out (ntfy/Pushover via the exec seam) — `40751c2`
 `ZDEV_NOTIFY_CMDS` fans one notification to multiple backends: a
 newline-separated list where each entry runs like `ZDEV_NOTIFY_CMD` (sh -c,
 `ZDEV_NOTIFY_*` payload env, 1.5s deadline + reaper) and the literal token
@@ -102,7 +102,7 @@ fire-and-forget). Default-off: unset → byte-identical legacy path. Adapter
 targets `bin/zdev-notify-{ntfy,pushover}`. Hub-invariants review: PASS.
 - **Kill (live):** push fatigue causes muting.
 
-### ✅ 8. `zdev doctor` hardening + curl-pipe self-bootstrap installer — `9ee0598`
+### ✅ 5. `zdev doctor` hardening + curl-pipe self-bootstrap installer — `9ee0598`
 `install.sh` self-bootstraps under `curl … | bash`: structural no-checkout
 detection (requires `install.sh` + `bin/zdev` + `zdevd/`, not a trusted
 path), clones to `ZDEV_INSTALL_DIR` (default `~/workspace/zdev`), re-execs
@@ -114,7 +114,7 @@ unknown-flag handling (exit 2). Pure bash 3.2. `--probe` predated this.
   socket+tmux only. Note: `agent-smoke` installs from a checkout, so CI
   covers detection but NOT the bootstrap clone path.
 
-### ✅ 9. `zdev initiatives` — machine-readable initiative digest — `d2c665d`
+### ✅ 6. `zdev initiatives` — machine-readable initiative digest — `d2c665d`
 `zdev-show initiatives [--json]`: per-initiative intent/decisions/outcome
 (tolerant INITIATIVE.md parse), member-clone git state (LOCAL only — never
 fetches), optional `bd stats` work counts, notes listing. No daemon dial —
@@ -125,19 +125,64 @@ consumer contract (v1, `docs/initiatives-digest.md`) so downstream skills
   contract within a month, fold the human view into `zdev --list-projects -v`
   and drop the JSON surface.
 
-### 4. S3 — `zdev review` landing-readiness gauge, worktree-grouping built in *(converged, load-bearing)*
-**The** load-bearing bet: replace the sidebar strip with a review-debt gauge —
-PR-open + CI-green + clean-tree = "ready to land, longest-rotting first"; buckets
-for needs-a-fix and uncommitted-will-rot; decoupled from the flaky `finished`
-glyph. Build the `eventlog.Scan(path, since)` typed reader here as the shared
-data-layer deliverable. Group by resolved repo (the Lister already maps
-agora-a/b/c → one repo) with per-repo ready-to-land counts — nearly free now, and
-defends the gauge from fragmenting the moment worktrees exist.
-- **Effort:** weeks · **Depends:** S1 (shared queue/render model)
-- **Kill:** if dogfood shows the bottleneck is not review-bandwidth (queue stays
-  empty, gauge never moves), the gauge solves a non-problem — revert to the strip.
+### ✅ 7. Initiative/group rendering — flat-root ontology, collapse, GroupMode default flip
+Five sequenced ships collapsed into one line: v1 dim per-prefix headers →
+v1.1 workspace-derived registry (`ZDEV_PROJECTS_DISCOVER`, `git clone` into
+an initiative IS add-repo) → v1.2 home-as-header with identity color → v2
+collapse+rollup (groups nobody attends fold to `╭ name ·N`; wait/dead/finished
+always pierce) → the flat-root ontology rewrite (2026-07-31: one structural
+concept, the GROUP — any workspace-root dir; `INITIATIVE.md` is the on-disk
+mark; per-kind `[collapse]` settings replaced the old initiatives-only
+discriminator). **GroupMode's kill criterion got its verdict 2026-08-18**
+("if v1 headers never change where the eye lands, v2 dies with the knob"):
+survived — weeks of dogfood ran grouped, the frames are where the eye
+lands, so `ZDEV_SIDEBAR_GROUP` default flipped from `off` to `prefix`
+(`zdev-pick`'s feed flipped in step). Remaining from this whole arc:
+header-enter → `zdev next <prefix>` scoped jump — the one item that never
+got picked up across five ships.
+- **Kill (live):** if collapse ever hides a wait the operator missed, the
+  rollup is lying — revert to always-expanded headers. Not yet observed.
 
-### ✅ 5. Inactive-session demotion *(dogfood feedback #2, 2026-06-05; shipped 2026-06-07)*
+### ✅ 8. Agent Teams supervision *(shipped through phase4-v20; replaced the killed Gas Town integration)*
+Claude Code Agent Teams supervision, further along than the original NEXT
+framing described: `Snapshot.TeamGroups` on the wire (phase4-v16), a
+`⊛<name>` badge + colored member bullets on the lead's row by default, and
+`ZDEV_TEAM_WINDOWS=1` promotes each teammate to its own nested indented row
+(phase4-v20, slice B) with idle/waiting/working/done states derived per
+member (phase4-v17/v18). In-process members (`tmuxPaneId: "in-process"`,
+the headless default) get the badge as their ONLY surface, exactly as
+designed; real-pane members group under the lead.
+- **Kill:** Anthropic ships a first-party dashboard, or Agent Teams leaves
+  experimental with an incompatible disk layout. Not yet observed.
+
+### ✅ 9. S4 — Round burn-down popup *(split out of the old S2+S4 bundle — S2's fleet nudge is unshipped, tracked separately in NEXT)*
+`cmd/zdev-round`: a stateful jump→re-poll→advance loop over
+`Snapshot.Triage` with in-memory handled/deferred marks and an
+end-of-round receipt, bubblezone mouse hit-testing, and a 3s auto-repoll.
+2026-08-18 calm pass (item 16) gave it the full bubbles spine: `bubbles/key`+`help`
+generate the footer legend from the actual dispatch bindings (the
+hand-written legend had drifted from Boundary's for identical handlers),
+`bubbles/spinner` replaced a frozen polling glyph, and a scroll window
+keeps the cursor from walking off the popup edge.
+- **Kill:** operator ignores the Round in favor of per-session jumping.
+  Not yet observed.
+
+### ✅ 10. S3 — `zdev review` landing-readiness gauge, worktree-grouping built in *(shipped; load-bearing bet paid off)*
+Replaced the sidebar strip with a review-debt gauge — PR-open + CI-green +
+clean-tree = "ready to land, longest-rotting first"; buckets for needs-a-fix
+and uncommitted-will-rot; decoupled from the flaky `finished` glyph.
+`eventlog.Scan(path, since)` is the shared data-layer reader. Groups by
+resolved repo with per-repo ready-to-land counts. `ZDEV_SIDEBAR_REVIEW=1`
+opt-in (`internal/render/review_gauge.go`); rose-pine gets its own block-bar
+row shape. Still being iterated on: the 2026-08-18 calm pass finished its
+theme-seam integration (glyph colors routed through `th*`) and its glyph
+grammar (ready ◆→✓, needs-fix ✗→↺ — a needs-fix is a request for rework,
+not a failure; see item 16).
+- **Kill (live):** if dogfood ever shows the bottleneck is not
+  review-bandwidth (queue stays empty, gauge never moves), the gauge solves a
+  non-problem — revert to the strip. Not yet observed.
+
+### ✅ 11. Inactive-session demotion *(dogfood feedback #2, 2026-06-05; shipped 2026-06-07)*
 *Update 2026-06-06:* the dim-in-place fallback shipped early (`37a2cc6c` —
 stale >1h and absent rows now dim marker AND name), motivated by the
 alive-vs-stale indistinguishability report.
@@ -161,7 +206,7 @@ Config: threshold + mode (fold/dim/off).
 - **Kill:** if folding hides a session the operator then forgets to resume
   (the "out of sight, agent rots" failure), default to dim-in-place.
 
-### ✅ 6. Footer tally redesign *(shipped 2026-06-07)*
+### ✅ 12. Footer tally redesign *(shipped 2026-06-07)*
 Worded counts of non-zero decision-relevant buckets in marker colors
 ("1 dead · 2 waiting · 3 working · 1 done"); dead counted separately from
 waiting (relaunch ≠ answer); quiet fleets render a blank row.
@@ -169,7 +214,7 @@ waiting (relaunch ≠ answer); quiet fleets render a blank row.
 that had been passing off the old footer's literal glyph.
 - **Kill (live):** if the worded footer still gets ignored, default to off.
 
-### ✅ 7. Mark-all-read — `56e96bb4` *(shipped 2026-06-06)*
+### ✅ 13. Mark-all-read — `56e96bb4` *(shipped 2026-06-06)*
 `zdev ack [--all|<project>]` — rides the notif channel as an `ack` kind
 rather than a socket verb: clears hook waits/deaths and stamps a synthetic
 visit (releases the wait latch, arms the stale-✳ demoter, tier-acks
@@ -182,67 +227,77 @@ verified by a clean queue across a live daemon restart.
 - **Kill (live):** if ack-all becomes a reflex that buries true deaths,
   exclude dead from `--all`.
 
-### ✅ 8. Shortcut/legend discoverability — `c8d458a6` *(shipped 2026-06-06)*
+### ✅ 14. Shortcut/legend discoverability — `c8d458a6` *(shipped 2026-06-06)*
 `zdev-help-popup`: keybindings parsed live from `tmux list-keys` (what's
 ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
 ✗ dead marker, age-paced pulse note, and a triage-glyph section. Suggested
 `M-r` (ack) and `M-?` (help) bindings documented in the sample conf.
 
+### ✅ 15. Workstreams — parallel initiative clones, folder-stack model *(shipped 2026-08-17/18)*
+A workstream = a child FOLDER of an initiative holding full clones (never
+worktrees — rev 1 died: same-branch supporting repos plus docker
+bind-mounts break a worktree's `.git` pointer file), one pay-cli stack, one
+runner, one DNS namespace. `zdev stream add <init> <name> <primary>
+[repo...] [--branch <existing>]` / `rm <init>/<name>` / `ls <init>`
+(`bin/zdev`). `add` is transactional (any failure or Ctrl-C mid-build rolls
+the whole folder back — a partial stream would otherwise row as a phantom
+stream home) and validates every segment name; `rm` is fail-closed
+end-to-end (canonical path containment, marker-based identity, no-upstream
+git treated as unsafe) after an adversarial review found path traversal,
+identity-spoofing, and unpushed-branch-deletion holes. `scripts/
+test-stream-contract.sh` is the 33-case checked-in regression suite for
+both verbs, in CI. **Stream homes** (2026-08-18): the stream folder itself
+now rows (`<init>/<stream>`) as a real session target — `zdev
+marketplace/backend` opens it — via `proto.StreamHomeSet`, structural like
+`HomeSet`, nothing on the wire. `proto.RowSort` extended to cluster a
+group's stream block after its floor with each stream's home heading its
+members; `zdev-pick`'s decorated sort mirrors it byte-for-byte (an
+invariants review caught and fixed two universe/ordering divergences
+between the hub and the switcher).
+- **Kill:** none observed; the model has been dogfooded daily since ship.
+
+### ✅ 16. The calm system — theme seam, glyph grammar, bubbles popups, quieter defaults *(shipped 2026-08-18)*
+A whole-interface design pass, not a single feature: (A) finished the
+`th*` theme seam — the triage strip, review gauge, daemon health row, and
+Agent Teams colors all bypassed it, so rose-pine rendered classic xterm
+color mixed with truecolor in one frame; `zdev-show` now imports render's
+ANSI constants instead of mirroring them (the mirror had already drifted
+onto an abandoned cyan). (B) a glyph grammar — one mark, one meaning: `✗`
+had carried four meanings in three colors, `◆` inverted between surfaces
+(yellow = come look, green = nothing to see); gauge ready → `✓`, needs-fix
+→ `↺`, runtime rows read `$ cmd`, the legacy compact footer mode (and its
+one-site-orphan `◎`) deleted, offline banner → `✗`. (C) bubbles adoption in
+Round + Boundary (see item 9) plus `render.CellTruncate`/`CellWidth` on
+`x/ansi` — one display-text seam replacing six byte-slice truncation sites
+that could cut a multi-byte rune in half. (D) `GroupMode` default flip (see
+item 7) and the mood-divider family halved from 17 to 8 SGR cells — under
+rose-pine the divider alone was the single largest color-cardinality
+contributor in every frame, for two bits of signal. Stream rows (item 15)
+went through two revisions in the same pass: nested per-stream frames
+shipped first, then a live-dogfood "too busy" verdict same-day produced
+rev 2 (one rail, subtle stream labels, a breathing line between floor and
+streams — no second frame, no per-stream hue).
+
+Two live bugs found and fixed in the same session, unrelated to the design
+pass itself: pane-title spinner drift (Claude Code moved from the Braille
+spinner block to the quadrant glyphs `◐◓◑◒`; `ClassifyPaneTitle` only knew
+the old range, so working sessions showed as bare "alive" — the claude-side
+twin of the upstream-drift failure the opencode canary exists to catch),
+and a `zdev-notify` lifecycle-marker leak (an untagged wait notification
+could inherit a stale `working`/`done` marker from the previous notif-file
+write, which the daemon's `NotifSeen` dispatch reads as "still working" —
+silently swallowing a real wait rather than just delaying it).
+- **Kill:** none observed yet; deployed live and dogfooded same-day.
+
 ---
 
 ## NEXT (~6 weeks)
 
-- **Initiative grouping v2 — collapse, rollup, scoped next** *(v1 headers
-  shipped behind `ZDEV_SIDEBAR_GROUP=prefix`)* — the initiative layout
-  (`$ZDEV_WORKSPACE/projects/<repo>` canonical; `initiatives/<name>/<repo>`
-  full clones per initiative, metadata versioned by one initiatives repo)
-  makes the path a derived grouping key — under the initiatives container
-  the key is the initiative name; v1 renders dim per-prefix headers,
-  renderer-only, row order untouched. *(v1.1 SHIPPED: the projects file
-  demoted to overrides — ZDEV_PROJECTS_DISCOVER derives the registry from
-  the workspace layout in bin/zdev's single loading site, the workspace
-  watcher covers initiative depth plus the overrides file, and
-  `--list-projects -v` is the provenance audit trail; `git clone` into an
-  initiative IS add-repo, no config edit, no daemon kick. v1.2 SHIPPED:
-  home-as-header with PaletteFor color identity + gutter frames, leaf-name
-  display, groups-first daemon ordering via proto.GroupSort.)* *(v2 collapse+rollup SHIPPED
-  2026-07-30 behind ZDEV_SIDEBAR_GROUP=collapse: groups nobody attends and
-  nothing demands fold to "╭ name ·N"; waiting/dead/finished pierce — dead
-  via DeadSinceTS, the invariants review caught Attention never holding
-  AttDead; Collapsed rides the wire (phase4-v22) so FlatRows stays the one
-  row-order authority. Remaining from this entry: header-enter →
-  zdev next <prefix> scoped jump.)* v2 as designed: groups the operator is NOT currently in
-  collapse to their header with a rolled-up worst-of glyph and count —
-  attention never collapses away (waiting/dead pierce or auto-expand); a
-  select on the header jumps to the group's oldest project requiring
-  attention (`zdev next <prefix>` — a prefix filter over rankTriage, which
-  already orders by cost-then-age); the initiatives container is the
-  discriminator (proto.IsInitiativeHome) so only initiatives collapse —
-  synthetic groups like projects/ stay expanded. Hiding rows changes
-  navigation row order, so the
-  group flag must move daemon-side onto the wire — FlatRows stays the single
-  row-order authority (renderer env must never disagree with the daemon;
-  hub-invariants review required). Effort: ~week. Depends: a week of v1
-  dogfood. Kill: if v1 headers never change where the eye lands, v2 dies
-  with the knob; if collapse ever hides a wait the operator then missed,
-  the rollup is lying — revert to always-expanded headers. *(FLAT-ROOT
-  ONTOLOGY SHIPPED 2026-07-31, superseding the container framing above:
-  one structural concept, the group — any workspace-root dir; the tree
-  mirrors the disk, no path is special. INITIATIVE.md on disk is the mark
-  (proto.HomeSet derives homes structurally — a bare row that is another
-  row's group key; InitiativesContainer const deleted), the workspace root
-  itself is the journal repo, ordering is pure alpha (proto.GroupSort and
-  the groups-first daemon ordering deleted), separators killed. Unmarked
-  groups like projects/ still fold — the "only initiatives collapse"
-  discriminator became per-kind [collapse] settings in sidebar.toml.
-  Remaining from this entry: header-enter → zdev next <prefix> scoped
-  jump.)*
-- **Agent Teams supervision (hybrid MVP)** *(replaces the killed Gas Town integration as the primary multi-agent target)* — Claude Code's Agent Teams ships in v2.1.169 behind `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` and hidden `--agent-teams`/`--teammate-mode` flags. zdev supervises via fsnotify on `~/.claude/teams/{name}/config.json`, then branches on each member's `tmuxPaneId`: real pane id → group panes under one sidebar entry (reusing the rig-grouping rendering from `zd-l2t`); literal `"in-process"` → render a `team:{name}` badge with member chips on the lead's pane (no panes to group; in-process is the headless default). Disk surface captured verbatim in `zd-dxj` notes from the `zd-amj` probe (2026-06-10). Effort: 3–5 days. Depends: none. Kill: Anthropic ships a first-party dashboard, or `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` leaves experimental with an incompatible layout.
-- **S2 cadence-capped fleet nudge + S4 Round burn-down popup** *(converged)* —
-  one nudge per cadence window (count + ETA + "M-a to start a round"; 15m STUCK
-  still pierces); the popup becomes a stateful jump→re-poll→advance loop with
-  in-memory defer and a handled/deferred receipt. Effort: week each. Depends:
-  S1, S3. Kill: operator ignores the Round in favor of per-session jumping.
+- **S2 — cadence-capped fleet nudge** *(S4 Round split out — shipped, see
+  SHIPPED)* — one nudge per cadence window (count + ETA + "M-a to start a
+  round"; 15m STUCK still pierces). Effort: week. Depends: S1, S3 (both
+  shipped). Kill: operator ignores the Round in favor of per-session
+  jumping.
 - **`zdevd demo` (fake-fleet daemon → reproducible README GIF)** — fixes the
   verified `docs/screenshot.png` 404. Thin DemoSource feeding the subscriber-push
   contract (extract a small Register/Unregister/DiagSnapshot interface from the
@@ -250,27 +305,6 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
   tier escalation + a death on a ticker. Doubles as a free e2e render gate.
   Effort: week. Depends: S1+S3+death (so the GIF shows the differentiators).
   Kill: if it drifts from real hub output and starts lying, internal-only.
-- **Command centre — the focus loop** *(2026-08-03; design:
-  docs/design/command-centre.md, workshopped with the operator)* — zdev as
-  the attention hub for an operator who self-distracts: an explicit ANCHOR
-  ("now: IMP-97 · 32m") pinned in the sidebar, an AIRLOCK that holds every
-  non-fire arrival while anchored (waits elsewhere stop speaking; a dim
-  "┊ holding N" is the only trace), two-keystroke thought CAPTURE (M-.),
-  and a BOUNDARY review that gives the held set + pressure-promoted drift
-  items ("due Thu ▲") one ranked hearing at natural scheduling points.
-  Three registers that never share a ranking (demanding = rankTriage,
-  untouched; available; drifting = the new modelling work), a time spine
-  (Commitments/InFocus/FreeUntil) sourced MCP-client-first with ICS
-  fallback, and popups assembled from stock bubbles parts on the Round's
-  skeleton. The contract the whole thing rests on: nothing deferred is
-  lost, nothing deferred may interrupt, everything held gets its hearing.
-  Five phases, each with its own kill criterion (see the note); the
-  standing rule that each phase's definition of done REMOVES or quiets a
-  sidebar surface (convergence: anchor + fires + fleet skeleton); and one
-  hard never: no capacity nudges mid-focus. Effort: phase 1 (park+held)
-  ~day; phases 2–3 ~week each. Depends: nothing. Kill: per-phase in the
-  note; globally, if the operator stops trusting deferral and resumes
-  checking, the design has failed regardless of what shipped.
 - **Daemon self-health row** — surface already-computed diag fields
   (`last_event_ago_sec`, `errors_1h`) as a single dim "degraded" row; a dead
   daemon and a dead agent are the same operator question. Effort: days. Depends:
@@ -278,29 +312,71 @@ ACTUALLY bound, including remaps) + `zdev-show --legend`, which gained the
 - **Charm adoption — Bubble Tea render loop + lipgloss styling**
   *(2026-08-01; the sidebar is a growing TUI surface, so the per-feature
   cost of hand-rolled ANSI now compounds)* — three sequenced phases, each
-  independently killable. (1) Bubble Tea as the render loop ONLY, behind
-  `ZDEV_SIDEBAR_ENGINE=tea` (classic default): `tea.WithInput(nil)` — the
-  daemon keeps cursor/state and global M-keys keep working; View() stays a
-  pure snapshot→string so goldens and the @zdev-rows click map survive.
-  Measured motivation: a breath tick changes 1 line of 11 but FrameWriter
-  ships the whole frame (~73 KB/s across 11 panes at 15fps); tea's
-  line-diffing renderer ships ~1/8th. After a dogfood week, flip the
-  default and DELETE FrameWriter/FrameSig/the classic loop (~280 lines).
-  (2) lipgloss through ONE pinned-ANSI256 renderer in internal/render,
-  gate-enforced (its no-tty default silently strips all color — spike
-  branch spike/lipgloss-gutters has the byte evidence); new visual
-  features use it from day one, existing surfaces migrate only when a
-  feature touches them (goldens churn feature-by-feature, where a human
-  is already eyeballing that feature's diff — never big-bang). (3) Full
-  input mode (focusable sidebar: search-as-you-type, in-place scroll once
-  the fleet outgrows pane height) stays UNBUILT until a feature actually
-  demands focus. Discipline that survives all phases: View() pure, goldens
-  kept. Kill: (1) if line-diffing doesn't measurably cut tmux write
-  volume, or the outage machine fights tea's lifecycle — revert to
-  FrameWriter; (2) if the pinned-renderer gate is ever the thing blocking
-  a feature rather than protecting it — reconsider raw constants; (3) if
-  no feature demands focus by the time (1)+(2) are done, input mode dies
+  independently killable.
+  **(1) Bubble Tea render loop — DOGFOODING, verdict overdue.** Behind
+  `ZDEV_SIDEBAR_ENGINE=tea` (classic stays default): `tea.WithInput(nil)` —
+  the daemon keeps cursor/state and global M-keys keep working; View()
+  stays a pure snapshot→string so goldens and the @zdev-rows click map
+  survive. Measured motivation: a breath tick changes 1 line of 11 but
+  FrameWriter ships the whole frame (~73 KB/s across 11 panes at 15fps);
+  tea's line-diffing renderer ships ~1/8th. One pane has run on tea since
+  2026-08-01 — past three weeks now, no reported regression, but no
+  measured verdict taken either. Next action: take the measurement, flip
+  the default if clean, and delete FrameWriter/FrameSig/the classic loop
+  (~280 lines).
+  **(2) lipgloss through the pinned renderer — SHIPPED and proven out.**
+  `internal/render/lipgloss.go` pins the profile to ANSI256 (its no-tty
+  default silently strips all color); `scripts/check-no-lipgloss-scatter.sh`
+  gate-enforces it as the only importer. Adopted feature-by-feature exactly
+  as designed — the review gauge's rose-pine bar (colorless `Width()` +
+  bold) is the one production consumer so far. The 2026-08-18 calm pass's
+  Round/Boundary/Park work (item 9, item 16) deliberately did NOT move
+  their hand-drawn box borders onto it — same reasoning as day one, a real
+  attached terminal doesn't need the pinned-renderer workaround, so raw
+  `render.*` constants stay the right tool there; only color decisions
+  route through theme tokens.
+  **(3) Full input mode — still UNBUILT**, correctly: no feature has
+  demanded focus yet.
+  Kill: (1) if line-diffing doesn't measurably cut tmux write volume once
+  measured, or the outage machine fights tea's lifecycle — revert to
+  FrameWriter; (2) resolved — the gate has protected, never blocked; (3)
+  if no feature demands focus by the time (1) resolves, input mode dies
   unbuilt.
+
+---
+
+## PARKED (paused, not cancelled — no roadmap work until un-parked)
+
+- **Command centre — the focus loop** *(shipped 2026-08-03; PARKED 2026-08-19)*
+  — design: docs/design/command-centre.md, workshopped with the operator.
+  zdev as the attention hub for an operator who self-distracts: an
+  explicit ANCHOR ("now: IMP-97 · 32m") pinned in the sidebar, an AIRLOCK
+  that holds every non-fire arrival while anchored (waits elsewhere stop
+  speaking; a dim "┊ holding N" is the only trace), two-keystroke thought
+  CAPTURE (M-.), and a BOUNDARY review that gives the held set +
+  pressure-promoted drift items ("due Thu ▲") one ranked hearing at
+  natural scheduling points. Three registers that never share a ranking
+  (demanding = rankTriage, untouched; available; drifting = the new
+  modelling work), a time spine (Commitments/InFocus/FreeUntil) sourced
+  MCP-client-first with ICS fallback, and popups assembled from stock
+  bubbles parts on the Round's skeleton. The contract the whole thing
+  rests on: nothing deferred is lost, nothing deferred may interrupt,
+  everything held gets its hearing.
+
+  **What's live and staying:** phases 1–3E — `M-.` park, `M-,`
+  anchor-by-hand, `M-;` boundary review, the airlock, the anchor row +
+  holding counter (`ZDEV_SIDEBAR_FOCUS=1`), dwell auto-anchor, instant
+  prompt-anchor. None of this is being rolled back; parking stops
+  *further* phase work, not the shipped surface.
+
+  **What's parked:** phases 4 (pressure/drift register) and 5 (command
+  centre popup) — deliberately unbuilt already, and now off the roadmap
+  entirely until un-parked. Five phases total, each with its own kill
+  criterion; the standing rule that each phase's DoD REMOVES or quiets a
+  sidebar surface (convergence: anchor + fires + fleet skeleton); one
+  hard never: no capacity nudges mid-focus. Global kill criterion still
+  applies whenever this resumes: if the operator stops trusting deferral
+  and resumes checking, the design has failed regardless of what shipped.
 
 ---
 
@@ -540,18 +616,25 @@ still has no analog) and worktree spawn (why it's LATER).
    false-positives or the review queue stays empty, the bets are wrong and get
    cut.
 
-## Follow-up: ghost waits one layer down (2026-08-09)
+## ✅ Follow-up: ghost waits one layer down — RESOLVED 2026-08-18
 
-The ghost-wait fix (wire suppression + SessionsListed teardown) cleans the
-sidebar and triage, but tierCheck iterates projectData directly and two
-ghost paths survive the teardown: a RESTART ghost (persisted WaitStartedTS
-restored for a session that died while the daemon was down — no session
-record ever exists, so the reconcile never visits it) and a LATE HOOK
-(NotifSeen after the prune re-stamps pd). Both notify on waits nobody can
-answer and inflate the digest's "· N more waiting". Fix shape: generalize
-the teardown to sweep projectData entries with wait fields whose name has
-no session record on any socket — mind the dash/slash key mapping. Kill
-criterion: if the sweep can't be made provably restart-safe, gate
-tierCheck on session existence with a HookWaitTS-freshness grace instead.
-(Invariants review 2026-08-09, finding 1 — notification-channel only, the
-wire is already clean.)
+The ghost-wait fix (wire suppression + SessionsListed teardown) cleaned the
+sidebar and triage, but tierCheck iterated projectData directly and two
+ghost paths survived: a RESTART ghost (persisted WaitStartedTS restored for
+a session that died while the daemon was down — no session record ever
+exists, so the reconcile never visited it) and a LATE HOOK (NotifSeen after
+the prune re-stamping pd). Found live 2026-08-17: `marketplace/pay-toggles`
+sat frozen `attention=waiting` for seven days, piercing the group fold the
+whole time.
+
+Fixed as designed: `applyPersistedState` now marks every restored
+demand-shaped entry (wait cascade, or waiting/finished attention) as a
+ghost candidate; the first `SessionsListed` on any socket drains the set —
+names with a live session record pass untouched, the rest lose their
+demand. Death marks are deliberately excluded (a dead session is absent by
+definition; the mark must survive until acked). Hub-invariants review:
+clean pass on all nine invariants. Accepted trade documented at the sweep:
+draining on the first listing (rather than waiting for the specific
+socket a name belongs to) can sweep a slower-socket wait a moment early —
+fail-open toward re-showing demand once its title re-derives, never toward
+hiding a live one.
