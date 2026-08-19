@@ -289,6 +289,24 @@ write, which the daemon's `NotifSeen` dispatch reads as "still working" —
 silently swallowing a real wait rather than just delaying it).
 - **Kill:** none observed yet; deployed live and dogfooded same-day.
 
+### ✅ 17. Charm adoption phase 1 — Bubble Tea render loop, default flipped *(verdict 2026-08-19)*
+`ZDEV_SIDEBAR_ENGINE=tea` (`tea.WithInput(nil)` — the daemon keeps cursor/
+state, global M-keys keep working, `View()` stays a pure snapshot→string
+so goldens and the click map survive) went fleet-wide on 2026-08-02 (not
+one pane — every sidebar, via `~/.config/zdev/env`) after a one-day
+single-pane trial. Measured motivation at design time: a breath tick
+changes 1 line of 11 but `FrameWriter` ships the whole frame (~73 KB/s
+across 11 panes at 15fps); tea's line-diffing renderer ships ~1/8th —
+never independently re-measured, but 2.5 weeks fleet-wide with no reported
+regression earned its own verdict: operator's own words, "lots of
+stability." Default flipped in code 2026-08-19 (unset → tea; `classic` is
+now the explicit opt-out, kept as the reversion path rather than deleted
+in the same commit). `internal/render/lipgloss.go`'s pinned-ANSI256
+renderer (phase 2) shipped alongside it and is proven out — see item 16.
+Phase 3 (full input mode) correctly stays unbuilt.
+- **Kill:** if classic is ever needed as a real fallback rather than a
+  paper reversion path, don't delete it. Not yet observed either way.
+
 ---
 
 ## NEXT (~6 weeks)
@@ -309,39 +327,22 @@ silently swallowing a real wait rather than just delaying it).
   (`last_event_ago_sec`, `errors_1h`) as a single dim "degraded" row; a dead
   daemon and a dead agent are the same operator question. Effort: days. Depends:
   death detection (shared liveness framing). Kill: never fires in practice.
-- **Charm adoption — Bubble Tea render loop + lipgloss styling**
-  *(2026-08-01; the sidebar is a growing TUI surface, so the per-feature
-  cost of hand-rolled ANSI now compounds)* — three sequenced phases, each
-  independently killable.
-  **(1) Bubble Tea render loop — DOGFOODING, verdict overdue.** Behind
-  `ZDEV_SIDEBAR_ENGINE=tea` (classic stays default): `tea.WithInput(nil)` —
-  the daemon keeps cursor/state and global M-keys keep working; View()
-  stays a pure snapshot→string so goldens and the @zdev-rows click map
-  survive. Measured motivation: a breath tick changes 1 line of 11 but
-  FrameWriter ships the whole frame (~73 KB/s across 11 panes at 15fps);
-  tea's line-diffing renderer ships ~1/8th. One pane has run on tea since
-  2026-08-01 — past three weeks now, no reported regression, but no
-  measured verdict taken either. Next action: take the measurement, flip
-  the default if clean, and delete FrameWriter/FrameSig/the classic loop
-  (~280 lines).
-  **(2) lipgloss through the pinned renderer — SHIPPED and proven out.**
-  `internal/render/lipgloss.go` pins the profile to ANSI256 (its no-tty
-  default silently strips all color); `scripts/check-no-lipgloss-scatter.sh`
-  gate-enforces it as the only importer. Adopted feature-by-feature exactly
-  as designed — the review gauge's rose-pine bar (colorless `Width()` +
-  bold) is the one production consumer so far. The 2026-08-18 calm pass's
-  Round/Boundary/Park work (item 9, item 16) deliberately did NOT move
-  their hand-drawn box borders onto it — same reasoning as day one, a real
-  attached terminal doesn't need the pinned-renderer workaround, so raw
-  `render.*` constants stay the right tool there; only color decisions
-  route through theme tokens.
-  **(3) Full input mode — still UNBUILT**, correctly: no feature has
-  demanded focus yet.
-  Kill: (1) if line-diffing doesn't measurably cut tmux write volume once
-  measured, or the outage machine fights tea's lifecycle — revert to
-  FrameWriter; (2) resolved — the gate has protected, never blocked; (3)
-  if no feature demands focus by the time (1) resolves, input mode dies
-  unbuilt.
+- **Delete the classic render loop** *(the one action item left from item 17)*
+  — `runClassic`/`FrameWriter`/`FrameSig` (~280 lines) plus the
+  `ZDEV_SIDEBAR_ENGINE=classic` opt-out. Not done yet: the default flip
+  shipped 2026-08-19 same day as the verdict, deliberately as its own small
+  commit rather than bundled with a deletion. Effort: an hour. Depends: a
+  little more runway on the flipped default before removing the reversion
+  path entirely. Kill: if classic is ever needed as a real fallback, don't
+  delete it — thin it instead.
+- **Look-and-feel as a standing priority, not a side-effect** *(operator
+  signal, 2026-08-19)* — verdict on the Charm arc: "stability's been good,
+  but look and feel hasn't been prioritised." Historically true — most
+  visual work before the calm pass (item 16) rode in as a side-effect of
+  bug fixes or protocol changes, not as its own effort. Not yet scoped:
+  what specifically to prioritize next (a further design pass beyond item
+  16, more stock bubbles components, something else) is an open question
+  for the operator, not a decision this roadmap should guess at.
 
 ---
 
