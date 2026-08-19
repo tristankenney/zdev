@@ -179,7 +179,7 @@ func TestChipPRAggregate_Celebrating(t *testing.T) {
 func TestChipCelebrate_InWindow(t *testing.T) {
 	now := int64(1000000)
 	var buf bytes.Buffer
-	got := chipCelebrate(&buf, now+100, now)
+	got := chipCelebrate(&buf, now+100, now, 0)
 	if !got {
 		t.Errorf("chipCelebrate: expected true (in window)")
 	}
@@ -189,10 +189,22 @@ func TestChipCelebrate_InWindow(t *testing.T) {
 	}
 }
 
+// The twinkle (delight pass, 2026-08-20): odd frames swap to the
+// companion star glyph, same rune width, so layout never shifts.
+func TestChipCelebrate_TwinkleAlternates(t *testing.T) {
+	now := int64(1000000)
+	var buf bytes.Buffer
+	chipCelebrate(&buf, now+100, now, 1)
+	want := []byte(Bold + Green + "✦ merged" + Reset)
+	if !bytes.Equal(buf.Bytes(), want) {
+		t.Errorf("chipCelebrate odd frame\nwant: %q\ngot:  %q", want, buf.Bytes())
+	}
+}
+
 func TestChipCelebrate_Expired(t *testing.T) {
 	now := int64(1000000)
 	var buf bytes.Buffer
-	got := chipCelebrate(&buf, now-1, now)
+	got := chipCelebrate(&buf, now-1, now, 0)
 	if got {
 		t.Errorf("chipCelebrate: expected false (expired)")
 	}
@@ -204,7 +216,7 @@ func TestChipCelebrate_Expired(t *testing.T) {
 func TestChipCelebrate_AtExactBoundary(t *testing.T) {
 	now := int64(1000000)
 	var buf bytes.Buffer
-	got := chipCelebrate(&buf, now, now) // celebrateUntil == now → expired
+	got := chipCelebrate(&buf, now, now, 0) // celebrateUntil == now → expired
 	if got {
 		t.Errorf("chipCelebrate: expected false (at boundary celebrateUntil == now)")
 	}

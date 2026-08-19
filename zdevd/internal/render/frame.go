@@ -1215,7 +1215,7 @@ func renderMetadataRow(buf *bytes.Buffer, p *proto.Project, current string, widt
 		chipDirty(&subBranch, p.DirtyCount)
 
 		// Sub-group 2: PR-or-celebrate (mutually exclusive)
-		celebrating := chipCelebrate(&subPR, p.CelebrateUntil, now)
+		celebrating := chipCelebrate(&subPR, p.CelebrateUntil, now, animator.BreathFrame())
 		if !celebrating {
 			chipPRAggregate(&subPR, p.PROpen, p.PRFail, p.PRPend, false)
 		}

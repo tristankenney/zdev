@@ -391,15 +391,27 @@ func chipPRAggregate(buf *bytes.Buffer, open, fail, pend int, celebrating bool) 
 // baseline lines 544-552.
 //
 // Returns true when the celebration window is active (celebrateUntil >
-// now) and appends the {Bold}{Green}✨ merged{Reset} chip to buf.
-// Returns false (and writes nothing) when the window has expired.
-func chipCelebrate(buf *bytes.Buffer, celebrateUntil int64, now int64) bool {
+// now) and appends the celebration chip to buf. Returns false (and writes
+// nothing) when the window has expired.
+//
+// A landing is rare by definition (a PR just merged) — exactly the moment
+// a real flourish is cheap, since it can't become noise if it only shows
+// up once per landing (delight pass, 2026-08-20). The chip's own frozen
+// glyph never earned that; frame (the breath cadence, ~4s per half-cycle)
+// alternates it between two equal-width star glyphs across the ~4s
+// window, a small twinkle in place of one static ✨. Equal width by
+// design — both variants are 8 runes — so it never perturbs row layout.
+func chipCelebrate(buf *bytes.Buffer, celebrateUntil int64, now int64, frame int) bool {
 	if celebrateUntil <= now {
 		return false
 	}
 	buf.WriteString(Bold)
 	buf.WriteString(thChipAccent(Green))
-	buf.WriteString("✨ merged")
+	if frame%2 == 0 {
+		buf.WriteString("✨ merged")
+	} else {
+		buf.WriteString("✦ merged")
+	}
 	buf.WriteString(Reset)
 	return true
 }
