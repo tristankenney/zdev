@@ -351,26 +351,30 @@ func run() error {
 	}
 	defer rs.conn.Close()
 
-	// ZDEV_SIDEBAR_ENGINE selects the render loop: unset or "classic" (the
-	// default) is runClassic below, byte-for-byte what shipped before this
-	// knob existed. "tea" switches to the Bubble Tea engine (tea_model.go /
-	// tea_run.go) — same daemon-owns-state / renderer-is-pure / input-never-
-	// goes-through-the-renderer invariants, a cheaper per-line-diffing
-	// terminal harness underneath (see internal/render/body.go for why the
-	// two engines need different framing around the same
-	// render.RenderWithRows).
-	if os.Getenv("ZDEV_SIDEBAR_ENGINE") == "tea" {
-		return runTea(ctx, rs)
+	// ZDEV_SIDEBAR_ENGINE selects the render loop. DEFAULT FLIPPED
+	// 2026-08-19: the tea engine (tea_model.go / tea_run.go) dogfooded
+	// stable on one pane since 2026-08-01 — three weeks, no reported
+	// regression — so unset now means tea; "classic" is the explicit
+	// opt-out (runClassic below, kept as the reversion path per the
+	// roadmap's kill criterion — never measured the tmux-write-volume
+	// claim directly, but the operator's live experience is the dogfood
+	// verdict that actually matters). Same daemon-owns-state /
+	// renderer-is-pure / input-never-goes-through-the-renderer invariants
+	// either way, a cheaper per-line-diffing terminal harness under tea
+	// (see internal/render/body.go for why the two engines need different
+	// framing around the same render.RenderWithRows).
+	if os.Getenv("ZDEV_SIDEBAR_ENGINE") == "classic" {
+		// ZDEV_SIDEBAR_HOVER is tea-only (classic has no input loop at all —
+		// see runClassic's socket.Stream select, which never reads stdin).
+		// Logged once at debug (not warn): setting the knob under classic
+		// isn't a mistake worth surfacing loudly, e.g. a shared dotfile
+		// enabling hover globally while a pane happens to run classic.
+		if rs.hoverEnabled {
+			slog.Debug("ZDEV_SIDEBAR_HOVER set but engine is classic; hover is inert under classic")
+		}
+		return runClassic(ctx, rs)
 	}
-	// ZDEV_SIDEBAR_HOVER is tea-only (classic has no input loop at all —
-	// see runClassic's socket.Stream select, which never reads stdin).
-	// Logged once at debug (not warn): setting the knob under classic isn't
-	// a mistake worth surfacing loudly, e.g. a shared dotfile enabling
-	// hover globally while a pane happens to run classic.
-	if rs.hoverEnabled {
-		slog.Debug("ZDEV_SIDEBAR_HOVER set but engine is not tea; hover is inert under classic")
-	}
-	return runClassic(ctx, rs)
+	return runTea(ctx, rs)
 }
 
 // rendererSetup bundles everything both engines need before their
