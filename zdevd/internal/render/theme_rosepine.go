@@ -195,11 +195,28 @@ func thUrgentBar() string {
 
 // thBreath is the current-session breath bar: identity hue at the
 // animator's brightness phase.
+//
+// Warmer, not brighter (delight pass, 2026-08-20) — this ▌ is the single
+// most-looked-at pixel in the whole interface, you sit on it all day, and
+// a bare brightness step read as mechanical rather than considered. At the
+// breath's peak (frame 0, already bold) the identity hue also blends
+// toward Gold — a glow, not just a harder flash. At the trough (frame 2,
+// already dim) it eases a little toward Base instead — receding, not just
+// darker. Frames 1 and 3 (normal weight) stay the pure identity hue
+// untouched, so TestThemeIdentityCoherence's "breath at normal phase IS
+// the identity hue" contract holds exactly.
 func thBreath(name string, frame int) string {
 	if ThemeMode != "rose-pine" {
 		return BreathColorForProject(name, frame)
 	}
-	return rpIdentityFor(name).fgBright(BreathBrightness[frame%len(BreathBrightness)])
+	hue := rpIdentityFor(name)
+	switch frame {
+	case 0:
+		hue = hue.lerp(rpGold, 0.35)
+	case 2:
+		hue = hue.lerp(rpBase, 0.15)
+	}
+	return hue.fgBright(BreathBrightness[frame%len(BreathBrightness)])
 }
 
 func thDivider(moodClassic string, n int) string {
