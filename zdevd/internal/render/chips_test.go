@@ -360,10 +360,7 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 		// Status-only fixture has no WaitStartedTS, so MarkerFor sees
 		// age 0 — the calm ÷4 pace tier of PulseGlyphAt.
 		{"waiting", anim.PulseGlyphAt(0), RedPulse},
-		// Working is identity-hued (color budget, 2026-08-19) — see
-		// TestMarkerFor_Working_UsesPalette for the dedicated case; "test"
-		// is this fixture's project name.
-		{"shell-running", anim.WorkGlyph(), PaletteFor("test")},
+		{"shell-running", anim.WorkGlyph(), Icy},
 		{"finished", "◆", Yellow},
 		// Idle/absent/unknown are blank, not "·" (glyph budget, 2026-08-19).
 		{"absent", " ", Dim},
@@ -381,17 +378,24 @@ func TestMarkerFor_StatusCoverage(t *testing.T) {
 	}
 }
 
-// TestMarkerFor_Working_UsesPalette pins the delight-pass centerpiece
-// (2026-08-19): a working row is identity-hued, not one flat institutional
-// color shared by every working row fleet-wide — two projects working at
-// once now glow differently.
-func TestMarkerFor_Working_UsesPalette(t *testing.T) {
+// TestMarkerFor_Working_IsSharedNotIdentity pins the reversal (2026-08-20)
+// of the same-day identity-hue-for-working experiment: two DIFFERENT
+// working projects get the SAME color. Identity-hued working was live
+// feedback'd out within the day — "non-obvious what the different colours
+// are for", "don't need different colours for initiatives" — two repos
+// both just "working" in unrelated hues implied a difference that wasn't
+// there. Working is semantic like every other state, one color, full stop.
+func TestMarkerFor_Working_IsSharedNotIdentity(t *testing.T) {
 	anim := NewAnimator()
-	p := proto.Project{Name: "myproject", Status: "shell-running"}
-	_, color := MarkerFor(p, anim, 1000)
-	expected := PaletteFor("myproject")
-	if color != expected {
-		t.Errorf("MarkerFor working: want PaletteFor result %q, got %q", expected, color)
+	a := proto.Project{Name: "alpha", Status: "shell-running"}
+	b := proto.Project{Name: "zeta", Status: "shell-running"}
+	_, colorA := MarkerFor(a, anim, 1000)
+	_, colorB := MarkerFor(b, anim, 1000)
+	if colorA != colorB {
+		t.Errorf("working color must not vary by identity: %q (alpha) vs %q (zeta)", colorA, colorB)
+	}
+	if colorA != Icy {
+		t.Errorf("working color = %q, want Icy (thWorking(), classic mode)", colorA)
 	}
 }
 

@@ -839,11 +839,11 @@ func writeStreamLabel(buf *bytes.Buffer, stream string) {
 // is reserved for the SAME thing MarkerFor already reserves it for
 // everywhere else: real attention. Idle/absent renders Bold in plain ink,
 // same weight-not-hue distinction a leaf row's dim gets; any active state
-// reuses the exact (glyph, color) MarkerFor derived for the corner, so a
-// working home lights up in its OWN identity hue (the centerpiece of the
-// delight pass — two initiatives working at once now glow differently,
-// not as two copies of one institutional teal) while waiting/dead/
-// finished keep their existing, meaningful state colors.
+// reuses the exact (glyph, color) MarkerFor derived for the corner —
+// waiting/working/dead/finished all carry their existing, meaningful
+// state colors, the SAME one regardless of which initiative it is
+// (working briefly went identity-hued per initiative too and was
+// reverted 2026-08-20 — see MarkerFor's doc comment).
 //
 // hovered (ZDEV_SIDEBAR_HOVER, tea engine only) overrides the name's
 // coloring with thHover() — foreground-only, so it layers safely
@@ -901,12 +901,12 @@ func renderHomeRow(buf *bytes.Buffer, p *proto.Project, width int, animator *Ani
 	// Color budget: an idle header carries no color at all — Bold alone
 	// says "this is a header", the same weight-not-hue distinction the
 	// rest of the palette now uses. An active header reuses the corner's
-	// own color, so a WORKING initiative glows in ITS OWN identity hue
-	// (MarkerFor's centerpiece change) while waiting/dead/finished keep
-	// their existing, meaningful state ramps. No trailing dash fill and no
-	// glyph+dash combo: live dogfood showed both read as clutter (a pane
-	// half-full of ragged rules; "◐─ name" noise) — the corner/marker,
-	// hue, and Bold carry "this is a header" alone.
+	// own color — waiting/working/dead/finished keep their existing,
+	// meaningful state ramps, the same one no matter which initiative it
+	// is. No trailing dash fill and no glyph+dash combo: live dogfood
+	// showed both read as clutter (a pane half-full of ragged rules;
+	// "◐─ name" noise) — the corner/marker, hue, and Bold carry "this is a
+	// header" alone.
 	switch {
 	case hovered:
 		buf.WriteString(thHover())

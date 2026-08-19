@@ -65,7 +65,7 @@ func isDemotedRow(p *proto.Project, now int64) bool {
 // current Attention state, per VIS-01 / bash baseline lines 484-517.
 //
 //   - Waiting   → animator.PulseGlyphAt(age) + the age-paced wait ramp
-//   - Working   → animator.WorkGlyph() spinner + PaletteFor(p.Name)
+//   - Working   → animator.WorkGlyph() spinner + thWorking()
 //   - Finished  → "◆" + Yellow
 //   - Idle, absent, or unknown → " " (blank) + Dim
 //
@@ -74,12 +74,19 @@ func isDemotedRow(p *proto.Project, now int64) bool {
 // (decoration: the row's fixed position and its own name already say
 // which project this is), which was the single largest source of a quiet
 // fleet still reading as a rainbow of unrelated hues. Idle is now always
-// Dim, full stop. Working moves the OTHER way, from one flat institutional
-// color shared by every working row fleet-wide to the row's own identity
-// hue — the delight-pass centerpiece: two projects working at once now
-// glow differently, not as two copies of one teal spinner. Waiting keeps
-// its existing age ramp (thWaiting) because that color already IS real
-// information — how stale the wait is — not decoration, so it stays put.
+// Dim, full stop.
+//
+// Working briefly went the other way too — identity-hued instead of one
+// shared color — and got reverted the same day (live feedback, 2026-08-20:
+// "non-obvious what the different colours are for" / "don't need
+// different colours for initiatives"). Two repos both just "working" in
+// two unrelated hues doesn't communicate anything; it looks like it
+// should mean something and doesn't, which is worse than one flat color.
+// Working is back to thWorking() — semantic, matching waiting/dead/done,
+// which all already say what they mean through ONE color each rather than
+// per-instance identity. Waiting's existing age ramp (thWaiting) was never
+// part of this back-and-forth — that color already IS real information
+// (how stale the wait is), not decoration, so it never moved.
 //
 // Glyph budget (2026-08-19, same pass): once the idle dot lost its color it
 // stopped carrying anything either — a live A/B compared a column of dim
@@ -126,10 +133,10 @@ func MarkerFor(p proto.Project, animator *Animator, now int64) (glyph, color str
 	case proto.AttWorking:
 		// Animated spinner (dogfood 2026-06-06): running work is the
 		// convention for motion, not a static ring. The footer tally
-		// keeps the static ◎ as the bucket's label. Identity-hued
-		// (2026-08-19), not thWorking()'s old flat institutional color —
-		// see the doc comment above.
-		return animator.WorkGlyph(), thPalette(p.Name)
+		// keeps the static ◎ as the bucket's label. thWorking() — semantic,
+		// not identity-hued (tried and reverted 2026-08-20, see the doc
+		// comment above).
+		return animator.WorkGlyph(), thWorking()
 	case proto.AttFinished:
 		return "◆", thDone()
 	case proto.AttDead:

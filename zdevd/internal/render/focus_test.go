@@ -308,10 +308,8 @@ func TestAnchoredFleetKeepsAnimatingEveryRow(t *testing.T) {
 	if line := stripAnsi([]byte(rawLineWithName(outA, "delta"))); !strings.ContainsAny(line, "◐◓◑◒") {
 		t.Errorf("a non-anchor working row must carry a live spinner frame, got %q", line)
 	}
-	// Full working hue, never dimmed to peripheral vision. Working is
-	// identity-hued since the color-budget pass (2026-08-19), not the flat
-	// thWorking() constant.
-	if line := rawLineWithName(outA, "delta"); !strings.Contains(line, PaletteFor("delta")) {
+	// Full working hue, never dimmed to peripheral vision.
+	if line := rawLineWithName(outA, "delta"); !strings.Contains(line, thWorking()) {
 		t.Errorf("a non-anchor working row must keep its working hue: %q", line)
 	}
 }
