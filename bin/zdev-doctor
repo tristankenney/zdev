@@ -9,6 +9,14 @@
 # state, then acks it).
 #
 # Exit code: number of ✗ failures (0 = healthy).
+
+# This script prints literal "~/..." paths in many human-facing messages
+# (e.g. "~/.local/bin on PATH") where tilde expansion is deliberately NOT
+# wanted — the tilde is display text. SC2088 flags every one as a possible
+# unexpanded-path bug; disable it file-wide rather than scatter directives
+# through case arms (where they break shellcheck's parser). Real path
+# construction in this script uses $HOME explicitly.
+# shellcheck disable=SC2088
 set -uo pipefail
 
 # Gap-fill from ~/.config/zdev/env (real env wins) — same loader as the
@@ -511,8 +519,12 @@ if [[ "$_sec_remote_found" -eq 0 ]]; then
 fi
 
 # 4. MCP exposure — `zdevd mcp --http` (zdevd/cmd/zdevd/mcp.go) is the
-# agent-operations control plane: fleet_status/triage/review/run/park/
-# anchor/held over one POST endpoint, no auth of any kind in the handler.
+# agent-operations control plane. Since 2026-08-20 it requires a bearer
+# token (ZDEV_MCP_TOKEN, else a generated 0600 token file), rejects
+# non-loopback Origin and non-JSON content-type, and refuses a non-loopback
+# bind without --insecure-bind; the actuator tools (run) register only when
+# ZDEV_MCP_ACTUATE=1. This check reports the live posture against those
+# gates.
 _sec_mcp_pids=$(pgrep -f 'zdevd mcp' 2>/dev/null || true)
 _sec_mcp_http_args=""
 for _pid in $_sec_mcp_pids; do
@@ -524,21 +536,36 @@ if [[ -z "$_sec_mcp_http_args" ]]; then
 else
   _sec_mcp_addr=$(printf '%s\n' "$_sec_mcp_http_args" | sed -n 's/.*--http[=[:space:]]*\([^[:space:]]*\).*/\1/p')
   case "$_sec_mcp_addr" in
-    127.0.0.1:*|localhost:*|\[::1\]:*) ;;
+    127.0.0.1:*|localhost:*|\[::1\]:*)
+      ok "zdevd mcp --http bound to loopback ($_sec_mcp_addr)" ;;
     *)
-      bad "zdevd mcp --http is bound to a NON-loopback address ($_sec_mcp_addr) — reachable from other hosts on the network"
-      fix "bind to 127.0.0.1:<port>, or firewall the port"
-      ;;
+      case "$_sec_mcp_http_args" in
+        *--insecure-bind*)
+          bad "zdevd mcp --http is bound NON-loopback ($_sec_mcp_addr) via --insecure-bind — reachable from other hosts; token auth is the only gate"
+          fix "drop --insecure-bind and bind 127.0.0.1:<port> (or a tailnet address) unless a remote client is genuinely required" ;;
+        *)
+          warn "zdevd mcp --http address ($_sec_mcp_addr) is non-loopback but --insecure-bind absent — the daemon should have refused to start; verify it is actually serving" ;;
+      esac ;;
   esac
-  bad "zdevd mcp --http ($_sec_mcp_addr) has no auth — ZDEV_MCP_TOKEN has no enforcement path in zdevd today, and the 'run' tool (spawns agents) is exposed unconditionally to any client that reaches it"
-  fix "treat --http as trusted-network-only (loopback/tailnet) until token auth ships"
+  # Token: enforcement now exists; report whether one is configured/generated.
+  if [[ -n "${ZDEV_MCP_TOKEN:-}" ]]; then
+    ok "MCP bearer auth enabled via ZDEV_MCP_TOKEN"
+  elif [[ -f "$_sec_data_dir/mcp-token" ]]; then
+    ok "MCP bearer auth enabled via generated token ($_sec_data_dir/mcp-token)"
+  else
+    warn "no ZDEV_MCP_TOKEN set and no generated token file found yet — the daemon generates one at first --http start; verify it exists after serving"
+  fi
   if [[ "${ZDEV_MCP_ACTUATE:-0}" == "1" ]]; then
-    warn "ZDEV_MCP_ACTUATE=1 is set — reminder: zdevd does not yet gate 'run' on this var, so actuation already fires regardless"
+    warn "ZDEV_MCP_ACTUATE=1 — the 'run' actuator (spawns agents) IS exposed to any authenticated MCP client; unset it to serve read-only tools only"
+  else
+    ok "actuators gated off (ZDEV_MCP_ACTUATE unset) — MCP serves read-only tools; 'run' is not offered"
   fi
 fi
 
-# 5. Actuator posture — one line making blast radius visible (bin/zdev's
-# `run` verb and the MCP 'run' tool both funnel here; see check 4).
+# 5. Actuator posture — one line making the `run` blast radius visible.
+# Since 2026-08-20 the MCP-initiated path passes --supervised (NO
+# --dangerously-skip-permissions); only an operator-typed `zdev run`
+# without --supervised keeps the gate-disabling behavior.
 _sec_proj_count=""
 if command -v jq >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/zdev-show" ]]; then
   _sec_proj_count=$("$HOME/.local/bin/zdev-show" list --json 2>/dev/null | jq 'length' 2>/dev/null)
@@ -547,9 +574,9 @@ if [[ -z "$_sec_proj_count" && -x "$HOME/.local/bin/zdev" ]]; then
   _sec_proj_count=$("$HOME/.local/bin/zdev" --list-projects 2>/dev/null | grep -c . || true)
 fi
 if [[ -n "$_sec_proj_count" && "$_sec_proj_count" != "0" ]]; then
-  warn "zdev run spawns claude with --dangerously-skip-permissions in any of $_sec_proj_count configured project(s) — full blast radius, no per-call approval"
+  warn "operator-typed 'zdev run' (without --supervised) spawns claude with --dangerously-skip-permissions in any of $_sec_proj_count project(s); the MCP-initiated path is --supervised and does NOT disable gates"
 else
-  warn "zdev run spawns claude with --dangerously-skip-permissions — project count unavailable to size blast radius (daemon down?)"
+  warn "operator-typed 'zdev run' (without --supervised) spawns claude with --dangerously-skip-permissions; project count unavailable to size blast radius (daemon down?)"
 fi
 
 # 6. Reaper posture — the idle-session GC (launchd/systemd timer -> `zdev
@@ -576,17 +603,24 @@ fi
 _sec_zdev_bin="$HOME/.local/bin/zdev"
 _sec_has_dryrun=0
 [[ -f "$_sec_zdev_bin" ]] && grep -q -- '--dry-run' "$_sec_zdev_bin" 2>/dev/null && _sec_has_dryrun=1
+# Since 2026-08-20 the reaper is DEFAULT-OFF: the launchd/systemd job may be
+# loaded and fire on its interval, but do_reap no-ops unless ZDEV_REAP_ENABLED=1
+# AND only kills zdev-OWNED sessions. So "job loaded" and "actually reaps" are
+# now two different facts — report both.
+_sec_reap_armed=0
+[[ "${ZDEV_REAP_ENABLED:-0}" == "1" ]] && _sec_reap_armed=1
 if [[ "$_sec_reap_enabled" -eq 1 ]]; then
-  if [[ "$_sec_has_dryrun" -eq 1 ]]; then
-    ok "reaper enabled — idle threshold ${_sec_reap_hours}h, runs every $_sec_reap_interval"
-    _sec_dry=$("$_sec_zdev_bin" reap --dry-run 2>&1) || true
-    [[ -n "$_sec_dry" ]] && printf '%s\n' "$_sec_dry" | sed 's/^/      /'
+  if [[ "$_sec_reap_armed" -eq 1 ]]; then
+    warn "reaper ARMED (ZDEV_REAP_ENABLED=1) — will kill zdev-owned idle sessions past ${_sec_reap_hours}h, every $_sec_reap_interval"
+    if [[ "$_sec_has_dryrun" -eq 1 ]]; then
+      _sec_dry=$("$_sec_zdev_bin" reap --dry-run 2>&1) || true
+      [[ -n "$_sec_dry" ]] && printf '%s\n' "$_sec_dry" | sed 's/^/      /'
+    fi
   else
-    ok "reaper enabled — idle threshold ${_sec_reap_hours}h, runs every $_sec_reap_interval (no 'reap --dry-run' yet — future enhancement to preview kills before they happen)"
+    ok "reaper job loaded but DISARMED (ZDEV_REAP_ENABLED unset) — the timer fires on its ${_sec_reap_interval} interval but kills nothing; set ZDEV_REAP_ENABLED=1 to arm (threshold ${_sec_reap_hours}h, zdev-owned sessions only)"
   fi
 else
-  warn "reaper NOT enabled (no launchd/systemd job loaded) — idle sessions accumulate forever; configured threshold is ${_sec_reap_hours}h / $_sec_reap_interval"
-  fix "make -C <zdev-repo>/zdevd install-launchd (or the systemd equivalent) to load the reaper job"
+  ok "reaper job not loaded — nothing auto-kills sessions (default-off posture; threshold if armed: ${_sec_reap_hours}h)"
 fi
 
 # 7. Install integrity — a branch checkout backing ~/.local/bin or a
@@ -782,7 +816,7 @@ if [[ "$PROBE" -eq 1 ]]; then
     TMUX_PANE="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}" \
       "$HOME/.local/bin/zdev-notify" doctor waiting
     found=0
-    for i in $(seq 1 12); do
+    for _ in $(seq 1 12); do
       "$HOME/.local/bin/zdev-show" triage 2>/dev/null | grep -q "$sess" && { found=1; break; }
       sleep 1
     done
