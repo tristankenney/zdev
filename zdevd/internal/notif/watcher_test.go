@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,13 +73,16 @@ func TestNotifWatcher_FileWriteEmits(t *testing.T) {
 	c := runWatcher(t, dir)
 	arm(t, dir, c)
 
-	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-alpha.ts"), []byte("1714838460"), 0o644); err != nil {
+	// A recent timestamp passes the M2a plausibility clamp unchanged; the
+	// clamp itself is unit-tested separately in TestClampNotifTS.
+	ts := time.Now().Unix()
+	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-alpha.ts"), []byte(strconv.FormatInt(ts, 10)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ev := c.WaitFor(t, "NotifSeen{alpha}", seenSession("alpha"))
 	n := ev.(tmuxctl.NotifSeen)
-	if n.Timestamp != 1714838460 {
-		t.Errorf("Timestamp = %d; want 1714838460", n.Timestamp)
+	if n.Timestamp != ts {
+		t.Errorf("Timestamp = %d; want %d", n.Timestamp, ts)
 	}
 }
 
@@ -91,12 +95,13 @@ func TestNotifWatcher_FilterByName(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "random.txt"), []byte("nope"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-beta.ts"), []byte("1700000000"), 0o644); err != nil {
+	ts := time.Now().Unix()
+	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-beta.ts"), []byte(strconv.FormatInt(ts, 10)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ev := c.WaitFor(t, "NotifSeen{beta}", seenSession("beta"))
-	if n := ev.(tmuxctl.NotifSeen); n.Timestamp != 1700000000 {
-		t.Errorf("Timestamp = %d; want 1700000000", n.Timestamp)
+	if n := ev.(tmuxctl.NotifSeen); n.Timestamp != ts {
+		t.Errorf("Timestamp = %d; want %d", n.Timestamp, ts)
 	}
 	// random.txt is filtered out by name, so no NotifSeen can carry it — the
 	// filter is total, nothing to wait for.
@@ -112,25 +117,32 @@ func TestNotifWatcher_AppendMode(t *testing.T) {
 	c := runWatcher(t, dir)
 	arm(t, dir, c)
 
+	// Split a recent, in-window timestamp into two halves so the appended
+	// content concatenates back into a plausible ts that survives the M2a
+	// clamp unchanged (e.g. 1787203380 -> "178720" + "3380").
+	full := time.Now().Unix()
+	fullStr := strconv.FormatInt(full, 10)
+	head, tail := fullStr[:len(fullStr)-4], fullStr[len(fullStr)-4:]
+
 	p := filepath.Join(dir, "zdev-notif-gamma.ts")
-	if err := os.WriteFile(p, []byte("100"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(head), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	c.WaitFor(t, "NotifSeen{gamma} from create", seenSession("gamma"))
 
-	// Append fires a WRITE; readNotifFile then sees "100200". The post-arm
-	// append is a single, reliably-delivered event — wait for the appended ts.
+	// Append fires a WRITE; readNotifFile then sees the full concatenation. The
+	// post-arm append is a single, reliably-delivered event — wait for it.
 	f, err := os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString("200"); err != nil {
+	if _, err := f.WriteString(tail); err != nil {
 		t.Fatal(err)
 	}
 	f.Close()
 	c.WaitFor(t, "NotifSeen{gamma} from append", func(ev tmuxctl.Event) bool {
 		n, ok := ev.(tmuxctl.NotifSeen)
-		return ok && n.Session == "gamma" && n.Timestamp == 100200
+		return ok && n.Session == "gamma" && n.Timestamp == full
 	})
 }
 
@@ -142,17 +154,18 @@ func TestNotifWatcher_AtomicRename(t *testing.T) {
 	// Write to a non-matching staging name, then rename into place — the
 	// classic atomic-publish pattern. Only the rename's final name matches the
 	// filter. The watch is already armed, so the single rename is observed.
+	ts := time.Now().Unix()
 	staging := filepath.Join(dir, "staging.tmp")
 	final := filepath.Join(dir, "zdev-notif-delta.ts")
-	if err := os.WriteFile(staging, []byte("1714838500"), 0o644); err != nil {
+	if err := os.WriteFile(staging, []byte(strconv.FormatInt(ts, 10)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(staging, final); err != nil {
 		t.Fatal(err)
 	}
 	ev := c.WaitFor(t, "NotifSeen{delta}", seenSession("delta"))
-	if n := ev.(tmuxctl.NotifSeen); n.Timestamp != 1714838500 {
-		t.Errorf("rename: Timestamp = %d; want 1714838500", n.Timestamp)
+	if n := ev.(tmuxctl.NotifSeen); n.Timestamp != ts {
+		t.Errorf("rename: Timestamp = %d; want %d", n.Timestamp, ts)
 	}
 }
 
@@ -247,16 +260,79 @@ func TestNotifWatcher_TaggedKindEmits(t *testing.T) {
 	c := runWatcher(t, dir)
 	arm(t, dir, c)
 
-	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-epsilon.ts"), []byte("1714838460\npermission\n"), 0o644); err != nil {
+	ts := time.Now().Unix()
+	if err := os.WriteFile(filepath.Join(dir, "zdev-notif-epsilon.ts"), []byte(strconv.FormatInt(ts, 10)+"\npermission\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ev := c.WaitFor(t, "NotifSeen{epsilon}", seenSession("epsilon"))
 	n := ev.(tmuxctl.NotifSeen)
-	if n.Timestamp != 1714838460 {
-		t.Errorf("Timestamp = %d; want 1714838460", n.Timestamp)
+	if n.Timestamp != ts {
+		t.Errorf("Timestamp = %d; want %d", n.Timestamp, ts)
 	}
 	if n.Kind != "permission" {
 		t.Errorf("Kind = %q; want permission", n.Kind)
+	}
+}
+
+// TestClampNotifTS covers the M2a timestamp plausibility clamp: a value inside
+// [now-14d, now+120s] passes through; a spoofed old value (engineered to trip
+// STUCK instantly) and a future value are both snapped to now. Pure — no clock.
+func TestClampNotifTS(t *testing.T) {
+	const now = int64(1_787_203_380) // arbitrary fixed "now"
+	tests := []struct {
+		name string
+		ts   int64
+		want int64
+	}{
+		{"now passes through", now, now},
+		{"recent past passes through", now - 3600, now - 3600},
+		{"edge of past window passes", now - notifMaxPastSec, now - notifMaxPastSec},
+		{"small future skew passes", now + notifFutureSkewSec, now + notifFutureSkewSec},
+		{"backdated STUCK-trip spoof clamped", 1, now},
+		{"epoch-ish spoof clamped", 100200, now},
+		{"just-too-old clamped", now - notifMaxPastSec - 1, now},
+		{"far future clamped", now + notifFutureSkewSec + 1, now},
+		{"absurd future clamped", now + 10*365*24*3600, now},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clampNotifTS(tc.ts, now); got != tc.want {
+				t.Errorf("clampNotifTS(%d, %d) = %d; want %d", tc.ts, now, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadNotifFile_SizeCap proves the M2a read bound: a notif file larger than
+// maxNotifBytes is read only up to the cap (never wholesale into memory), while
+// a small honest file is read intact.
+func TestReadNotifFile_SizeCap(t *testing.T) {
+	dir := t.TempDir()
+
+	// A hostile oversized file: a valid first line, then megabytes of padding.
+	// The read must succeed (truncated at the cap) without loading it all — and
+	// the first-line timestamp still parses.
+	big := filepath.Join(dir, "zdev-notif-big.ts")
+	var sb strings.Builder
+	sb.WriteString("1787203380\npermission\n")
+	sb.WriteString(strings.Repeat("A", 4*maxNotifBytes))
+	if err := os.WriteFile(big, []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts, kind, summary, _ := readNotifFile(big)
+	if ts != 1787203380 {
+		t.Errorf("ts = %d; want 1787203380", ts)
+	}
+	if kind != "permission" {
+		t.Errorf("kind = %q; want permission", kind)
+	}
+	// The summary line came from the padding, but its length must be bounded by
+	// the cap — proof the read did not slurp the whole 256KiB file.
+	if len(summary) >= 4*maxNotifBytes {
+		t.Errorf("summary len %d not bounded by cap %d", len(summary), maxNotifBytes)
+	}
+	if len(summary) > maxNotifBytes {
+		t.Errorf("summary len %d exceeds cap %d", len(summary), maxNotifBytes)
 	}
 }
 

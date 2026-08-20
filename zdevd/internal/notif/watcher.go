@@ -21,6 +21,7 @@ package notif
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -42,6 +43,26 @@ const (
 	// Exported so the daemon entry point and the writer script can
 	// agree on the path. Kept in sync with ~/.local/bin/zdev-notify.
 	SubdirName = "zdevd-notif"
+
+	// maxNotifBytes caps a single notif-file read (M2a). A legitimate notif
+	// file is four short lines (a unix timestamp, a kind marker, one summary
+	// line, one src token) — kilobytes at most. The notif directory is a
+	// same-uid control channel with no authentication, so a hostile or
+	// runaway writer could otherwise point the daemon at a multi-gigabyte
+	// file and read it whole into memory. 64 KiB is generous headroom for a
+	// long summary line while bounding the read.
+	maxNotifBytes = 64 * 1024
+
+	// notifFutureSkewSec / notifMaxPastSec bound an accepted notif timestamp
+	// (M2a). The ts is agent-authored (filename-derived session, no auth), so
+	// a backdated value would make a fresh wait look ancient and trip the
+	// STUCK tier instantly, while a future value could suppress escalation.
+	// A value outside [now-notifMaxPastSec, now+notifFutureSkewSec] is clamped
+	// to now rather than dropped, so a spoofed ts loses its leverage without
+	// losing the notification itself. The past bound stays generous (14 days)
+	// so a genuinely old wait recovered across a daemon restart survives.
+	notifFutureSkewSec = 120
+	notifMaxPastSec    = 14 * 24 * 60 * 60
 )
 
 // WatchDir returns the production watch directory: parent/SubdirName.
@@ -102,7 +123,20 @@ func (w *Watcher) handle(name string) {
 		// platform (first caught by CI's Linux leg).
 		return
 	}
-	w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary, Src: src, ReceivedNanos: time.Now().UnixNano()})
+	now := time.Now()
+	ts = clampNotifTS(ts, now.Unix())
+	w.submit(tmuxctl.NotifSeen{Session: session, Timestamp: ts, Kind: kind, Summary: summary, Src: src, ReceivedNanos: now.UnixNano()})
+}
+
+// clampNotifTS pins an agent-authored notif timestamp into a plausible window
+// around nowSec (M2a). A ts far in the past (a spoof engineered to trip STUCK)
+// or in the future is snapped to nowSec; a ts within the window passes through.
+// Pure — nowSec is threaded in so the bound is testable without a real clock.
+func clampNotifTS(ts, nowSec int64) int64 {
+	if ts > nowSec+notifFutureSkewSec || ts < nowSec-notifMaxPastSec {
+		return nowSec
+	}
+	return ts
 }
 
 // readNotifFile reads the notif file zdev-notify wrote. Four formats, each
@@ -126,7 +160,16 @@ func (w *Watcher) handle(name string) {
 // with it. An unrecognized kind passes through verbatim; the hub-side
 // classifier normalizes unknowns to the conservative "decision" class.
 func readNotifFile(path string) (ts int64, kind, summary, src string) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, "", "", ""
+	}
+	defer f.Close()
+	// M2a: bound the read. The notif dir is an unauthenticated same-uid
+	// channel; io.LimitReader keeps a hostile or runaway writer from forcing
+	// an unbounded read into memory. A legitimate file is well under the cap,
+	// so honest content is never truncated.
+	b, err := io.ReadAll(io.LimitReader(f, maxNotifBytes))
 	if err != nil {
 		return 0, "", "", ""
 	}
