@@ -855,6 +855,25 @@ case "$1" in
         _stream_bd_open_list() {
             BEADS_DIR="$WORKSPACE/$1/.beads" bd list -l "stream:$2" --no-pager 2>/dev/null || true
         }
+        # $1 initiative, $2 stream name — just the integer count, or
+        # nothing when it can't be determined (never a stray "0" printed
+        # from a broken pipe). jq is exact when present; otherwise parse
+        # bd's own "Total: N issues" summary line.
+        _stream_bd_open_count() {
+            local out
+            if command -v jq >/dev/null 2>&1; then
+                out=$(BEADS_DIR="$WORKSPACE/$1/.beads" bd list -l "stream:$2" --json 2>/dev/null \
+                    | jq 'length' 2>/dev/null || true)
+            else
+                out=$(BEADS_DIR="$WORKSPACE/$1/.beads" bd list -l "stream:$2" --no-pager 2>/dev/null || true)
+                if [[ "$out" == "No issues found."* ]]; then
+                    out=0
+                else
+                    out=$(printf '%s\n' "$out" | sed -n 's/^Total: \([0-9]*\) issues.*/\1/p')
+                fi
+            fi
+            [[ "$out" =~ ^[0-9]+$ ]] && printf '%s' "$out"
+        }
         case "$stream_op" in
             add)
                 stream_init="${1:-}"; stream_name="${2:-}"; shift 2 || true
@@ -1148,23 +1167,77 @@ STREAMEOF
                     echo "usage: zdev stream ls <initiative>" >&2
                     exit 2
                 fi
+                # Classifies ONE pane title against the same glyph grammar
+                # bin/zdev-broadcast-claude's _is_claude_title/zdevd's
+                # title.go use — echoes idle/waiting/working/done and fails
+                # (no echo) for a title that isn't a claude pane at all, so
+                # a non-agent shell pane never contributes a false state.
+                _stream_pane_state() {
+                    case "$1" in
+                        claude|"✳ Claude Code") echo idle ;;
+                        "✳ "*|"● "*) echo waiting ;;
+                        "◐ "*|"◓ "*|"◑ "*|"◒ "*) echo working ;;
+                        "◆ "*) echo "done" ;;
+                        *)
+                            [[ "$1" == [$'⠀'-$'⣿']* ]] && { echo working; return 0; }
+                            return 1 ;;
+                    esac
+                }
+                # $1: tmux session name — the BUSIEST classified pane wins
+                # (working > waiting > idle > done) since that's the state
+                # most worth surfacing at a glance. No tmux, no session, or
+                # no recognizable pane all degrade to "—", never an error.
+                _stream_agent_state() {
+                    command -v tmux >/dev/null 2>&1 || { printf '%s' "—"; return; }
+                    tmux has-session -t "$1" 2>/dev/null || { printf '%s' "—"; return; }
+                    local title state rank best="" best_rank=-1
+                    while IFS= read -r title; do
+                        [[ -z "$title" ]] && continue
+                        state=$(_stream_pane_state "$title") || continue
+                        case "$state" in
+                            working) rank=4 ;; waiting) rank=3 ;;
+                            idle) rank=2 ;; done) rank=1 ;; *) rank=0 ;;
+                        esac
+                        (( rank > best_rank )) && { best_rank=$rank; best=$state; }
+                    done < <(tmux list-panes -t "$1" -F '#{pane_title}' 2>/dev/null)
+                    [[ -z "$best" ]] && { printf '%s' "—"; return; }
+                    printf 'claude·%s' "$best"
+                }
                 _seen_projects=""
                 for _r in "$WORKSPACE/$stream_init"/*/; do
                     [[ -d "$_r" || -e "$_r/.git" ]] || continue
                     [[ -e "$_r/.git" ]] && continue
                     _rb="${_r%/}"; _rb="${_rb##*/}"
                     [[ "$_rb" == "notes" || "$_rb" == .* ]] && continue
-                    _repos=$(for _w in "$_r"*/; do [[ -e "$_w/.git" ]] && printf '%s(%s) ' "$(basename "$_w")" "$(git -C "$_w" branch --show-current 2>/dev/null || echo detached)"; done)
+                    # Trailing `; true`: under set -e, the for loop's exit
+                    # status is its last command's — a candidate with zero
+                    # repo children (or a non-repo last entry) leaves that
+                    # last `[[ -e ... ]] &&` false, which would otherwise
+                    # abort the whole `ls` rather than just skip the row
+                    # below.
+                    _repos=$(for _w in "$_r"*/; do [[ -e "$_w/.git" ]] && printf '%s(%s) ' "$(basename "$_w")" "$(git -C "$_w" branch --show-current 2>/dev/null || echo detached)"; done; true)
                     [[ -n "$_repos" ]] || continue
                     _qname=$(sed -n 's/^name: //p' "$_r/.pay/stack.yml" 2>/dev/null | head -1)
                     [[ -z "$_qname" ]] && _qname="$stream_init-$_rb"
                     _seen_projects="$_seen_projects $_qname"
                     _run="down"
                     if command -v docker >/dev/null 2>&1; then
-                        _n=$(docker ps -q --filter "label=com.docker.compose.project=$_qname" 2>/dev/null | wc -l | tr -d ' ')
+                        # `|| true`: under pipefail, `docker` failing (daemon
+                        # down, unreachable context) would otherwise abort
+                        # the whole `ls` rather than just leave this stream
+                        # reporting "down".
+                        _n=$(docker ps -q --filter "label=com.docker.compose.project=$_qname" 2>/dev/null | wc -l | tr -d ' ' || true)
                         [[ "$_n" -gt 0 ]] && _run="up ($_n)"
                     fi
-                    printf '%s: %s· runner %s\n' "$_rb" "$_repos" "$_run"
+                    # bd annotation is omitted entirely (not "bd:0") when
+                    # bd or .beads is unavailable — see _stream_bd_ready.
+                    _bd_annot=""
+                    if _stream_bd_ready "$stream_init"; then
+                        _bd_n=$(_stream_bd_open_count "$stream_init" "$_rb")
+                        [[ -n "$_bd_n" ]] && _bd_annot=" · bd:$_bd_n"
+                    fi
+                    _agent=$(_stream_agent_state "$(session_name "$stream_init/$_rb")")
+                    printf '%s: %s· runner %s%s · %s\n' "$_rb" "$_repos" "$_run" "$_bd_annot" "$_agent"
                 done
                 # Orphaned runners: compose projects named <init>-* whose
                 # stream folder no longer exists — the debris pop-out

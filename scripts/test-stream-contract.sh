@@ -265,6 +265,34 @@ else
     fail "bd-stub: rm refused despite a clean, pushed stream: $out"
 fi
 
+# ===========================================================================
+# stream ls — agent-presence column (stubbed tmux, same PATH-prepend style
+# as the bd stub above). Session name is session_name("<init>/<stream>").
+# ===========================================================================
+
+cat > "$FAKEBIN/tmux" <<'EOF'
+#!/bin/bash
+case "$1" in
+    has-session) exit 0 ;;
+    list-panes) echo "✳ Building the thing" ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$FAKEBIN/tmux"
+
+build_fixture
+if out=$(PATH="$FAKEBIN:$PATH" zstream ls init 2>&1); then
+    if ! printf '%s' "$out" | grep -q "^mystream:.*runner"; then
+        fail "ls: stream row missing/malformed: $out"
+    elif ! printf '%s' "$out" | grep -q "claude·waiting"; then
+        fail "ls: agent column missing waiting state from stubbed tmux: $out"
+    else
+        ok "ls surfaces live agent pane state via stubbed tmux"
+    fi
+else
+    fail "ls: refused with stubbed tmux on PATH: $out"
+fi
+
 if [[ $fails -gt 0 ]]; then
     echo "stream contract: $fails failure(s)" >&2
     exit 1
