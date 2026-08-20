@@ -307,6 +307,52 @@ Phase 3 (full input mode) correctly stays unbuilt.
 - **Kill:** if classic is ever needed as a real fallback rather than a
   paper reversion path, don't delete it. Not yet observed either way.
 
+### ✅ 18. The color budget and the delight pass *(2026-08-19 → 20)*
+The answer to item 17's open look-and-feel question, run as its own
+effort with the operator in the loop. Diagnosis first (a live capture
+showed 17 simultaneous hues on a quiet fleet with one active row):
+color is spent on STATE, not identity — idle rows/rails/headers lost
+their decorative per-name hues (thDim), then the idle "·" glyph itself
+(blank; a live A/B showed real markers pop harder against nothing).
+Delight second, spent where attention already is: richer mood-divider
+gradient (active tiers pass through a complementary stop), the
+current-session breath warmed toward gold at its peak, a twinkle on the
+✨ merged chip, and a shared breathing pulse on every working row.
+One reversal, recorded because it's the lesson: working rows briefly
+went identity-hued and were reverted within the day — operator: "it's
+non-obvious what the hues are communicating; we need semantic colours."
+Two states meaning different things must differ; one state across two
+projects must not. That audit also caught Done sharing waiting's fresh
+gold (now Iris). The stream breathing gap died the same way ("the
+white space between streams is just odd").
+- **Kill (live):** any new color that doesn't encode a state change
+  reverts by default; the budget is the rule, not the pass.
+
+### ✅ 19. Cross-stream coordination — streams that talk *(2026-08-20)*
+Validated live before it was built: a relayed contract change between
+the marketplace backend and analytics stream agents produced two rounds
+of correction (a false dependency claim caught by independent
+verification; an unspecified product decision surfaced and escalated) —
+then the mechanism that worked was baked in. The generated stream
+CLAUDE.md now carries the protocol (notify siblings with commit/file
+refs; VERIFY relayed claims in your own checkout; record outcomes as bd
+items with trigger conditions or dated INITIATIVE.md lines; escalate
+product calls to the operator) and the bead convention: one bd database
+per initiative, never per stream — a stream's queue is the
+`stream:<name>` label (`stream ls` shows open counts; `stream rm` warns
+on, never refuses over, items that outlive their stream — that's the
+design). `zdev-broadcast-claude` gained project-path scoping, and fixing
+it surfaced a real bug: it had only ever matched three exact idle title
+strings, silently skipping every working/waiting pane; it now mirrors
+the daemon's title grammar. Contract-tested (test-broadcast-scope.sh,
++3 stream-contract cases), in CI. `zdev stream send` (agent-agnostic
+pane delivery) deliberately unbuilt.
+- **Kill (live):** if agents ignore the protocol in practice — relayed
+  claims acted on unverified, outcomes unrecorded — convention has
+  failed and the mechanism needs to move into tooling.
+- **Kill (stream send):** build it the week a non-Claude agent joins a
+  stream; if that never happens, it never gets built.
+
 ---
 
 ## NEXT (~6 weeks)
@@ -336,13 +382,27 @@ Phase 3 (full input mode) correctly stays unbuilt.
   path entirely. Kill: if classic is ever needed as a real fallback, don't
   delete it — thin it instead.
 - **Look-and-feel as a standing priority, not a side-effect** *(operator
-  signal, 2026-08-19)* — verdict on the Charm arc: "stability's been good,
-  but look and feel hasn't been prioritised." Historically true — most
-  visual work before the calm pass (item 16) rode in as a side-effect of
-  bug fixes or protocol changes, not as its own effort. Not yet scoped:
-  what specifically to prioritize next (a further design pass beyond item
-  16, more stock bubbles components, something else) is an open question
-  for the operator, not a decision this roadmap should guess at.
+  signal, 2026-08-19; first arc shipped as item 18)* — verdict on the
+  Charm arc: "stability's been good, but look and feel hasn't been
+  prioritised." The color-budget/delight pass answered the immediate ask
+  ("Much nicer"), and its cadence is the model to keep: operator flags
+  what reads wrong live, the pass runs as its own effort with a
+  measurable diagnosis, and anything that doesn't survive live dogfood
+  reverts same-day. Standing, not done — this item stays as the lens,
+  not a task. Kill: two consecutive operator visual complaints traced to
+  work that shipped without this lens applied.
+- **Stream merge — review streams** *(in flight, 2026-08-20)* — "bring a
+  collection of streams together via an instruction set for review."
+  Design: merging streams produces ANOTHER stream — `zdev stream merge
+  <init> <stream>... [--name review-x]` synthesizes a disposable review
+  stream (union of source repos, each source's branch merged onto an
+  integration branch per repo; conflicts recorded and LEFT for the agent
+  layer, sources strictly read-only), which gets runner/DNS/rows/rm for
+  free because it is a stream; the operator's written brief drives what
+  the agent in it examines. First cut being built in a worktree. Effort:
+  days. Depends: item 19's conventions. Kill: if review streams rot
+  un-torn-down like any other clone, the disposability story failed —
+  reap them like sessions.
 
 ---
 
