@@ -297,6 +297,14 @@ Usage:
                                  (<svc>.<init>-<name>.orb.local). Primary
                                  repo gets branch <init>/<name> (or
                                  --branch); the rest stay on default.
+  zdev stream merge <init> <stream> <stream> [stream...] [--name <name>]
+                                 Merge two+ streams into a new REVIEW
+                                 stream: clones the repo union, merges each
+                                 contributing branch per repo into an
+                                 integration branch, and reports conflicts
+                                 (left in place, not resolved). Source
+                                 streams are untouched; default name
+                                 review-<YYYYMMDD>.
   zdev stream rm <init>/<name>   Remove a workstream (refuses if dirty/unpushed)
   zdev stream ls <init>          List an initiative's workstreams
   zdev ack [--all|<project>]     Acknowledge statuses — like "read all"
@@ -1249,8 +1257,226 @@ STREAMEOF
                     done
                 fi
                 ;;
+            merge)
+                # zdev stream merge <initiative> <stream> <stream> [stream...]
+                #                   [--name <review-name>]
+                #
+                # Bringing streams together for review is itself a stream —
+                # a REVIEW stream: it gets a runner, DNS, sidebar rows, agent
+                # context, and teardown for free, because the registry never
+                # distinguishes stream kinds (a folder with .pay/stack.yml
+                # IS a stream). The union of every source stream's repos is
+                # cloned fresh (same clone-source lookup as `add`); each
+                # repo gets an integration branch <init>/<review-name> off
+                # its default branch, into which every CONTRIBUTING source
+                # stream's branch (i.e. not left on default) is merged in
+                # command-line order. A merge CONFLICT is not a failure —
+                # it's left in the checkout, recorded in the report, and
+                # processing moves on to the next repo; resolving it is the
+                # agent layer's job, not this command's. Source streams are
+                # read-only throughout: this never touches their checkouts,
+                # branches, or runners, and never starts one of its own.
+                merge_init="${1:-}"; shift || true
+                merge_name=""
+                merge_streams=()
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        --name)
+                            if [[ $# -lt 2 || -z "$2" ]]; then
+                                echo "zdev stream merge: --name needs a value" >&2
+                                exit 2
+                            fi
+                            merge_name="$2"; shift 2 ;;
+                        --name=*) merge_name="${1#*=}"; shift ;;
+                        *)
+                            if ! _seg_ok "$1"; then
+                                echo "zdev stream merge: invalid stream name: $1" >&2
+                                exit 2
+                            fi
+                            merge_streams+=("$1"); shift ;;
+                    esac
+                done
+                if [[ -z "$merge_init" || ${#merge_streams[@]} -lt 2 ]]; then
+                    echo "usage: zdev stream merge <initiative> <stream> <stream> [stream...] [--name <review-name>]" >&2
+                    exit 2
+                fi
+                if ! _seg_ok "$merge_init"; then
+                    echo "zdev stream merge: invalid initiative name: $merge_init" >&2
+                    exit 2
+                fi
+                if [[ ! -f "$WORKSPACE/$merge_init/INITIATIVE.md" ]]; then
+                    echo "zdev stream merge: not an initiative: $merge_init" >&2
+                    exit 1
+                fi
+                for _s in "${merge_streams[@]}"; do
+                    if [[ ! -f "$WORKSPACE/$merge_init/$_s/.pay/stack.yml" ]]; then
+                        echo "zdev stream merge: no such source stream: $merge_init/$_s" >&2
+                        exit 1
+                    fi
+                done
+                [[ -z "$merge_name" ]] && merge_name="review-$(date +%Y%m%d)"
+                if ! _seg_ok "$merge_name" || [[ "$merge_name" == *[._]* ]]; then
+                    echo "zdev stream merge: review name must be plain kebab-case" >&2
+                    exit 2
+                fi
+                review_dir="$WORKSPACE/$merge_init/$merge_name"
+                if [[ -e "$review_dir" ]]; then
+                    echo "zdev stream merge: already exists: $review_dir" >&2
+                    exit 1
+                fi
+
+                # Repo union in first-seen order (cmdline stream order, then
+                # directory order) — keeps the clone sequence and the report
+                # deterministic and reproducible across runs.
+                merge_union=()
+                _mu_have=" "
+                for _s in "${merge_streams[@]}"; do
+                    for _w in "$WORKSPACE/$merge_init/$_s"/*/; do
+                        [[ -e "$_w/.git" ]] || continue
+                        _wb="${_w%/}"; _wb="${_wb##*/}"
+                        case "$_mu_have" in *" $_wb "*) continue ;; esac
+                        merge_union+=("$_wb")
+                        _mu_have="$_mu_have$_wb "
+                    done
+                done
+                if [[ ${#merge_union[@]} -eq 0 ]]; then
+                    echo "zdev stream merge: no repos found across ${merge_streams[*]}" >&2
+                    exit 1
+                fi
+
+                # TRANSACTIONAL from here, mirroring `add`: the dir did not
+                # exist (checked above), so any MECHANICAL failure or
+                # interruption before the success line rolls the whole
+                # folder back. A merge CONFLICT is deliberately excluded —
+                # it's a recorded outcome, not a failure, so it never trips
+                # this rollback.
+                _stream_merge_fail() {
+                    echo "zdev stream merge: $1 — rolling back $review_dir" >&2
+                    rm -rf "$review_dir"
+                    exit 1
+                }
+                trap '_stream_merge_fail interrupted' INT TERM
+                mkdir -p "$review_dir/.pay" || _stream_merge_fail "mkdir failed"
+
+                merge_int_branch="$merge_init/$merge_name"
+                merge_report=()
+
+                for _repo in "${merge_union[@]}"; do
+                    _src=""
+                    [[ -e "$WORKSPACE/$merge_init/$_repo/.git" ]] && _src="$WORKSPACE/$merge_init/$_repo"
+                    [[ -z "$_src" && -e "$WORKSPACE/projects/$_repo/.git" ]] && _src="$WORKSPACE/projects/$_repo"
+                    if [[ -z "$_src" ]]; then
+                        echo "zdev stream merge: no local source for $_repo (looked in $merge_init/ and projects/)" >&2
+                        _stream_merge_fail "no source for $_repo"
+                    fi
+                    git -C "$_src" fetch --quiet origin 2>/dev/null \
+                        || echo "zdev stream merge: (offline? fetch failed — $_repo cloned from local refs as-is)"
+                    git clone --quiet "$_src" "$review_dir/$_repo" \
+                        || _stream_merge_fail "clone failed for $_repo"
+                    _origin=$(git -C "$_src" remote get-url origin 2>/dev/null || echo "")
+                    if [[ -n "$_origin" ]]; then
+                        git -C "$review_dir/$_repo" remote set-url origin "$_origin" \
+                            || _stream_merge_fail "origin rewrite failed for $_repo"
+                    fi
+                    _default=$(git -C "$review_dir/$_repo" symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+                    # Contributing (stream, branch) pairs, in cmdline stream
+                    # order — a source stream whose repo sits on the default
+                    # branch changed nothing here and contributes nothing.
+                    _contrib_streams=()
+                    _contrib_branches=()
+                    for _s in "${merge_streams[@]}"; do
+                        _sr="$WORKSPACE/$merge_init/$_s/$_repo"
+                        [[ -e "$_sr/.git" ]] || continue
+                        _sb=$(git -C "$_sr" symbolic-ref --short HEAD 2>/dev/null || echo "")
+                        [[ -z "$_sb" || "$_sb" == "$_default" ]] && continue
+                        _contrib_streams+=("$_s")
+                        _contrib_branches+=("$_sb")
+                    done
+
+                    if [[ ${#_contrib_streams[@]} -eq 0 ]]; then
+                        merge_report+=("$_repo: unchanged (every source stream is on $_default)")
+                        continue
+                    fi
+
+                    git -C "$review_dir/$_repo" checkout --quiet -b "$merge_int_branch" \
+                        || _stream_merge_fail "integration branch creation failed in $_repo"
+
+                    _merged_ok=()
+                    _conflict_at=""
+                    _conflict_files=""
+                    for _ci in "${!_contrib_streams[@]}"; do
+                        _s="${_contrib_streams[$_ci]}"
+                        _b="${_contrib_branches[$_ci]}"
+                        _sr="$WORKSPACE/$merge_init/$_s/$_repo"
+                        git -C "$review_dir/$_repo" fetch --quiet "$_sr" "$_b" 2>/dev/null \
+                            || _stream_merge_fail "fetch of $_s ($_b) failed for $_repo"
+                        if git -C "$review_dir/$_repo" merge --quiet \
+                                -m "merge $_s ($_b) into $merge_int_branch" FETCH_HEAD >/dev/null 2>&1; then
+                            _merged_ok+=("$_s:$_b")
+                        else
+                            _conflict_at="$_s:$_b"
+                            _conflict_files=$(git -C "$review_dir/$_repo" diff --name-only --diff-filter=U | tr '\n' ' ')
+                            break
+                        fi
+                    done
+
+                    if [[ -n "$_conflict_at" ]]; then
+                        merge_report+=("$_repo: CONFLICT merging $_conflict_at (clean so far: ${_merged_ok[*]:-none}) — conflicted files: $_conflict_files")
+                    else
+                        merge_report+=("$_repo: clean — merged ${_merged_ok[*]}")
+                    fi
+                done
+
+                {
+                    printf '# Written by `zdev stream merge` — a REVIEW stream synthesized from\n'
+                    printf '# other streams, not a workstream carrying its own line of work.\n'
+                    printf 'name: %s-%s\n' "$merge_init" "$merge_name"
+                    printf 'kind: review\n'
+                    printf 'sources: %s\n' "${merge_streams[*]}"
+                } > "$review_dir/.pay/stack.yml"
+
+                _merge_sources_list=""
+                for _s in "${merge_streams[@]}"; do
+                    _merge_sources_list="$_merge_sources_list  - $merge_init/$_s
+"
+                done
+                _merge_report_list=""
+                for _line in "${merge_report[@]}"; do
+                    _merge_report_list="$_merge_report_list- $_line
+"
+                done
+                cat > "$review_dir/CLAUDE.md" <<CLAUDEEOF
+# Review stream: $merge_init/$merge_name
+
+This directory is a REVIEW stream, synthesized by \`zdev stream merge\` from:
+$_merge_sources_list
+It exists purely to bring those streams' changes together for combined
+review — an integration branch (\`$merge_int_branch\`) per touched repo,
+merging each contributing stream's branch in the order named above.
+
+$_merge_report_list
+- Resolve any recorded CONFLICT above first — each is an ordinary git merge
+  conflict, left in place deliberately for an agent session in this folder
+  to resolve.
+- The operator's brief drives what to examine once the tree is clean.
+- Source streams (${merge_streams[*]}) are untouched — never edit them
+  from here.
+- This folder is entirely disposable: tear down with
+  \`zdev stream rm $merge_init/$merge_name\` when review concludes (remote
+  branches and source streams are unaffected). No runner is started here
+  automatically.
+CLAUDEEOF
+
+                trap - INT TERM
+                echo "zdev stream merge: created $merge_init/$merge_name (stack: $merge_init-$merge_name)"
+                echo "                    sources: ${merge_streams[*]}"
+                for _line in "${merge_report[@]}"; do
+                    echo "  $_line"
+                done
+                ;;
             *)
-                echo "usage: zdev stream {add|rm|ls} ..." >&2
+                echo "usage: zdev stream {add|rm|ls|merge} ..." >&2
                 exit 2
                 ;;
         esac
