@@ -41,9 +41,10 @@ conversation history.
 ## Commands
 
 ```bash
-zdev stream add <initiative> <name> <primary-repo> [repo...] [--branch <existing>]
-zdev stream ls  <initiative>
-zdev stream rm  <initiative>/<name>
+zdev stream add   <initiative> <name> <primary-repo> [repo...] [--branch <existing>]
+zdev stream ls    <initiative>
+zdev stream rm    <initiative>/<name>
+zdev stream merge <initiative> <stream> <stream> [stream...] [--name <review-name>]
 ```
 
 - `add`: fetches once at the clone source (streams are born current),
@@ -60,6 +61,8 @@ zdev stream rm  <initiative>/<name>
   while any repo inside is dirty or has unpushed commits. Remote branches
   survive. Warns (does not refuse) about open bd items still labeled for
   this stream — they outlive the folder by design; see Stream work items.
+- `merge`: synthesizes a new REVIEW stream from two or more existing ones —
+  see Merging streams for review below.
 
 Rows appear as `<initiative>/<stream>/<repo>` — sessions, loops
 (`zdev run <initiative>/<stream>/<repo> … --until …`), and the sidebar all
@@ -128,3 +131,32 @@ database would sever them.
   open items doesn't take them with it — they stay in the graph for
   whoever picks them up next, which is why `rm` warns instead of
   refusing.
+
+## Merging streams for review
+
+Bringing streams together for review is itself a stream. `zdev stream
+merge <initiative> <stream> <stream> [stream...] [--name <review-name>]`
+clones the union of every source stream's repos into a new REVIEW stream,
+and per repo creates an integration branch (`<initiative>/<review-name>`)
+merging each contributing stream's branch onto it, in the order named on
+the command line. A source stream on a repo's default branch contributed
+nothing there and is skipped. Default name `review-<YYYYMMDD>`.
+
+Use it when the user asks to bring streams together, review streams
+jointly, or combine what a couple of parallel efforts produced before
+deciding what ships:
+
+1. Run the mechanical command first — it's deterministic, not judgment:
+   `zdev stream merge marketplace backend interface`.
+2. Read its report. Conflicts are not resolved by the command — each
+   conflicted repo is left mid-merge, on purpose, for you to resolve here.
+   Resolving one is an ordinary git merge conflict; nothing about it is
+   stream-specific.
+3. Work IN the review stream to produce what the operator's brief asks
+   for: resolve conflicts, run the stack if the brief calls for it (`pay
+   dev up` in the review folder, same as any stream — never auto-started),
+   read the diff, and write up the review.
+4. The review stream is entirely disposable and the source streams are
+   read-only throughout — merge never touches their checkouts, branches,
+   or runners. `zdev stream rm <initiative>/<review-name>` when done; the
+   source streams and their remote branches are unaffected.
