@@ -27,7 +27,7 @@ metadata:
 A **workstream** is a child folder of an initiative holding one full clone
 per repo it needs. It is exactly one pay-cli stack: one runner, its own
 compose project, its own DNS namespace
-(`<service>.<initiative>-<stream>.orb.local`), running simultaneously with
+(`<service>.<initiative>-<stream>.localhost`), running simultaneously with
 every other stream. Streams pop in and out fast — a half-day spike is a
 normal stream.
 
@@ -58,7 +58,8 @@ zdev stream rm  <initiative>/<name>
   command.
 - `rm`: tears down the runner (containers AND volumes) first; refuses
   while any repo inside is dirty or has unpushed commits. Remote branches
-  survive.
+  survive. Warns (does not refuse) about open bd items still labeled for
+  this stream — they outlive the folder by design; see Stream work items.
 
 Rows appear as `<initiative>/<stream>/<repo>` — sessions, loops
 (`zdev run <initiative>/<stream>/<repo> … --until …`), and the sidebar all
@@ -91,3 +92,39 @@ model, and rm is guarded (dirty/unpushed refuse) so offering it is safe.
 - Different repos entirely, one concern → just add repos to the floor
 - Violent spike (dependency surgery, history rewriting) → still a stream;
   full clones already isolate it completely
+
+## Cross-stream coordination
+
+Sibling streams share repos and can be mid-branch on the same contracts
+you're touching. `zdev stream ls <initiative>` lists them — check it
+before assuming you're alone in a repo.
+
+- Changed a schema, an API shape, a tracked event, or anything on a
+  branch a sibling stream consumes? Notify that stream's agent. Agent-to-
+  agent messaging when both sides are Claude; cite commits and files —
+  facts with refs, never vibes.
+- Received a coordination message yourself? Assess relevance, then verify
+  every claim against your own checkout before acting — a relayed
+  dependency is a hypothesis, not a fact. Wrong claim → push back with
+  specifics; the correction is worth more than compliance.
+- Record what happened. Work you're deferring becomes a bd item carrying
+  its trigger condition. A decision that changes what ships becomes a
+  dated line in the initiative's `INITIATIVE.md`.
+- Streams disagreeing on product intent, not implementation fact? That's
+  a call for the operator, not the agents — escalate rather than settle
+  it yourselves.
+
+## Stream work items
+
+One bd database per initiative, at `<initiative>/.beads` — never per
+stream. Cross-stream dependency edges are the point; a per-stream
+database would sever them.
+
+- Claim this stream's queue with a label, not a separate database:
+  `bd create "..." -l stream:<name>` and `bd list -l stream:<name>`.
+- Floor work stays unlabeled — the label only exists to scope a stream's
+  queue out of the initiative-wide graph.
+- Beads deliberately outlive their stream. A stream that pops out with
+  open items doesn't take them with it — they stay in the graph for
+  whoever picks them up next, which is why `rm` warns instead of
+  refusing.
