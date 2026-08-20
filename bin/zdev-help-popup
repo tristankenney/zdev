@@ -32,7 +32,7 @@ describe() {
             ;;
         *triage*)                echo "ranked attention queue" ;;
         *zdev\ ack*|*ack*)       echo "mark every status read (waiting/done/dead)" ;;
-        *zdev-broadcast-claude*) echo "broadcast a prompt to every claude pane" ;;
+        *zdev-broadcast-claude*) echo "broadcast a prompt to every (or a scoped) claude pane" ;;
         *zdev-prompt-picker*)    echo "insert a saved prompt into this pane" ;;
         *zdev-timeline-popup*)   echo "fleet activity timeline" ;;
         *zdev-help-popup*)       echo "this help" ;;

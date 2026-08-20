@@ -1,24 +1,140 @@
 #!/usr/bin/env bash
-# Broadcast a prompt to every tmux pane whose title is a claude pane
-# (matches "claude" optionally prefixed by ● or ◆ from zdev-notify).
+# Broadcast a prompt to every tmux pane running a claude agent, at ANY
+# attention state (idle, waiting, or working) — bar/task/spinner titles
+# all count, not just the bare idle "claude" string.
+#
 # Useful for /clear, "git pull && npm install", "run tests" style
 # universal commands across parallel agent sessions.
+#
+# Title grammar (2026-08-20 fix): the original matcher only recognized
+# three EXACT idle title strings ("claude", "● claude", "◆ claude") — it
+# silently skipped every pane that was actively waiting or working, since
+# Claude Code v2.1+ titles those with a live task description ("◐ Website
+# field schema and marketplace agent", "✳ Fix the widget"), never the bare
+# agent name. Found live: a broadcast scoped to two busy streams matched
+# only the one that happened to be idle at that moment. is_claude_title
+# below mirrors zdevd's own classifier (internal/tmuxctl/title.go —
+# MarkerWaiting/Finished/ShellRunning, the new ✳ format, and the Braille/
+# quadrant spinner ranges) instead of a handful of literal strings.
+#
+# Scope (2026-08-20): with no path arguments, targets every claude pane
+# fleet-wide (original behavior — nothing below changes that default).
+# Pass one or more project paths (same spelling as `zdev <path>` —
+# an initiative, an initiative/stream, or a full initiative/stream/repo)
+# to scope the broadcast to just those sessions instead — e.g.
+# coordinating two streams on a requirement that touches both:
+#
+#   zdev-broadcast-claude marketplace/backend marketplace/analytics
+#
+# Matches by SESSION NAME PREFIX using the same "/"->"-" translation
+# bin/zdev's session_name() applies, so "marketplace/backend" also
+# reaches any repo sessions beneath it (marketplace-backend-pay-app,
+# etc.) without naming every leaf explicitly. Multiple paths are a
+# union — any pane whose session matches ANY of the given prefixes.
+#
+# --list previews the matched panes (session names only) and exits
+# without prompting for a message or touching any pane — use it to
+# sanity-check a scope before typing something real into live sessions.
 set -euo pipefail
 
-# Find all claude panes.
-panes=$(tmux list-panes -a -F '#{pane_id}|#{session_name}|#{pane_title}' 2>/dev/null \
-  | awk -F'|' '$3 == "claude" || $3 == "● claude" || $3 == "◆ claude" {print $1 "|" $2}')
+# Mirrors bin/zdev's session_name() exactly. Kept in sync by hand — this
+# script is standalone (no shared helper file between bin/zdev-*), and the
+# translation is two substitutions, not worth sourcing zdev's dispatcher
+# (which has its own argv handling and side effects) just to reuse.
+_to_session_prefix() {
+    local s="${1//\//-}"
+    echo "${s//./_}"
+}
+
+# Mirrors zdevd/internal/tmuxctl/title.go's ClassifyPaneTitle glyph set —
+# any title that classifier resolves to waiting/finished/shell-running,
+# plus the two known idle forms ("claude" bare, "✳ Claude Code"). Does NOT
+# disambiguate by agent name the way the daemon's agents.Registry can
+# (sidebar.toml may assign a different glyph per agent) — like the
+# original script, this is claude-shaped panes, not a full per-agent
+# registry read.
+_is_claude_title() {
+    local t="$1"
+    case "$t" in
+        claude) return 0 ;;
+        "✳ Claude Code") return 0 ;;
+        "✳ "*) return 0 ;;   # waiting, new format
+        "● "*) return 0 ;;   # waiting, legacy
+        "◆ "*) return 0 ;;   # finished, legacy
+        "◎ "*) return 0 ;;   # shell-running, legacy
+        "◐ "*|"◓ "*|"◑ "*|"◒ "*) return 0 ;;  # working, quadrant spinner
+    esac
+    # Braille Patterns block (U+2800-U+28FF) + anything — the working
+    # spinner's frame set in Claude Code v2.1+. A trailing space isn't
+    # required here (unlike title.go) since the loose superset costs
+    # nothing extra in a broadcast tool — a false positive just means an
+    # unusual title still gets treated as a claude pane.
+    if [[ "$t" == [$'⠀'-$'⣿']* ]]; then
+        return 0
+    fi
+    return 1
+}
+
+list_only=0
+prefixes=()
+for arg in "$@"; do
+    case "$arg" in
+        --list) list_only=1 ;;
+        *) prefixes+=("$(_to_session_prefix "$arg")") ;;
+    esac
+done
+
+# Empty prefixes = unscoped (matches everything) — the pre-scoping default.
+_session_in_scope() {
+    local sn="$1" p
+    if [ "${#prefixes[@]}" -eq 0 ]; then
+        return 0
+    fi
+    for p in "${prefixes[@]}"; do
+        case "$sn" in
+            "$p"|"$p"-*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+panes=""
+while IFS='|' read -r pid sn title; do
+    [ -z "$pid" ] && continue
+    if _is_claude_title "$title" && _session_in_scope "$sn"; then
+        panes="${panes}${pid}|${sn}
+"
+    fi
+done < <(tmux list-panes -a -F '#{pane_id}|#{session_name}|#{pane_title}' 2>/dev/null)
+panes="${panes%$'\n'}"
 
 if [ -z "$panes" ]; then
-  echo "No claude panes found."
-  read -r -n 1 -p "Press any key to close…"
-  exit 0
+    if [ "${#prefixes[@]}" -gt 0 ]; then
+        echo "No claude panes found in scope: $*"
+    else
+        echo "No claude panes found."
+    fi
+    [ "$list_only" -eq 1 ] && exit 0
+    read -r -n 1 -p "Press any key to close…"
+    exit 0
 fi
 
 count=$(printf '%s\n' "$panes" | wc -l | tr -d ' ')
-echo "Broadcast to ${count} claude pane(s):"
+if [ "${#prefixes[@]}" -gt 0 ]; then
+    scope_label=""
+    for p in "${prefixes[@]}"; do
+        scope_label="${scope_label:+$scope_label, }$p"
+    done
+    echo "Broadcast to ${count} claude pane(s) in: ${scope_label}"
+else
+    echo "Broadcast to ${count} claude pane(s):"
+fi
 printf '%s\n' "$panes" | awk -F'|' '{printf "  • %s\n", $2}'
 echo
+
+if [ "$list_only" -eq 1 ]; then
+    exit 0
+fi
 
 # Read the prompt — supports plain bash readline.
 read -r -p "> " message

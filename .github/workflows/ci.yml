@@ -73,6 +73,9 @@ jobs:
       - name: stream rm destructive-command contract
         run: bash scripts/test-stream-contract.sh
 
+      - name: broadcast-claude scope + title-grammar contract
+        run: bash scripts/test-broadcast-scope.sh
+
       - name: make check (test gate + pinned staticcheck)
         run: make -C zdevd check
 
