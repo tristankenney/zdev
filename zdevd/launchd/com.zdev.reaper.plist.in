@@ -48,8 +48,13 @@
 
   <key>EnvironmentVariables</key>
   <dict>
+    <!-- System dirs FIRST: /usr/bin and /bin are root-owned, so a standard
+         command name can't be shadowed by a hijacked binary in a group-
+         writable dir (~/.local/bin, /opt/homebrew/bin) that this hourly job
+         would then run. zdev is invoked by ABSOLUTE path above, so leading
+         with system dirs costs it nothing. -->
     <key>PATH</key>
-    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:@HOME@/.local/bin</string>
     <key>LANG</key>
     <string>en_US.UTF-8</string>
   </dict>
