@@ -204,6 +204,67 @@ else
     ok "round trip: add → rm removes exactly the stream"
 fi
 
+# ===========================================================================
+# stream rm — bd open-item warning (Streams That Talk, 2026-08-20). Beads
+# outlive a stream by design (the graph is shared across the whole
+# initiative), so a labeled open item must WARN, never refuse — and a
+# missing or broken bd must never block a teardown already proven safe.
+# ===========================================================================
+
+FAKEBIN="$TMP/fakebin"
+mkdir -p "$FAKEBIN"
+# A PATH with no bd on it at all (still has git/sed/docker/bash) — proves
+# the guard's `command -v bd` half, not just an empty .beads dir.
+NOBD_PATH="/usr/bin:/bin:/usr/local/bin"
+
+zstream_path() {
+    local path="$1"; shift
+    PATH="$path" ZDEV_WORKSPACE="$WS" ZDEV_PROJECTS_DISCOVER=1 bash "$Z" stream "$@"
+}
+
+# bd absent, .beads present anyway: command -v bd must fail the guard on
+# its own, before the .beads check ever gets a chance to matter.
+build_fixture
+git -C "$WS/init/mystream/repo1" update-ref refs/remotes/origin/init/mystream HEAD
+mkdir -p "$WS/init/.beads"
+if out=$(zstream_path "$NOBD_PATH" rm "init/mystream" 2>&1); then
+    if [[ -e "$WS/init/mystream" ]]; then
+        fail "bd-absent: stream not removed: $out"
+    else
+        ok "rm completes with bd absent even though .beads exists"
+    fi
+else
+    fail "bd-absent: rm refused: $out"
+fi
+
+# bd present with one fake open item: the warning must print, name the
+# stream label, point at relabel-or-close — and the teardown must still
+# complete (a WARNING, never a refusal).
+build_fixture
+git -C "$WS/init/mystream/repo1" update-ref refs/remotes/origin/init/mystream HEAD
+mkdir -p "$WS/init/.beads"
+cat > "$FAKEBIN/bd" <<'EOF'
+#!/bin/bash
+echo "○ fake-1 ● P2 Fake open item"
+EOF
+chmod +x "$FAKEBIN/bd"
+
+if out=$(zstream_path "$FAKEBIN:$NOBD_PATH" rm "init/mystream" 2>&1); then
+    if [[ -e "$WS/init/mystream" ]]; then
+        fail "bd-stub: stream not removed despite warning: $out"
+    elif ! printf '%s' "$out" | grep -q "open bd items still labeled stream:mystream"; then
+        fail "bd-stub: warning line missing: $out"
+    elif ! printf '%s' "$out" | grep -q "fake-1"; then
+        fail "bd-stub: fake item not printed verbatim: $out"
+    elif ! printf '%s' "$out" | grep -q "relabel or close if stale"; then
+        fail "bd-stub: guidance line missing: $out"
+    else
+        ok "rm warns on open bd items but still tears down (non-refusal)"
+    fi
+else
+    fail "bd-stub: rm refused despite a clean, pushed stream: $out"
+fi
+
 if [[ $fails -gt 0 ]]; then
     echo "stream contract: $fails failure(s)" >&2
     exit 1

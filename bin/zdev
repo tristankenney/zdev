@@ -843,6 +843,18 @@ case "$1" in
             esac
             return 0
         }
+        # Beads is optional tooling and its DB lives at the INITIATIVE root
+        # (.beads is shared across every stream, never per-stream) — rm's
+        # warning must degrade to nothing, never error, when bd isn't
+        # installed or the initiative has no .beads yet.
+        _stream_bd_ready() {
+            command -v bd >/dev/null 2>&1 && [[ -d "$WORKSPACE/$1/.beads" ]]
+        }
+        # $1 initiative, $2 stream name — bd's own listing of open issues
+        # labeled stream:<name>, verbatim, or nothing on any failure.
+        _stream_bd_open_list() {
+            BEADS_DIR="$WORKSPACE/$1/.beads" bd list -l "stream:$2" --no-pager 2>/dev/null || true
+        }
         case "$stream_op" in
             add)
                 stream_init="${1:-}"; stream_name="${2:-}"; shift 2 || true
@@ -1091,6 +1103,18 @@ STREAMEOF
                     fi
                 done
                 stream_dir="$_target_real"
+                # Beads legitimately outlive a stream by design (the graph
+                # is shared across the whole initiative) — this is a
+                # WARNING, never a refusal, and a bd hiccup must never
+                # block a teardown that has already been proven safe above.
+                if _stream_bd_ready "$stream_init"; then
+                    _bd_open=$(_stream_bd_open_list "$stream_init" "$stream_name")
+                    if [[ -n "$_bd_open" && "$_bd_open" != "No issues found."* ]]; then
+                        echo "zdev stream: open bd items still labeled stream:$stream_name:" >&2
+                        echo "$_bd_open" >&2
+                        echo "zdev stream: these survive in the initiative graph — relabel or close if stale" >&2
+                    fi
+                fi
                 # Runner teardown BEFORE deletion: streams pop in and out,
                 # and every popped stream would otherwise leave orphaned
                 # containers and VOLUMES behind its compose project. The
