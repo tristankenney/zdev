@@ -193,7 +193,18 @@ git -C "$WS/init/s1/repo1" add f1.txt
 git_commit_all "$WS/init/s1/repo1" "s1 change"
 
 hash_stream() {
-    (cd "$WS/init/$1" && find . -type f ! -path '*/.git/*' -exec sha256sum {} + | sort | sha256sum)
+    # Working-tree bytes PLUS git state (all refs, symbolic HEAD) — a
+    # file-only hash misses ref probes like `git update-ref` entirely
+    # (adversarial review, 2026-08-20).
+    (
+        cd "$WS/init/$1" || exit 1
+        find . -type f ! -path '*/.git/*' -exec sha256sum {} + | sort
+        for _r in */; do
+            [[ -e "$_r/.git" ]] || continue
+            git -C "$_r" for-each-ref
+            git -C "$_r" symbolic-ref HEAD
+        done
+    ) | sha256sum
 }
 before_s1_head=$(git -C "$WS/init/s1/repo1" rev-parse HEAD)
 before_s2_head=$(git -C "$WS/init/s2/repo1" rev-parse HEAD)
@@ -212,6 +223,99 @@ after_s2_hash=$(hash_stream s2)
 [[ "$before_s1_hash" == "$after_s1_hash" ]] || fail "immutability: s1 working tree changed"
 [[ "$before_s2_hash" == "$after_s2_hash" ]] || fail "immutability: s2 working tree changed"
 [[ $fails -eq 0 ]] && ok "source-stream immutability: s1/s2 untouched by the merge"
+
+# ===========================================================================
+# symlinked-initiative fencing (adversarial review 2026-08-20 BLOCKER):
+# a symlink passing _seg_ok must be refused before anything is created —
+# the rollback's rm -rf must never operate outside the workspace.
+# ===========================================================================
+build_fixture
+mkdir -p "$TMP/outside-merge"
+touch "$TMP/outside-merge/INITIATIVE.md"
+mkdir -p "$TMP/outside-merge/s1/.pay" "$TMP/outside-merge/s2/.pay"
+printf 'name: evil-s1\n' > "$TMP/outside-merge/s1/.pay/stack.yml"
+printf 'name: evil-s2\n' > "$TMP/outside-merge/s2/.pay/stack.yml"
+ln -s "$TMP/outside-merge" "$WS/evil"
+got=0
+zstream merge evil s1 s2 --name review >/dev/null 2>&1 || got=$?
+if [[ "$got" == "0" ]]; then
+    fail "symlink: symlinked initiative accepted"
+elif [[ -e "$TMP/outside-merge/review" ]]; then
+    fail "symlink: created inside the symlink target despite refusal"
+else
+    ok "merge refuses a symlinked initiative before creating anything"
+fi
+rm -f "$WS/evil"
+
+# A marker-shaped impostor source: a symlinked stream dir with a stack.yml
+# whose name does not identify it as init's stream must be refused.
+build_fixture
+mkdir -p "$TMP/impostor/.pay"
+printf 'name: something-else\n' > "$TMP/impostor/.pay/stack.yml"
+ln -s "$TMP/impostor" "$WS/init/s3"
+got=0
+zstream merge init s3 s1 --name review >/dev/null 2>&1 || got=$?
+if [[ "$got" == "0" ]]; then
+    fail "impostor: symlinked marker-shaped source accepted"
+else
+    ok "merge refuses a marker-shaped impostor source stream"
+fi
+rm -f "$WS/init/s3"
+
+# ===========================================================================
+# mechanical git failure must NOT be published as a conflict (adversarial
+# review 2026-08-20): with git forced to refuse committing (useConfigOnly
+# and no identity anywhere), a merge that needs a merge commit fails
+# mechanically — the run must roll back and exit non-zero, not report
+# "CONFLICT" with exit 0.
+# ===========================================================================
+build_fixture
+# Divergent but NON-conflicting changes in both streams (different files),
+# so git needs a merge commit and identity resolution.
+echo "s1" > "$WS/init/s1/repo1/s1-only.txt"
+git -C "$WS/init/s1/repo1" add s1-only.txt
+git_commit_all "$WS/init/s1/repo1" "s1 change"
+echo "s2" > "$WS/init/s2/repo1/s2-only.txt"
+git -C "$WS/init/s2/repo1" add s2-only.txt
+git_commit_all "$WS/init/s2/repo1" "s2 change"
+
+_gitcfg="$TMP/useconfigonly"
+printf '[user]\n\tuseConfigOnly = true\n' > "$_gitcfg"
+got=0
+GIT_CONFIG_GLOBAL="$_gitcfg" zstream merge init s1 s2 --name review-mech >/dev/null 2>&1 || got=$?
+if [[ "$got" == "0" ]]; then
+    fail "mechanical: identity failure published as success"
+elif [[ -e "$WS/init/review-mech" ]]; then
+    fail "mechanical: review folder survived a mechanical failure"
+else
+    ok "mechanical git failure rolls back instead of masquerading as a conflict"
+fi
+
+# ===========================================================================
+# skipped contributors are REPORTED (adversarial review 2026-08-20): with
+# s1 conflicting against s2 on the same file and s3 carrying an
+# independent change, the report must say s3 was never attempted.
+# ===========================================================================
+build_fixture
+zstream add init s3 repo1 >/dev/null
+echo "s1 version" > "$WS/init/s1/repo1/shared.txt"
+git_commit_all "$WS/init/s1/repo1" "s1 shared change"
+echo "s2 version" > "$WS/init/s2/repo1/shared.txt"
+git_commit_all "$WS/init/s2/repo1" "s2 shared change"
+echo "s3 independent" > "$WS/init/s3/repo1/independent.txt"
+git -C "$WS/init/s3/repo1" add independent.txt
+git_commit_all "$WS/init/s3/repo1" "s3 change"
+
+out=$(zstream merge init s1 s2 s3 --name review-skip 2>&1) || fail "skip: merge run failed: $out"
+if ! printf '%s' "$out" | grep -q "NOT YET MERGED"; then
+    fail "skip: report missing the skipped-contributor callout: $out"
+elif ! printf '%s' "$out" | grep -q "s3:"; then
+    fail "skip: s3 not named as skipped: $out"
+elif ! grep -q "NOT YET MERGED" "$WS/init/review-skip/CLAUDE.md"; then
+    fail "skip: generated CLAUDE.md does not carry the skipped callout"
+else
+    ok "a conflict reports later contributors as skipped, not silently absorbed"
+fi
 
 if [[ $fails -gt 0 ]]; then
     echo "stream merge: $fails failure(s)" >&2

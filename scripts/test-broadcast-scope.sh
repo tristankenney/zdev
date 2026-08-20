@@ -95,4 +95,45 @@ echo "$out" | grep -qF "${TAG}-analytics" || fail "union scope missing second pr
 echo "$out" | grep -qF "${TAG}-ops" && fail "union scope leaked an unrelated session:\n$out"
 echo "PASS: multi-prefix scoping is a union, and a prefix reaches its child sessions"
 
+# ── 4. Registry-exact scoping (adversarial review 2026-08-20): a SIBLING
+# stream whose collapsed session name shares the scope's prefix must be
+# excluded — only the scoped project and its registered children match.
+# Sessions: <init>-backend (the stream), <init>-backend-pay-app (its child
+# repo), <init>-backend-x (an UNRELATED sibling stream that raw prefix
+# matching used to swallow).
+REG_INIT="zdbreg$$"
+_mk_raw() {
+    local sn="$1" title="$2"
+    tmux new-session -d -s "$sn" -x 80 -y 24
+    tmux select-pane -t "$sn" -T "$title"
+    SESSIONS+=("$sn")
+}
+_mk_raw "${REG_INIT}-backend" "claude"
+_mk_raw "${REG_INIT}-backend-pay-app" "claude"
+_mk_raw "${REG_INIT}-backend-x" "claude"
+
+REGTMP=$(mktemp -d)
+trap 'cleanup; rm -rf "$REGTMP"' EXIT
+mkdir -p "$REGTMP/ws" "$REGTMP/home/.config"
+cat > "$REGTMP/projects" <<PROJEOF
+$REG_INIT/backend
+$REG_INIT/backend/pay-app
+$REG_INIT/backend-x
+PROJEOF
+
+run_reg() {
+    HOME="$REGTMP/home" XDG_CONFIG_HOME="$REGTMP/home/.config" \
+    ZDEV_WORKSPACE="$REGTMP/ws" ZDEV_PROJECTS_FILE="$REGTMP/projects" \
+    PATH="$(cd "$(dirname "$BROADCAST")" && pwd):$PATH" \
+        "$BROADCAST" "$@" --list < /dev/null 2>/dev/null
+}
+
+out=$(run_reg "$REG_INIT/backend")
+echo "$out" | grep -qF "${REG_INIT}-backend" || fail "registry scope missing the stream itself:\n$out"
+echo "$out" | grep -qF "${REG_INIT}-backend-pay-app" || fail "registry scope missing the registered child:\n$out"
+if echo "$out" | grep -qF "${REG_INIT}-backend-x"; then
+    fail "registry scope swallowed the unrelated sibling stream backend-x:\n$out"
+fi
+echo "PASS: registry-exact scoping includes children, excludes prefix-sharing siblings"
+
 echo "All broadcast-scope contract tests passed."

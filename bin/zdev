@@ -114,7 +114,7 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
                     # WORKSTREAM (decision 2026-08-17): an unmarked child
                     # folder holding repos is a stream — one pay-cli stack
                     # (= one set of containers, one runner, its own DNS
-                    # namespace <service>.<init>-<stream>.orb.local). Each
+                    # namespace <service>.<init>-<stream>.localhost). Each
                     # repo inside rows as <init>/<stream>/<repo>, and the
                     # folder itself rows as <init>/<stream> — the STREAM
                     # HOME (2026-08-18): the runner and the stream
@@ -294,7 +294,7 @@ Usage:
                                  Add a parallel workstream: a child FOLDER
                                  of full clones = one pay-cli stack = one
                                  runner with its own containers and DNS
-                                 (<svc>.<init>-<name>.orb.local). Primary
+                                 (<svc>.<init>-<name>.localhost). Primary
                                  repo gets branch <init>/<name> (or
                                  --branch); the rest stay on default.
   zdev stream merge <init> <stream> <stream> [stream...] [--name <name>]
@@ -830,7 +830,7 @@ case "$1" in
         # needs — exactly a pay-cli stack ("a second set of checkouts is a
         # second folder", src/instance.ts), so each stream is one runner:
         # its own set of containers, its own compose project, its own DNS
-        # namespace <service>.<init>-<stream>.orb.local. Full clones (not
+        # namespace <service>.<init>-<stream>.localhost. Full clones (not
         # worktrees): the same branch may appear in any number of streams
         # (supporting repos all sit on master), and a real .git directory
         # survives docker bind-mounts (a worktree's .git pointer file does
@@ -901,6 +901,17 @@ case "$1" in
                     echo "zdev stream: not an initiative: $stream_init" >&2
                     exit 1
                 fi
+                # Canonicalise and fence before creation — the transactional
+                # rollback below executes rm -rf on a path derived from this
+                # segment, so a symlinked "initiative" must be refused here,
+                # the same fencing stream rm and merge apply (adversarial
+                # review, 2026-08-20).
+                _ws_real=$(cd "$WORKSPACE" 2>/dev/null && pwd -P)
+                _init_real=$(cd "$WORKSPACE/$stream_init" 2>/dev/null && pwd -P)
+                if [[ -z "$_ws_real" || -z "$_init_real" || "$_init_real" != "$_ws_real/$stream_init" ]]; then
+                    echo "zdev stream: $stream_init does not resolve inside the workspace — refusing" >&2
+                    exit 1
+                fi
                 stream_dir="$WORKSPACE/$stream_init/$stream_name"
                 if [[ -e "$stream_dir" ]]; then
                     echo "zdev stream: already exists: $stream_dir" >&2
@@ -940,10 +951,10 @@ case "$1" in
                 mkdir -p "$stream_dir/.pay" || _stream_add_fail "mkdir failed"
                 {
                     printf '# Written by `zdev stream add` — the qualified name keeps compose\n'
-                    printf '# projects (and so <service>.<name>.orb.local DNS) globally unique.\n'
+                    printf '# projects (and so <service>.<name>.localhost DNS) globally unique.\n'
                     printf 'name: %s-%s\n' "$stream_init" "$stream_name"
                     printf 'primary: %s\n' "$stream_primary"
-                } > "$stream_dir/.pay/stack.yml"
+                } > "$stream_dir/.pay/stack.yml" || _stream_add_fail "stack.yml write failed"
                 for _repo in "${stream_repos[@]}"; do
                     # Clone source: the initiative's own member first (its
                     # objects hardlink and its origin is already right),
@@ -993,7 +1004,7 @@ case "$1" in
                 # from ancestor directories, so every agent in every repo of
                 # this stream inherits its context automatically — which
                 # stream this is, where the runner lives, and where bd is.
-                cat > "$stream_dir/CLAUDE.md" <<STREAMEOF
+                cat > "$stream_dir/CLAUDE.md" <<STREAMEOF || _stream_add_fail "CLAUDE.md write failed"
 # Workstream: $stream_init/$stream_name
 
 This directory is one WORKSTREAM of the '$stream_init' initiative — one
@@ -1002,7 +1013,7 @@ independent of the initiative's other streams.
 
 - **Runner:** run 'pay dev up' in THIS folder ($stream_dir) — never inside
   a repo (that would create a second, differently-named compose project).
-  Services: <service>.$stream_init-$stream_name.orb.local
+  Services: <service>.$stream_init-$stream_name.localhost
 - **Primary repo:** $stream_primary (its branch carries this stream's work)
 - **Work items:** export BEADS_DIR=$WORKSPACE/$stream_init/.beads — bd is
   shared across the whole initiative, not per-stream
@@ -1040,7 +1051,7 @@ STREAMEOF
                 trap - INT TERM
                 echo "zdev stream: added $stream_init/$stream_name (stack: $stream_init-$stream_name, primary: $stream_primary)"
                 echo "             rows: $stream_init/$stream_name/<repo> · runner: pay dev up in $stream_dir"
-                echo "             DNS: <service>.$stream_init-$stream_name.orb.local"
+                echo "             DNS: <service>.$stream_init-$stream_name.localhost"
                 ;;
             rm)
                 stream_path="${1:-}"
@@ -1180,14 +1191,20 @@ STREAMEOF
                 # title.go use — echoes idle/waiting/working/done and fails
                 # (no echo) for a title that isn't a claude pane at all, so
                 # a non-agent shell pane never contributes a false state.
+                # Mirrors zdevd's ClassifyPaneTitle (internal/tmuxctl/
+                # title.go) glyph for glyph — including the legacy ◎
+                # shell-running marker and the daemon's rune-then-SPACE
+                # Braille rule, both of which an earlier cut drifted from
+                # (adversarial review, 2026-08-20: a "◎ npm test" pane read
+                # as no agent here while the daemon called it working).
                 _stream_pane_state() {
                     case "$1" in
                         claude|"✳ Claude Code") echo idle ;;
                         "✳ "*|"● "*) echo waiting ;;
-                        "◐ "*|"◓ "*|"◑ "*|"◒ "*) echo working ;;
+                        "◐ "*|"◓ "*|"◑ "*|"◒ "*|"◎ "*) echo working ;;
                         "◆ "*) echo "done" ;;
                         *)
-                            [[ "$1" == [$'⠀'-$'⣿']* ]] && { echo working; return 0; }
+                            [[ "$1" == [$'⠀'-$'⣿']" "* ]] && { echo working; return 0; }
                             return 1 ;;
                     esac
                 }
@@ -1308,9 +1325,35 @@ STREAMEOF
                     echo "zdev stream merge: not an initiative: $merge_init" >&2
                     exit 1
                 fi
+                # Canonicalise and fence BEFORE anything is created: the
+                # rollback below executes rm -rf on a path derived from
+                # these segments, so a symlinked "initiative" (adversarial
+                # review, 2026-08-20: ln -s /anywhere $WORKSPACE/evil passes
+                # _seg_ok and the INITIATIVE.md check) must be refused here,
+                # exactly as stream rm fences its teardown target.
+                _ws_real=$(cd "$WORKSPACE" 2>/dev/null && pwd -P)
+                _init_real=$(cd "$WORKSPACE/$merge_init" 2>/dev/null && pwd -P)
+                if [[ -z "$_ws_real" || -z "$_init_real" || "$_init_real" != "$_ws_real/$merge_init" ]]; then
+                    echo "zdev stream merge: $merge_init does not resolve inside the workspace — refusing" >&2
+                    exit 1
+                fi
                 for _s in "${merge_streams[@]}"; do
                     if [[ ! -f "$WORKSPACE/$merge_init/$_s/.pay/stack.yml" ]]; then
                         echo "zdev stream merge: no such source stream: $merge_init/$_s" >&2
+                        exit 1
+                    fi
+                    # A source must BE a workspace-resident stream, not a
+                    # marker-shaped impostor: canonical location under the
+                    # fenced initiative, and a stack.yml naming exactly this
+                    # stream (the same identity check stream rm applies).
+                    _s_real=$(cd "$WORKSPACE/$merge_init/$_s" 2>/dev/null && pwd -P)
+                    if [[ -z "$_s_real" || "$_s_real" != "$_init_real/$_s" ]]; then
+                        echo "zdev stream merge: $merge_init/$_s does not resolve inside the workspace — refusing" >&2
+                        exit 1
+                    fi
+                    _s_qname=$(sed -n 's/^name: //p' "$_s_real/.pay/stack.yml" 2>/dev/null | head -1 || true)
+                    if [[ "$_s_qname" != "$merge_init-$_s" ]]; then
+                        echo "zdev stream merge: $merge_init/$_s has no valid stream marker (.pay/stack.yml name: $merge_init-$_s) — refusing" >&2
                         exit 1
                     fi
                 done
@@ -1405,24 +1448,49 @@ STREAMEOF
                     _merged_ok=()
                     _conflict_at=""
                     _conflict_files=""
+                    _skipped=""
                     for _ci in "${!_contrib_streams[@]}"; do
                         _s="${_contrib_streams[$_ci]}"
                         _b="${_contrib_branches[$_ci]}"
                         _sr="$WORKSPACE/$merge_init/$_s/$_repo"
+                        if [[ -n "$_conflict_at" ]]; then
+                            # A conflict froze this repo mid-merge; later
+                            # contributors are NOT silently absorbed into
+                            # "conflicted" — they were never attempted, and
+                            # the report must say so or an agent resolving
+                            # the conflict believes the integration is
+                            # complete when it isn't (adversarial review,
+                            # 2026-08-20).
+                            _skipped="$_skipped $_s:$_b"
+                            continue
+                        fi
                         git -C "$review_dir/$_repo" fetch --quiet "$_sr" "$_b" 2>/dev/null \
                             || _stream_merge_fail "fetch of $_s ($_b) failed for $_repo"
-                        if git -C "$review_dir/$_repo" merge --quiet \
-                                -m "merge $_s ($_b) into $merge_int_branch" FETCH_HEAD >/dev/null 2>&1; then
-                            _merged_ok+=("$_s:$_b")
-                        else
-                            _conflict_at="$_s:$_b"
-                            _conflict_files=$(git -C "$review_dir/$_repo" diff --name-only --diff-filter=U | tr '\n' ' ')
-                            break
+                        _merr=$(git -C "$review_dir/$_repo" merge --quiet \
+                            -m "merge $_s ($_b) into $merge_int_branch" FETCH_HEAD 2>&1 >/dev/null) \
+                            && { _merged_ok+=("$_s:$_b"); continue; }
+                        # A failed merge is only a CONFLICT when git actually
+                        # left one behind: MERGE_HEAD present AND unmerged
+                        # paths recorded. Anything else (author identity
+                        # unknown, hook failure, object errors) is a
+                        # mechanical failure and must roll back loudly, not
+                        # be published as "an ordinary git merge conflict"
+                        # with exit 0 (adversarial review, 2026-08-20).
+                        _mh=$(git -C "$review_dir/$_repo" rev-parse --git-path MERGE_HEAD 2>/dev/null || echo "")
+                        # --git-path may answer relative (to the repo) or
+                        # absolute depending on git's mood — normalize.
+                        [[ -n "$_mh" && "$_mh" != /* ]] && _mh="$review_dir/$_repo/$_mh"
+                        _conflict_files=$(git -C "$review_dir/$_repo" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')
+                        if [[ -z "$_mh" || ! -e "$_mh" || -z "${_conflict_files// /}" ]]; then
+                            _stream_merge_fail "merge of $_s ($_b) failed mechanically in $_repo: ${_merr:-no diagnostic}"
                         fi
+                        _conflict_at="$_s:$_b"
                     done
 
                     if [[ -n "$_conflict_at" ]]; then
-                        merge_report+=("$_repo: CONFLICT merging $_conflict_at (clean so far: ${_merged_ok[*]:-none}) — conflicted files: $_conflict_files")
+                        _line="$_repo: CONFLICT merging $_conflict_at (clean so far: ${_merged_ok[*]:-none}) — conflicted files: $_conflict_files"
+                        [[ -n "$_skipped" ]] && _line="$_line — NOT YET MERGED (skipped after the conflict):$_skipped"
+                        merge_report+=("$_line")
                     else
                         merge_report+=("$_repo: clean — merged ${_merged_ok[*]}")
                     fi
@@ -1434,7 +1502,7 @@ STREAMEOF
                     printf 'name: %s-%s\n' "$merge_init" "$merge_name"
                     printf 'kind: review\n'
                     printf 'sources: %s\n' "${merge_streams[*]}"
-                } > "$review_dir/.pay/stack.yml"
+                } > "$review_dir/.pay/stack.yml" || _stream_merge_fail "stack.yml write failed"
 
                 _merge_sources_list=""
                 for _s in "${merge_streams[@]}"; do
@@ -1446,7 +1514,7 @@ STREAMEOF
                     _merge_report_list="$_merge_report_list- $_line
 "
                 done
-                cat > "$review_dir/CLAUDE.md" <<CLAUDEEOF
+                cat > "$review_dir/CLAUDE.md" <<CLAUDEEOF || _stream_merge_fail "CLAUDE.md write failed"
 # Review stream: $merge_init/$merge_name
 
 This directory is a REVIEW stream, synthesized by \`zdev stream merge\` from:

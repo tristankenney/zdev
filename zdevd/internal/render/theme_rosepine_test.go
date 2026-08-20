@@ -73,6 +73,15 @@ func TestThemeDoneDistinctFromFreshWaiting(t *testing.T) {
 	if thDone() == thWaiting(0) {
 		t.Errorf("done and fresh-waiting must not share a color, both %q", thDone())
 	}
+	// Pin the IDENTITIES the doc comments assert, not just the inequality
+	// (adversarial review 2026-08-20: swapping Done to Foam and working to
+	// Iris preserved every prior assertion while contradicting the docs).
+	if thDone() != rpIris.fg() {
+		t.Errorf("done must be Iris per thDone's doc comment, got %q", thDone())
+	}
+	if thWorkingBreath(1) != rpFoam.fg() {
+		t.Errorf("working (normal breath phase) must be Foam, got %q", thWorkingBreath(1))
+	}
 }
 
 // thWorkingBreath (delight, 2026-08-20): a shared brightness cycle on

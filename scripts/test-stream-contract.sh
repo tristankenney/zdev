@@ -245,7 +245,13 @@ git -C "$WS/init/mystream/repo1" update-ref refs/remotes/origin/init/mystream HE
 mkdir -p "$WS/init/.beads"
 cat > "$FAKEBIN/bd" <<'EOF'
 #!/bin/bash
-echo "○ fake-1 ● P2 Fake open item"
+# Argument-validating fake (adversarial review 2026-08-20): answers ONLY
+# when queried for this stream's exact label — production drifting to a
+# wrong label query must lose the warning and fail the assertion below.
+case "$*" in
+    *"stream:mystream"*) echo "○ fake-1 ● P2 Fake open item" ;;
+    *) exit 0 ;;
+esac
 EOF
 chmod +x "$FAKEBIN/bd"
 
@@ -292,6 +298,73 @@ if out=$(PATH="$FAKEBIN:$PATH" zstream ls init 2>&1); then
 else
     fail "ls: refused with stubbed tmux on PATH: $out"
 fi
+
+# ===========================================================================
+# stream ls — classifier parity with the daemon (adversarial review
+# 2026-08-20: the first cut missed the legacy ◎ marker and accepted
+# Braille without the daemon's rune-then-space rule).
+# ===========================================================================
+
+cat > "$FAKEBIN/tmux" <<'EOF'
+#!/bin/bash
+case "$1" in
+    has-session) exit 0 ;;
+    list-panes) echo "◎ npm test" ;;
+    *) exit 1 ;;
+esac
+EOF
+
+build_fixture
+if out=$(PATH="$FAKEBIN:$PATH" zstream ls init 2>&1); then
+    if ! printf '%s' "$out" | grep -q "claude·working"; then
+        fail "ls: legacy ◎ shell-running title must classify as working: $out"
+    else
+        ok "ls classifies the legacy ◎ marker as working (daemon parity)"
+    fi
+else
+    fail "ls: refused with ◎-title tmux stub: $out"
+fi
+
+cat > "$FAKEBIN/tmux" <<'EOF'
+#!/bin/bash
+case "$1" in
+    has-session) exit 0 ;;
+    list-panes) echo "⠋no-space-after-rune" ;;
+    *) exit 1 ;;
+esac
+EOF
+
+build_fixture
+if out=$(PATH="$FAKEBIN:$PATH" zstream ls init 2>&1); then
+    if printf '%s' "$out" | grep -q "claude·"; then
+        fail "ls: Braille WITHOUT a following space must not classify (daemon rule): $out"
+    else
+        ok "ls requires the daemon's rune-then-space Braille rule"
+    fi
+else
+    fail "ls: refused with braille-title tmux stub: $out"
+fi
+
+# ===========================================================================
+# stream add — symlinked-initiative fencing (adversarial review 2026-08-20
+# BLOCKER: a symlink passing _seg_ok let the transactional rollback's
+# rm -rf operate outside the workspace).
+# ===========================================================================
+
+build_fixture
+mkdir -p "$TMP/outside"
+touch "$TMP/outside/INITIATIVE.md"
+ln -s "$TMP/outside" "$WS/evil"
+got=0
+zstream add evil s1 some-repo >/dev/null 2>&1 || got=$?
+if [[ "$got" == "0" ]]; then
+    fail "add: symlinked initiative accepted"
+elif [[ -e "$TMP/outside/s1" ]]; then
+    fail "add: created inside the symlink target despite refusal"
+else
+    ok "add refuses a symlinked initiative before creating anything"
+fi
+rm -f "$WS/evil"
 
 if [[ $fails -gt 0 ]]; then
     echo "stream contract: $fails failure(s)" >&2
