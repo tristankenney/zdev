@@ -249,7 +249,15 @@ func thBreath(name string, frame int) string {
 	return hue.fgBright(BreathBrightness[frame%len(BreathBrightness)])
 }
 
-func thDivider(moodClassic string, n int) string {
+// frame is the animator's breath index (0..3). The ACTIVE tiers breathe
+// with it (delight, 2026-08-20): the gradient's fade compresses at the
+// breath's peak (colors sit closer to the mood hue — the divider glows)
+// and relaxes at the trough, on the SAME clock as the current-session ▌,
+// so the whole frame inhales together. Cell 0 (t=0) is untouched by
+// construction — the exact mood hue is the semantic anchor and never
+// moves. The idle tier ignores frame entirely: nothing happening stays
+// perfectly still; motion means life. Classic ignores frame (flat color).
+func thDivider(moodClassic string, n int, frame int) string {
 	if ThemeMode != "rose-pine" {
 		out := moodClassic
 		for i := 0; i < n; i++ {
@@ -285,9 +293,13 @@ func thDivider(moodClassic string, n int) string {
 	default: // MoodGreen
 		from, mid = rpFoam, rpPine
 	}
+	// Breath phase: how much the fade compresses toward the mood hue.
+	// Indexed by the same 0..3 cycle as BreathBrightness (0 = peak,
+	// 2 = trough), scaling t multiplicatively so t=0 stays exactly 0.
+	phase := [4]float64{0.22, 0.10, 0, 0.10}[((frame%4)+4)%4]
 	out := ""
 	for i := 0; i < n; i++ {
-		t := float64(i) / float64(n-1)
+		t := float64(i) / float64(n-1) * (1 - phase)
 		var c rpRGB
 		if t <= 0.5 {
 			c = from.lerp(mid, t*2)

@@ -171,6 +171,10 @@ func RenderWithRows(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 // are zero-opt wrappers around this — there is exactly one frame composer,
 // same invariant Body's package doc already relies on.
 func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn func() int64, opts RenderOpts) ([]byte, []RowRef) {
+	// Record attention transitions before any row draws, so this frame's
+	// rows already see a flash their own snapshot caused (idempotent —
+	// see ObserveTransitions).
+	animator.ObserveTransitions(snap, nowFn())
 	var buf bytes.Buffer
 	var rows []RowRef
 	// lineOf reports the 0-based index of the line the NEXT write lands on:
@@ -208,7 +212,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	// one ambient read the design keeps ON during the loop, everything else
 	// recedes around it.
 	buf.WriteString("  ")
-	buf.WriteString(thDivider(MoodFor(snap, nowFn), 8))
+	buf.WriteString(thDivider(MoodFor(snap, nowFn), 8, animator.BreathFrame()))
 	buf.WriteString(Reset)
 	buf.WriteString(ClearLineEnd)
 	buf.WriteByte('\n')
@@ -1149,8 +1153,18 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	if urgent {
 		glyph, color = "!", thUrgentBar()
 	}
+	// Transition flash (delight, 2026-08-20): for FlashSec after this row
+	// ENTERS an attention state, marker and name render Bold in the
+	// state's OWN semantic color — the moment gets marked, then the row
+	// settles. No new hue (the color budget holds: this emphasizes the
+	// color the state already owns), and time-bounded so it can never
+	// become standing noise. Suppressed for the current session's
+	// suppressed-wait marker (pForMarker was neutered above — flashing a
+	// hidden state would announce what that suppression exists to quiet).
+	flash := animator.FlashActive(p.Name, nowFn()) && !urgent &&
+		!(isCurrent && projectAttention(p) == proto.AttWaiting)
 	buf.WriteString(color)
-	if urgent {
+	if urgent || flash {
 		buf.WriteString(Bold)
 	}
 	buf.WriteString(glyph)
@@ -1163,12 +1177,15 @@ func renderProjectRow(buf *bytes.Buffer, p *proto.Project, current string, anima
 	case urgent:
 		buf.WriteString(Bold)
 		buf.WriteString(thUrgentBar())
+	case flash:
+		buf.WriteString(Bold)
+		buf.WriteString(color)
 	case isCurrent:
 		buf.WriteString(Bold)
 		buf.WriteString(thPalette(p.Name))
 	}
 	buf.WriteString(displayName(p.Name))
-	if hovered || isCurrent || urgent {
+	if hovered || isCurrent || urgent || flash {
 		buf.WriteString(Reset)
 	}
 	// Agent Teams badge (phase4-v16, slice 4) — same placement as the
@@ -1333,8 +1350,13 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	if urgent {
 		glyph, color = "!", thUrgentBar()
 	}
+	// Transition flash — same contract as renderProjectRow's (Bold in the
+	// state's own color for FlashSec after entering it). No current-wait
+	// suppression here: compact rows never neuter the marker, so there is
+	// no hidden state a flash could betray.
+	flash := animator.FlashActive(p.Name, nowFn()) && !urgent
 	buf.WriteString(color)
-	if urgent {
+	if urgent || flash {
 		buf.WriteString(Bold)
 	}
 	buf.WriteString(glyph)
@@ -1357,6 +1379,11 @@ func renderCompactRow(buf *bytes.Buffer, p *proto.Project, width int, animator *
 	case urgent:
 		buf.WriteString(Bold)
 		buf.WriteString(thUrgentBar())
+		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
+		buf.WriteString(Reset)
+	case flash:
+		buf.WriteString(Bold)
+		buf.WriteString(color)
 		buf.WriteString(truncateRunes(displayName(p.Name), nameCap))
 		buf.WriteString(Reset)
 	case stale || p.Status == "absent" || p.Unmanaged:

@@ -268,3 +268,62 @@ func TestAnimator_BreathFrame(t *testing.T) {
 		t.Errorf("after %d ticks BreathFrame = %d; want 0 (wrap)", 4*BreathHold, got)
 	}
 }
+
+// ---- transition flash (delight, 2026-08-20) ----
+
+func TestObserveTransitions_FirstSightIsBaseline(t *testing.T) {
+	a := NewAnimator()
+	snap := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "alpha", Status: "waiting", Attention: proto.AttWaiting},
+	}}
+	a.ObserveTransitions(snap, 1000)
+	if a.FlashActive("alpha", 1000) {
+		t.Errorf("first sight of a project must be baseline, not a flash — restart storms")
+	}
+}
+
+func TestObserveTransitions_FlashOnChangeAndExpiry(t *testing.T) {
+	a := NewAnimator()
+	idle := &proto.Snapshot{Projects: []proto.Project{{Name: "alpha", Status: "alive", Attention: proto.AttIdle}}}
+	waiting := &proto.Snapshot{Projects: []proto.Project{{Name: "alpha", Status: "waiting", Attention: proto.AttWaiting}}}
+
+	a.ObserveTransitions(idle, 1000) // baseline
+	a.ObserveTransitions(waiting, 1010)
+	if !a.FlashActive("alpha", 1010) {
+		t.Errorf("entering waiting must flash")
+	}
+	if !a.FlashActive("alpha", 1010+FlashSec-1) {
+		t.Errorf("flash must hold within FlashSec")
+	}
+	if a.FlashActive("alpha", 1010+FlashSec) {
+		t.Errorf("flash must expire at FlashSec")
+	}
+}
+
+func TestObserveTransitions_RepeatFramesDontRetrigger(t *testing.T) {
+	a := NewAnimator()
+	idle := &proto.Snapshot{Projects: []proto.Project{{Name: "alpha", Status: "alive", Attention: proto.AttIdle}}}
+	working := &proto.Snapshot{Projects: []proto.Project{{Name: "alpha", Status: "shell-running", Attention: proto.AttWorking}}}
+
+	a.ObserveTransitions(idle, 1000)
+	a.ObserveTransitions(working, 1010)
+	// Renderer ticks re-observe the same snapshot every frame — the flash
+	// clock must not restart, or a long-working row flashes forever.
+	a.ObserveTransitions(working, 1012)
+	if a.FlashActive("alpha", 1010+FlashSec) {
+		t.Errorf("repeated frames of the same state must not extend the flash")
+	}
+}
+
+func TestObserveTransitions_FadeToIdleIsSilent(t *testing.T) {
+	a := NewAnimator()
+	working := &proto.Snapshot{Projects: []proto.Project{{Name: "alpha", Status: "shell-running", Attention: proto.AttWorking}}}
+	idle := &proto.Snapshot{Projects: []proto.Project{{Name: "alpha", Status: "alive", Attention: proto.AttIdle}}}
+
+	a.ObserveTransitions(idle, 1000)    // baseline
+	a.ObserveTransitions(working, 1010) // flash
+	a.ObserveTransitions(idle, 1011)    // fades to quiet mid-flash
+	if a.FlashActive("alpha", 1011) {
+		t.Errorf("a transition INTO idle must clear the flash, not announce it")
+	}
+}

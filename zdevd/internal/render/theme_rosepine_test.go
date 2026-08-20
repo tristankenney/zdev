@@ -34,7 +34,7 @@ func TestThemeClassicIsPassthrough(t *testing.T) {
 	if thBreath("zdev", 2) != BreathColorForProject("zdev", 2) {
 		t.Error("classic breath must pass through BreathColorForProject")
 	}
-	if got, want := thDivider(MoodGreen, 3), MoodGreen+"───"; got != want {
+	if got, want := thDivider(MoodGreen, 3, 0), MoodGreen+"───"; got != want {
 		t.Errorf("classic divider: got %q, want %q", got, want)
 	}
 	for _, c := range []string{Green, Cyan, Yellow, Orange, Dim, RedPulse, Icy} {
@@ -158,7 +158,7 @@ func TestThemeRightAlignedStatus(t *testing.T) {
 // base — and stays exactly n glyphs wide.
 func TestThemeDividerGradient(t *testing.T) {
 	withTheme(t, "rose-pine")
-	d := thDivider(MoodGreen, 17)
+	d := thDivider(MoodGreen, 17, 0)
 	if got := strings.Count(d, "─"); got != 17 {
 		t.Errorf("divider must stay 17 glyphs, got %d", got)
 	}
@@ -168,5 +168,31 @@ func TestThemeDividerGradient(t *testing.T) {
 	segs := strings.Split(d, "─")
 	if segs[0] == segs[15] {
 		t.Errorf("gradient must actually fade: first and last hues identical")
+	}
+}
+
+// The divider breathes (delight, 2026-08-20): active tiers compress their
+// fade at the breath's peak and relax at the trough — but cell 0 is the
+// mood's semantic anchor and must be byte-identical at every frame, and
+// the idle tier must not move at all (nothing happening stays still).
+func TestThemeDividerBreathes(t *testing.T) {
+	withTheme(t, "rose-pine")
+	peak := thDivider(MoodGreen, 17, 0)
+	trough := thDivider(MoodGreen, 17, 2)
+	if peak == trough {
+		t.Errorf("active divider must differ between breath peak and trough")
+	}
+	for f := 0; f < 4; f++ {
+		if d := thDivider(MoodGreen, 17, f); !strings.HasPrefix(d, rpFoam.fg()) {
+			t.Errorf("cell 0 must stay the exact mood hue at frame %d", f)
+		}
+	}
+	if thDivider(MoodIdle, 17, 0) != thDivider(MoodIdle, 17, 2) {
+		t.Errorf("idle divider must not breathe")
+	}
+
+	withTheme(t, "classic")
+	if thDivider(MoodGreen, 3, 0) != thDivider(MoodGreen, 3, 2) {
+		t.Errorf("classic divider must ignore frame")
 	}
 }

@@ -25,11 +25,25 @@ type Animator struct {
 	breathState     int // 0..3, advances every BreathHold ticks
 	breathTickCount int // counts ticks toward next breathState advance
 	lastSnap        *proto.Snapshot
+
+	// Transition flash (delight, 2026-08-20): the moment a row ENTERS an
+	// attention state is worth a brief emphasis — the eye gets told "here,
+	// now" instead of noticing a difference on the next deliberate scan.
+	// attnPrev holds the last observed attention per project; attnFlash
+	// the unix second of the last transition into a NON-idle state.
+	// Renderer-local like every other animation counter (D3-07); bounded
+	// by the fleet's project count, so no pruning discipline is needed
+	// the way the hub's monotonic maps require.
+	attnPrev  map[string]proto.Attention
+	attnFlash map[string]int64
 }
 
 // NewAnimator returns a fresh Animator with all counters at 0.
 func NewAnimator() *Animator {
-	return &Animator{}
+	return &Animator{
+		attnPrev:  make(map[string]proto.Attention),
+		attnFlash: make(map[string]int64),
+	}
 }
 
 // Tick advances the pulse and breath counters. The caller invokes this
@@ -136,6 +150,53 @@ func (a *Animator) WorkGlyph() string {
 // BreathFrame returns the current breath cycle index (0..3) for
 // use with render.BreathColorForProject.
 func (a *Animator) BreathFrame() int { return a.breathState % len(BreathBrightness) }
+
+// FlashSec is how long a row's transition emphasis holds after it enters
+// an attention state. Wall-clock seconds, not renderer ticks — the flash
+// must read the same at the idle 5fps cadence and the waiting 15fps one.
+// 3s: long enough that a glance-away doesn't miss it, short enough that
+// three rows changing in a burst never reads as standing alarm.
+const FlashSec = 3
+
+// ObserveTransitions records, per project, the moment its attention
+// changes — the renderer calls it once per frame, before drawing rows.
+// Idempotent across repeated frames of the same snapshot: a moment is
+// recorded only when the observed value differs from the stored one.
+//
+// Two deliberate silences:
+//   - First sight is baseline, not a transition. Without this, every
+//     daemon restart or pane respawn would flash the entire fleet at
+//     once — the same restart-storm failure mode the "✳ Claude Code"
+//     idle-title carve-out exists for.
+//   - A transition INTO idle clears any active flash and records
+//     nothing: fading to quiet is silence, not an event. Only entering
+//     waiting/working/finished/dead earns the emphasis.
+func (a *Animator) ObserveTransitions(snap *proto.Snapshot, now int64) {
+	if snap == nil {
+		return
+	}
+	for i := range snap.Projects {
+		p := &snap.Projects[i]
+		att := projectAttention(p)
+		prev, seen := a.attnPrev[p.Name]
+		a.attnPrev[p.Name] = att
+		if !seen || att == prev {
+			continue
+		}
+		if att == "" || att == proto.AttIdle {
+			delete(a.attnFlash, p.Name)
+			continue
+		}
+		a.attnFlash[p.Name] = now
+	}
+}
+
+// FlashActive reports whether name's transition emphasis is still live
+// at now — true within FlashSec of its last recorded transition.
+func (a *Animator) FlashActive(name string, now int64) bool {
+	t, ok := a.attnFlash[name]
+	return ok && now-t < FlashSec
+}
 
 // LastSnap returns the last snapshot passed to OnSnapshot, or nil if
 // none has been observed.

@@ -1861,3 +1861,35 @@ func mustTeamColor(name string) string {
 	}
 	return c
 }
+
+// Transition flash, end to end (delight, 2026-08-20): a row that ENTERS
+// waiting gets its name briefly Bold in the state's own color, then
+// settles — and a fresh fleet (first sight) never flashes.
+func TestRender_TransitionFlash(t *testing.T) {
+	anim := NewAnimator()
+	idle := &proto.Snapshot{Projects: []proto.Project{{Name: "alpha", Status: "alive", Attention: proto.AttIdle}}}
+	waiting := &proto.Snapshot{Projects: []proto.Project{
+		{Name: "alpha", Status: "waiting", Attention: proto.AttWaiting, WaitStartedTS: fixedNow},
+	}}
+
+	// Frame 1: baseline — no flash on first sight, byte-set must not
+	// contain a Bold-wrapped name.
+	out := Render(idle, 50, anim, fixedNowFn)
+	if bytes.Contains(out, []byte(Bold)) {
+		t.Errorf("first-sight frame must not flash:\n%q", out)
+	}
+
+	// Frame 2: alpha enters waiting — name renders Bold in the wait color.
+	out = Render(waiting, 50, anim, fixedNowFn)
+	want := []byte(Bold + thWaiting(0) + "alpha")
+	if !bytes.Contains(out, want) {
+		t.Errorf("entering waiting must flash the name in the state color\nwant fragment %q in\n%q", want, out)
+	}
+
+	// Frame 3: past FlashSec — the emphasis is gone, marker still waiting.
+	later := func() int64 { return fixedNow + FlashSec }
+	out = Render(waiting, 50, anim, later)
+	if bytes.Contains(out, want) {
+		t.Errorf("flash must expire after FlashSec:\n%q", out)
+	}
+}
