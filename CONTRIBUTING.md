@@ -16,6 +16,28 @@ make install  # symlinks into ~/.local/bin and bootstraps launchd
 
 `make test` is what CI runs; if it's green locally it'll be green in CI.
 
+## Security & trust
+
+Cloning this repo is not inert. `.claude/settings.json` hooks are tracked
+and auto-execute for any Claude Code session opened in the checkout, and
+`make install` symlinks `bin/` onto `PATH` and points launchd straight at
+the files in this working copy — so once installed, whatever is checked
+out here runs unattended, on a timer, without you opening a terminal.
+Practically: a branch or PR checkout is effectively code that will run,
+not just a diff to read before merging it.
+
+That's why `.claude/`, `bin/`, `install.sh`, `zdevd/launchd/`, `.github/`,
+and the test fixtures are gated in `CODEOWNERS` and require review once
+branch protection is on — treat a change to any of them with the same
+scrutiny as a dependency bump, not a drive-by patch.
+
+If you're setting up your own checkout from someone else's dotfiles or
+notes: do **not** copy their `~/.config/zdev/env` verbatim. It can carry
+a private push channel (`ZDEV_NOTIFY_CMD`/`ZDEV_NTFY_URL`/etc.) that
+would silently start POSTing *your* project names and agent activity to
+*their* endpoint. Run `zdev doctor` after install — its Security section
+flags exactly this kind of thing.
+
 ## Style
 
 - **Go**: `gofmt`-clean; `go vet ./...` passes; `staticcheck` is welcome
