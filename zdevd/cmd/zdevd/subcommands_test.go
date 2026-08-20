@@ -203,7 +203,14 @@ func TestDemoSubcmdBadFlag(t *testing.T) {
 // path as demoSubcmd, without the signal.NotifyContext), dials as a subscriber,
 // and verifies the hello → snapshot round-trip.
 func TestDemoRoundTrip(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "demo.sock")
+	// The socket's parent must be 0700 (M7 bind-time enforcement, matching
+	// production's runtimeDir); t.TempDir() creates its numbered subdir at
+	// 0777&~umask (0755 on a default umask), so tighten it explicitly.
+	sockDir := t.TempDir()
+	if err := os.Chmod(sockDir, 0o700); err != nil {
+		t.Fatalf("chmod sock dir: %v", err)
+	}
+	sockPath := filepath.Join(sockDir, "demo.sock")
 
 	src, err := demo.New()
 	if err != nil {

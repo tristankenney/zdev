@@ -27,6 +27,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/diag"
@@ -585,8 +586,18 @@ func BindOrCleanStale(path string) (*net.UnixListener, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("socket: stat: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("socket: mkdir parent: %w", err)
+	}
+	// M7: MkdirAll is a no-op when dir already exists — it never fixes the
+	// owner or mode, and on Linux/WSL the socket dir can resolve to a shared
+	// /tmp path an attacker pre-created (as a real dir they own, or as a
+	// symlink to somewhere they control). Enforce, at bind time, that the
+	// parent is a REAL directory owned by us with mode 0700 before we place a
+	// socket there. This is a hard refusal, not a doctor advisory.
+	if err := verifySocketDir(dir); err != nil {
+		return nil, err
 	}
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
@@ -597,4 +608,31 @@ func BindOrCleanStale(path string) (*net.UnixListener, error) {
 		return nil, fmt.Errorf("socket: chmod 0600: %w", err)
 	}
 	return ln, nil
+}
+
+// verifySocketDir refuses to bind unless dir is a real directory (not a
+// symlink), owned by the current uid, with mode exactly 0700 (M7). Lstat (not
+// Stat) so a symlink is caught rather than followed to its target's metadata.
+func verifySocketDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("socket: stat parent dir %q: %w", dir, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("socket: refusing to bind: parent dir %q is a symlink", dir)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("socket: refusing to bind: parent %q is not a directory", dir)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("socket: refusing to bind: cannot determine owner of %q", dir)
+	}
+	if uid := os.Getuid(); int(st.Uid) != uid {
+		return fmt.Errorf("socket: refusing to bind: parent dir %q owned by uid %d, not %d", dir, st.Uid, uid)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		return fmt.Errorf("socket: refusing to bind: parent dir %q has mode %#o, want 0700", dir, perm)
+	}
+	return nil
 }
