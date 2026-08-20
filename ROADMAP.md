@@ -391,8 +391,10 @@ pane delivery) deliberately unbuilt.
   reverts same-day. Standing, not done — this item stays as the lens,
   not a task. Kill: two consecutive operator visual complaints traced to
   work that shipped without this lens applied.
-- **Stream merge — review streams** *(in flight, 2026-08-20)* — "bring a
-  collection of streams together via an instruction set for review."
+- **Stream merge — review streams** *(first cut landed 2026-08-20;
+  awaiting first real review-stream dogfood before a SHIPPED verdict)* —
+  "bring a collection of streams together via an instruction set for
+  review."
   Design: merging streams produces ANOTHER stream — `zdev stream merge
   <init> <stream>... [--name review-x]` synthesizes a disposable review
   stream (union of source repos, each source's branch merged onto an
