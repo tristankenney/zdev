@@ -353,6 +353,30 @@ pane delivery) deliberately unbuilt.
 - **Kill (stream send):** build it the week a non-Claude agent joins a
   stream; if that never happens, it never gets built.
 
+### ✅ 20. Daemon self-health row *(2026-08-20)*
+Surfaces the diag fields the daemon already computed for `zdevd diag`
+(`errors_1h`, `last_event_ago_sec` — see `internal/diag`) as a single dim
+row in the sidebar itself: a dead daemon and a dead agent were the same
+"why is this fleet so quiet" operator question, but only one of them was
+visible without shelling out. `Snapshot.DaemonErrors1h`/`DaemonLastEventTS`
+ride the existing hub publish pass (`h.errCounter`/`h.lastEventAt`, both
+Run-owned, threaded through the same `passNow` as everything else in that
+pass — no new goroutine, no new `time.Now()` in a derivation path); the
+renderer's `daemonIsDegraded` predicate fires on either `errors_1h >= 5`
+or `last_event_ago_sec >= 1800` (30 minutes — a healthy hub processes tmux
+events continuously, so this is a conservative "something's actually
+wrong" bar, not a jitter trigger). One dim row between the project list
+and the footer, only ever emitted when degraded — a healthy fleet's frame
+is byte-identical whether the feature exists or not. Complements, doesn't
+duplicate, the outage state machine in `outage.go`: that path covers the
+renderer *losing* the daemon entirely (unreachable socket); this path
+covers the daemon still answering but sick. `ZDEV_SIDEBAR_HEALTH=off` is
+the escape hatch (default on, since the row is inert on a healthy fleet).
+- **Kill (live):** if the row never fires in a week of real dogfood use,
+  pull `daemon_health.go`, the two `Snapshot` fields, and the frame.go call
+  site — the thresholds were never tuned against a real degraded daemon,
+  only against the fixtures.
+
 ---
 
 ## NEXT (~6 weeks)
@@ -369,10 +393,6 @@ pane delivery) deliberately unbuilt.
   tier escalation + a death on a ticker. Doubles as a free e2e render gate.
   Effort: week. Depends: S1+S3+death (so the GIF shows the differentiators).
   Kill: if it drifts from real hub output and starts lying, internal-only.
-- **Daemon self-health row** — surface already-computed diag fields
-  (`last_event_ago_sec`, `errors_1h`) as a single dim "degraded" row; a dead
-  daemon and a dead agent are the same operator question. Effort: days. Depends:
-  death detection (shared liveness framing). Kill: never fires in practice.
 - **Delete the classic render loop** *(the one action item left from item 17)*
   — `runClassic`/`FrameWriter`/`FrameSig` (~280 lines) plus the
   `ZDEV_SIDEBAR_ENGINE=classic` opt-out. Not done yet: the default flip
