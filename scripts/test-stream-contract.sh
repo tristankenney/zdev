@@ -178,6 +178,10 @@ else
     grep -q '^name: init-s1$' "$d/.pay/stack.yml" || fail "add: unqualified stack name"
     grep -q '^primary: repo1$' "$d/.pay/stack.yml" || fail "add: wrong primary"
     [[ -f "$d/CLAUDE.md" ]] || fail "add: stream CLAUDE.md missing"
+    grep -q "Cross-stream coordination" "$d/CLAUDE.md" || fail "add: CLAUDE.md missing coordination section"
+    grep -q "VERIFY every claim" "$d/CLAUDE.md" || fail "add: CLAUDE.md missing verify-before-acting line"
+    grep -q "stream:s1" "$d/CLAUDE.md" || fail "add: CLAUDE.md missing interpolated stream label"
+    grep -q "never create a separate beads database" "$d/CLAUDE.md" || fail "add: CLAUDE.md missing shared-beads-graph line"
     for r in repo1 repo2 repo3; do
         [[ -e "$d/$r/.git" ]] || fail "add: $r not cloned"
     done

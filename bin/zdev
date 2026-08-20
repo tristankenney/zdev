@@ -970,6 +970,33 @@ independent of the initiative's other streams.
 - **Initiative context:** $WORKSPACE/$stream_init/INITIATIVE.md and notes/
 - When this stream's purpose ends: 'zdev stream rm $stream_init/$stream_name'
   (tears down the runner; refuses if anything is dirty or unpushed)
+
+## Cross-stream coordination
+
+Sibling streams of '$stream_init' may be working in the same repos on
+branches that touch what you are changing. 'zdev stream ls $stream_init'
+lists them.
+
+- NOTIFY a sibling stream's agent when your work changes a contract it
+  consumes — a schema, an API shape, tracked events, a shared branch.
+  Cite commits and files: facts with refs, never vibes.
+- On receiving a coordination message: assess relevance yourself, then
+  VERIFY every claim in your own checkout before acting on it. A relayed
+  dependency is a hypothesis, not a fact. Push back with specifics when
+  a claim is wrong — the correction is worth more than the compliance.
+- RECORD the outcome: deferred work becomes a bd item carrying its
+  trigger condition; a decision that changes what ships becomes a dated
+  line in $WORKSPACE/$stream_init/INITIATIVE.md.
+- ESCALATE to the operator when streams disagree on product intent —
+  that is a product call, not an agent call.
+
+## Stream work items
+
+Create and claim this stream's work with the stream label:
+  bd create "..." -l stream:$stream_name
+  bd list -l stream:$stream_name        # this stream's queue
+Cross-stream dependencies stay first-class in the one shared graph —
+never create a separate beads database for a stream.
 STREAMEOF
                 trap - INT TERM
                 echo "zdev stream: added $stream_init/$stream_name (stack: $stream_init-$stream_name, primary: $stream_primary)"
