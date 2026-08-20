@@ -16,6 +16,12 @@ WORKSPACE="${ZDEV_WORKSPACE:-$HOME/workspace}"
 PROJECTS_FILE="${ZDEV_PROJECTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/zdev/projects}"
 REAP_AFTER_HOURS="${ZDEV_REAP_AFTER_HOURS:-8}"
 REAP_LOG="${ZDEV_REAP_LOG:-$HOME/Library/Logs/zdev/reaper.log}"
+# Automatic reaping is OPT-IN. The launchd/systemd timer can be installed
+# and loaded, but `zdev reap` (its entry point) no-ops until the operator
+# sets ZDEV_REAP_ENABLED=1 — a brand-new user must never inherit an
+# automatic session-killer. `zdev reap --dry-run` and `zdev kill --idle`
+# (explicit, operator-typed) are unaffected.
+REAP_ENABLED="${ZDEV_REAP_ENABLED:-0}"
 
 # The project list has two sources:
 #
@@ -47,16 +53,27 @@ REAP_LOG="${ZDEV_REAP_LOG:-$HOME/Library/Logs/zdev/reaper.log}"
 PROJECTS=()
 FAVORITES=()
 ORIGINS=()
-_have=" "
+_nl=$'\n'
+_have="$_nl"
 _add_project() {
-    # $1 = name, $2 = origin. Names never contain spaces (they're workspace-
-    # relative paths), so a space-delimited membership string is safe under
-    # bash 3.2 (no associative arrays).
-    case "$_have" in *" $1 "*) return 0 ;; esac
+    # $1 = name, $2 = origin. The dedup membership string is NEWLINE-
+    # delimited, not space-delimited: a directory named "x zdev" would
+    # otherwise collide with "zdev" under a space-framed substring test
+    # ("… x zdev …" contains " zdev ") and silently drop the real row.
+    # A newline can't appear in a workspace-relative path, so a line-exact
+    # match under bash 3.2 (no associative arrays) is unambiguous.
+    case "$_have" in *"$_nl$1$_nl"*) return 0 ;; esac
     PROJECTS+=("$1")
     ORIGINS+=("$2")
-    _have="$_have$1 "
+    _have="$_have$1$_nl"
 }
+
+# A discovery candidate whose basename contains whitespace is skipped: such
+# a name breaks the session-name / tmux-target plumbing downstream, and a
+# space in a path is never intentional here. `zdev doctor` is where the
+# operator gets told about it — discovery stays silent so --list-projects
+# output (parsed by other tools) is never polluted.
+_has_ws() { case "$1" in *[[:space:]]*) return 0 ;; esac; return 1; }
 
 DISCOVER="${ZDEV_PROJECTS_DISCOVER:-0}"
 
@@ -96,6 +113,7 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
         [[ -d "$_d" ]] || continue
         _b="${_d%/}"; _b="${_b##*/}"
         [[ "$_b" == .* ]] && continue
+        _has_ws "$_b" && continue
         if [[ -e "$_d/.git" ]]; then
             # A git repo at the root is a single project, never a group.
             _add_project "$_b" "root-repo"
@@ -108,6 +126,7 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
                 [[ -d "$_r" ]] || continue
                 _rb="${_r%/}"; _rb="${_rb##*/}"
                 [[ "$_rb" == .* ]] && continue
+                _has_ws "$_rb" && continue
                 if [[ -e "$_r/.git" ]]; then
                     _add_project "$_b/$_rb" "initiative-member"
                 elif [[ "$_rb" != "notes" ]]; then
@@ -131,6 +150,7 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
                         [[ -d "$_w" ]] || continue
                         _wb="${_w%/}"; _wb="${_wb##*/}"
                         [[ "$_wb" == .* ]] && continue
+                        _has_ws "$_wb" && continue
                         [[ -e "$_w/.git" ]] && _add_project "$_b/$_rb/$_wb" "initiative-stream-member"
                     done
                 fi
@@ -145,6 +165,7 @@ if [[ "$DISCOVER" == "1" && -d "$WORKSPACE" ]]; then
                 [[ -d "$_r" ]] || continue
                 _rb="${_r%/}"; _rb="${_rb##*/}"
                 [[ "$_rb" == .* ]] && continue
+                _has_ws "$_rb" && continue
                 _add_project "$_b/$_rb" "group-member"
             done
         fi
@@ -197,9 +218,26 @@ is_known_project() {
     return 1
 }
 
+is_known_session() {
+    # A tmux SESSION name (not a project path) that zdev owns — i.e. one
+    # that some registered project maps to via session_name(). The reaper's
+    # ownership floor: everything else on the tmux server (a colleague's
+    # detached shell, an editor, a build) is off-limits.
+    local target="$1" p
+    for p in "${PROJECTS[@]}"; do
+        [[ "$(session_name "$p")" == "$target" ]] && return 0
+    done
+    return 1
+}
+
 build_layout() {
     local session="$1" dir="$2"
     tmux new-session -d -s "$session" -c "$dir" -n dev
+    # Stamp the session zdev creates so the reaper can prove ownership even
+    # if the project is later dropped from the registry (the session tag
+    # outlives the projects-file entry). Reaping requires this OR a known
+    # project mapping; a session zdev never created carries neither.
+    tmux set-option -t "=$session" @zdev-owned 1 2>/dev/null || true
 
     local shell_pane
     shell_pane=$(tmux display-message -p -t "$session:dev" '#{pane_id}')
@@ -318,8 +356,12 @@ Usage:
   zdev list                      Show configured vs running sessions
   zdev kill <project>...         Kill named sessions
   zdev kill all                  Kill every session (except currently attached)
-  zdev kill --idle [hours]       Kill sessions idle >N hours (default: ${REAP_AFTER_HOURS})
-  zdev reap                      Reap idle sessions; skips favorites (launchd entry point)
+  zdev kill --idle [hours] [--dry-run]
+                                 Kill zdev-owned sessions idle >N hours
+                                 (default: ${REAP_AFTER_HOURS}); --dry-run lists, kills nothing
+  zdev reap [--dry-run]          Reap idle zdev-owned sessions; skips
+                                 favorites (launchd entry point). OFF unless
+                                 ZDEV_REAP_ENABLED=1; --dry-run always previews
   zdev --list-projects [-v]      List projects (-v: name<TAB>origin — why
                                  each row exists: declared/favorite/rule)
   zdev docs                      Open the local user guide (docs/guide.html)
@@ -445,17 +487,20 @@ current_session_name() {
 }
 
 do_reap() {
-    local hours="$1" now cutoff current ref age_h
+    # $1 = idle threshold in hours, $2 = dry-run flag (1 = list only).
+    local hours="$1" dry="${2:-0}" now cutoff current ref age_h owned
     now=$(date +%s)
     cutoff=$(( now - hours * 3600 ))
     current=$(current_session_name)
 
     tmux list-sessions >/dev/null 2>&1 || return 0
 
-    while IFS=' ' read -r sn attached last_attached created activity; do
+    while IFS=' ' read -r sn attached last_attached created activity tag; do
         # Never kill a session with an attached client.
         (( attached > 0 )) && continue
         # Belt-and-suspenders: never kill the session we're running inside.
+        # Inert under launchd (no $TMUX, so $current is empty) — ownership,
+        # below, is what actually protects other people's sessions there.
         [[ "$sn" == "$current" ]] && continue
         # Skip favorites.
         is_favorite_session "$sn" && continue
@@ -468,12 +513,32 @@ do_reap() {
         [[ "$last_attached" == "0" ]] && ref=$created
         [[ -n "$activity" && "$activity" -gt "$ref" ]] && ref=$activity
 
-        if (( ref < cutoff )); then
-            age_h=$(( (now - ref) / 3600 ))
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] reap: killing $sn (idle ${age_h}h)" | tee -a "$REAP_LOG" >&2
-            tmux kill-session -t "$sn" || true
+        (( ref < cutoff )) || continue
+        age_h=$(( (now - ref) / 3600 ))
+
+        # OWNERSHIP: only sessions zdev owns are reapable — one that maps to
+        # a known project, or one build_layout stamped @zdev-owned. Anything
+        # else is somebody else's detached shell/editor/build and must never
+        # be touched by an unattended hourly job.
+        if is_known_session "$sn" || [[ "$tag" == "1" ]]; then
+            owned="zdev-owned"
+        else
+            owned="unowned"
         fi
-    done < <(tmux list-sessions -F "#{session_name} #{session_attached} #{session_last_attached} #{session_created} #{session_activity}")
+
+        if (( dry )); then
+            if [[ "$owned" == "zdev-owned" ]]; then
+                echo "would reap $sn (idle ${age_h}h, ${owned})"
+            else
+                echo "would skip $sn (idle ${age_h}h, ${owned} — not zdev's to reap)"
+            fi
+            continue
+        fi
+
+        [[ "$owned" == "zdev-owned" ]] || continue
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] reap: killing $sn (idle ${age_h}h)" | tee -a "$REAP_LOG" >&2
+        tmux kill-session -t "=$sn" || true
+    done < <(tmux list-sessions -F "#{session_name} #{session_attached} #{session_last_attached} #{session_created} #{session_activity} #{@zdev-owned}")
 }
 
 cmd_kill() {
@@ -495,24 +560,34 @@ cmd_kill() {
                 continue
             fi
             echo "Killing $sn"
-            tmux kill-session -t "$sn" || true
+            tmux kill-session -t "=$sn" || true
         done < <(tmux list-sessions -F '#{session_name}')
         return 0
     fi
 
     if [[ "$1" == "--idle" ]]; then
-        local hours="${2:-$REAP_AFTER_HOURS}"
+        # zdev kill --idle [hours] [--dry-run] — explicit, operator-typed,
+        # so unlike the launchd reaper it is NOT gated by ZDEV_REAP_ENABLED.
+        # It still honors do_reap's ownership floor (only zdev's sessions).
+        shift
+        local hours="$REAP_AFTER_HOURS" idle_dry=0 a
+        for a in "$@"; do
+            case "$a" in
+                --dry-run) idle_dry=1 ;;
+                *) hours="$a" ;;
+            esac
+        done
         mkdir -p "$(dirname "$REAP_LOG")"
-        do_reap "$hours"
+        do_reap "$hours" "$idle_dry"
         return 0
     fi
 
     local project sn
     for project in "$@"; do
         sn=$(session_name "$project")
-        if tmux has-session -t "$sn" 2>/dev/null; then
+        if tmux has-session -t "=$sn" 2>/dev/null; then
             echo "Killing $sn"
-            tmux kill-session -t "$sn"
+            tmux kill-session -t "=$sn"
         else
             echo "Not running: $sn"
         fi
@@ -520,8 +595,19 @@ cmd_kill() {
 }
 
 cmd_reap() {
+    # Launchd/systemd entry point. Reaping only happens when the operator
+    # has opted in (ZDEV_REAP_ENABLED=1) — the default-off posture that
+    # keeps a fresh install from silently killing sessions. --dry-run
+    # always works (it kills nothing) so the timer and knob can be verified
+    # safely, and it reports each candidate's idle age and ownership.
+    local dry=0
+    case "${1:-}" in --dry-run) dry=1 ;; esac
+    if (( dry == 0 )) && [[ "$REAP_ENABLED" != "1" ]]; then
+        echo "zdev reap: disabled — set ZDEV_REAP_ENABLED=1 to enable automatic reaping (try 'zdev reap --dry-run' to preview)" >&2
+        return 0
+    fi
     mkdir -p "$(dirname "$REAP_LOG")"
-    do_reap "$REAP_AFTER_HOURS"
+    do_reap "$REAP_AFTER_HOURS" "$dry"
 }
 
 cmd_ack() {
@@ -750,7 +836,8 @@ case "$1" in
         exit 0
         ;;
     reap)
-        cmd_reap
+        shift
+        cmd_reap "$@"
         exit 0
         ;;
     next)
@@ -1565,8 +1652,8 @@ CLAUDEEOF
         exec "$(dirname "$(readlink "$0" 2>/dev/null || echo "$0")")/zdev-doctor" "$@"
         ;;
     run)
-        # zdev run <project> "<prompt>" [--name NAME] [--switch]
-        #                               [--until CHECK] [--max N]
+        # zdev run [--supervised] [--] <project> "<prompt>" [--name NAME]
+        #          [--switch] [--until CHECK] [--max N]
         #
         # The ACTUATOR (DIRECTION / agent operations plane, phase 1a): spawn a
         # SUPERVISED agent loop in <project> — ensure the session, open a new
@@ -1574,6 +1661,14 @@ CLAUDEEOF
         # zdev to supervise (sidebar/triage/death detection as usual). Every
         # trigger (GitHub/Slack/cron) and every MCP client ultimately calls
         # this. Background by default (no focus steal); --switch to jump to it.
+        #
+        # --supervised (MCP contract): do NOT pass
+        # --dangerously-skip-permissions to claude — a supervised run keeps
+        # the permission prompts so the operator stays in the loop. An
+        # operator-typed `zdev run` WITHOUT the flag keeps today's
+        # skip-permissions behavior. `--` ends option parsing so a project
+        # or prompt beginning with a dash is never mistaken for a flag; the
+        # MCP invokes `zdev run --supervised -- <project> <prompt>`.
         #
         # --until CHECK (loop-layer, docs/design/loop-layer.md): run the
         # window under zdev-loop instead of bare claude — a check-gated
@@ -1587,10 +1682,13 @@ CLAUDEEOF
         run_until=""
         run_resume=0
         run_pickup=0
+        run_supervised=0
         run_max=10
         run_args=()
         while [[ $# -gt 0 ]]; do
             case "$1" in
+                --)       shift; while [[ $# -gt 0 ]]; do run_args+=("$1"); shift; done; break ;;
+                --supervised) run_supervised=1; shift ;;
                 --name)   run_name="$2"; shift 2 ;;
                 --name=*) run_name="${1#*=}"; shift ;;
                 --switch) run_switch=1; shift ;;
@@ -1630,9 +1728,13 @@ CLAUDEEOF
         fi
         # Launch claude seeded with the prompt in a login shell so PATH is
         # populated (hook/popup contexts strip it), passed DIRECTLY to
-        # new-window to avoid the send-keys race (see build_layout). Triggered
-        # loops run unattended → --dangerously-skip-permissions. The prompt may
-        # be a slash command (e.g. "/rigorous-review #1234").
+        # new-window to avoid the send-keys race (see build_layout). An
+        # operator-typed run defaults to --dangerously-skip-permissions
+        # (unattended); --supervised drops it so a supervised run keeps the
+        # permission prompts. The prompt may be a slash command (e.g.
+        # "/rigorous-review #1234").
+        run_skip_perms="--dangerously-skip-permissions "
+        (( run_supervised )) && run_skip_perms=""
         if [[ -n "$run_until" ]]; then
             # Loop mode: zdev-loop owns the turn/check/strike cycle; the
             # pane shows its narration and the fleet supervises it like
@@ -1644,7 +1746,7 @@ CLAUDEEOF
             (( run_pickup )) && run_pickup_env="ZDEV_LOOP_PICKUP=interactive "
             run_inner="${run_pickup_env}zdev-loop ${run_resume_flag}$(printf '%q' "$run_dir") $(printf '%q' "$run_until") $(printf '%q' "$run_max") $(printf '%q' "$run_prompt"); exec ${SHELL:-/bin/sh} -i"
         else
-            run_inner="if command -v claude >/dev/null 2>&1; then exec claude --dangerously-skip-permissions $(printf '%q' "$run_prompt"); fi; echo 'zdev run: claude not found on PATH' >&2; exec ${SHELL:-/bin/sh} -i"
+            run_inner="if command -v claude >/dev/null 2>&1; then exec claude ${run_skip_perms}$(printf '%q' "$run_prompt"); fi; echo 'zdev run: claude not found on PATH' >&2; exec ${SHELL:-/bin/sh} -i"
         fi
         run_launch="${SHELL:-/bin/sh} -lic $(printf '%q' "$run_inner")"
         run_win=$(tmux new-window -d -t "=$run_session" -c "$run_dir" -n "$run_name" \
