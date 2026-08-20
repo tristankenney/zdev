@@ -1,0 +1,22 @@
+# Security-sensitive paths, gated for when this repo turns on branch
+# protection. See CONTRIBUTING.md's "Security & trust" section: cloning
+# this repo auto-runs the tracked .claude/settings.json hooks, and
+# install.sh symlinks bin/ onto PATH with launchd pointing straight into
+# the checkout — a branch here is effectively code that will run
+# unattended on someone's machine, not just a diff to read. Everything
+# below requires review before it can merge once protection is on;
+# unlisted paths still get reviewed by convention, they just aren't
+# enforced yet.
+
+/.claude/            @tristankenney
+/bin/                 @tristankenney
+/install.sh           @tristankenney
+/zdevd/launchd/       @tristankenney
+/.github/             @tristankenney
+
+# Test fixtures: golden/recorded data a reviewer can't diff by reading
+# it (captured session transcripts, tmux control-mode traces, notify
+# payloads) — a poisoned fixture is a quiet way to smuggle behavior
+# through a test that "still passes".
+**/testdata/          @tristankenney
+**/*.fixture.json     @tristankenney
