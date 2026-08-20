@@ -130,6 +130,19 @@ func IsDefaultShell(cmd string) bool {
 // Empty string returns StatusAlive (not StatusAbsent — absence is a
 // session-level property, applied in hub/state.go's deriveStatus when
 // len(panes) == 0).
+//
+// TRUST NOTE (M2b): a pane title is attacker-controlled — anything running in
+// the pane can set it, so a hostile process can forge the "✳ <task>" waiting
+// marker and make this classifier report StatusWaiting. This function stays a
+// pure, correct byte-exact classifier by design; the anti-abuse defense is not
+// here but in the hub, where notifications are gated by the per-session tier
+// bitmap (pd.WaitNotifiedTiers): a given wait notifies at most once per
+// escalation tier, never once per derivation pass. That bitmap already bounds
+// a forged title to one wait's worth of tiered escalation — it cannot produce
+// a notification storm. Fully distinguishing a forged title from a genuine
+// agent wait needs an authenticated signal (the hook channel already carries
+// one via NotifSeen; a pane-title nonce is the tracked follow-up) and cannot
+// be decided from the title string alone.
 func ClassifyPaneTitle(title string) string {
 	switch {
 	// New Claude Code v2.1+ format.
