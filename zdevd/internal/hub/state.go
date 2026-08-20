@@ -31,6 +31,7 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
+	"github.com/tristankenney/zdev/zdevd/internal/render"
 	"github.com/tristankenney/zdev/zdevd/internal/teams"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
@@ -1115,6 +1116,13 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// preserves the original wait-start time across repeated fires but
 		// refreshes the kind line, so a wait that escalates from an idle
 		// notification to a permission prompt re-classifies mid-cycle.
+		//
+		// M1 trust boundary: e.Summary is agent-authored text from the hook
+		// payload and flows into WaitSummary/DeadReason, both of which render
+		// verbatim in the operator's sidebar, persist to zdevd-state.json, and
+		// push to the phone. Scrub terminal control bytes (ESC/CSI/OSC/CR/BEL)
+		// here at ingestion so every downstream consumer inherits a safe value.
+		e.Summary = render.SanitizeLine(e.Summary)
 		pd := s.projectData[e.Session]
 		switch {
 		case e.Kind == proto.WaitKindDead:
@@ -1403,7 +1411,12 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// applyEvent must never trust that as its ONLY guard — a future
 		// caller that skips SubmitPark (a test, a different socket verb)
 		// must not be able to park a blank line.
-		text := strings.TrimSpace(e.Text)
+		//
+		// M1 trust boundary: park text is MCP-set (via zdev_park) and renders
+		// verbatim in the held-set popup, persists, and pushes — scrub terminal
+		// control bytes before trimming so an ESC/OSC-laced thought can't reach
+		// the operator's terminal.
+		text := strings.TrimSpace(render.SanitizeLine(e.Text))
 		if text == "" {
 			return
 		}
@@ -1419,10 +1432,15 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		// depth: Hub.SubmitAnchorSet already trims and rejects an empty
 		// title on the caller's goroutine, but applyEvent must never trust
 		// that as its only guard — same discipline as ParkText.
-		title := strings.TrimSpace(e.Title)
+		//
+		// M1 trust boundary: the anchor title and project are MCP-set (via
+		// zdev_anchor_set) and render verbatim in the sidebar's anchor banner,
+		// persist, and push — scrub terminal control bytes on both before use.
+		title := strings.TrimSpace(render.SanitizeLine(e.Title))
 		if title == "" {
 			return
 		}
+		e.Project = render.SanitizeLine(e.Project)
 		// Arm the finish-boundary only if the project is not ALREADY
 		// finished (edge semantics — see anchorFinishArmed).
 		s.anchorFinishArmed = true
