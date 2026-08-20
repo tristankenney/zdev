@@ -377,6 +377,49 @@ the escape hatch (default on, since the row is inert on a healthy fleet).
   site — the thresholds were never tuned against a real degraded daemon,
   only against the fixtures.
 
+### ✅ 21. Security hardening for team distribution *(2026-08-20)*
+Ahead of first distribution beyond the author, a read-only audit (four
+parallel auditors + a Codex adversarial pass) enumerated the trust-boundary
+multiplication that N laptops running agents over untrusted repo code
+introduces. The code-fix blockers landed as four file-disjoint worktrees:
+- **MCP control plane** (`mcp.go`): the `run` tool (spawned
+  `--dangerously-skip-permissions` agents fleet-wide, unauthenticated) is
+  split into read-only tools served by default and actuators gated behind
+  `ZDEV_MCP_ACTUATE=1`; the MCP-initiated run path is `run --supervised --`
+  (no gate-disabling; `--` stops option parsing); `mcp --http` now requires
+  a bearer token (`ZDEV_MCP_TOKEN` or a generated 0600 file), rejects
+  non-loopback Origin / non-JSON content-type, and refuses a non-loopback
+  bind without `--insecure-bind`.
+- **Trust-boundary sanitizer** (`hub/state.go` + `render/sanitize.go`):
+  control bytes (ESC/CR/OSC/…) stripped from agent- and MCP-supplied text
+  at hub ingestion, so the sidebar/persist/push all inherit clean values —
+  killing the OSC-52 clipboard-write and row-forgery vectors. Notif reads
+  gain a size cap + timestamp clamp; the socket refuses to bind a dir it
+  doesn't own at 0700 (hub-invariants review: CONFIRMED-safe).
+- **Reaper / broadcast / kill** (`bin/zdev`, `bin/zdev-broadcast-claude`):
+  the reaper now only kills zdev-OWNED sessions and is default-OFF
+  (`ZDEV_REAP_ENABLED`, `--dry-run`); broadcast targets on daemon
+  attribution (never a spoofable title alone, never every server pane) with
+  the exact daemon Braille rule, and auto-submit is an explicit `--submit`
+  with a TTY/`--yes` gate (the in-band `!!` escape is gone); exact-match
+  kill targets; plist PATH puts system dirs first.
+- **In-product security self-check** (`zdev-doctor`): a `Security` section
+  auditing socket/state perms, notify-channel hygiene, remote-push
+  disclosure, MCP exposure, actuator + reaper posture, install integrity,
+  PATH shadowing, registry integrity, and a live control-byte scan — plus
+  a secret-scan `pull_request` trigger, `CODEOWNERS`, and a CONTRIBUTING
+  trust note.
+- **Kill (live):** the doctor Security section is the standing check; if a
+  finding it raises goes unactioned across a release, the check has become
+  noise and needs its threshold or wording tightened, not muted.
+- **DEFERRED to operator decision (NOT code):** repo→org move + branch
+  protection + required review; the install symlink→copy rework (changes
+  the maintainer's own dogfood loop); and the public-repo internal-
+  identifier scrub — all gated on one upstream call: does the repo stay
+  public or go org-private? Also flagged live: `~/.config/zdev/env` points
+  at a public ntfy.sh topic with no token (project/stream names + death
+  reasons leave the machine) — operator to scrub.
+
 ---
 
 ## NEXT (~6 weeks)
