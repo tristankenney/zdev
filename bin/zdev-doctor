@@ -347,7 +347,432 @@ if [[ -d "$nd" && -w "$nd" ]]; then ok "notify channel dir writable ($nd)"; else
   warn "notify channel dir missing/unwritable ($nd) — daemon creates it; is the daemon up?"
 fi
 
-# ---------- 6. live probe (opt-in) ----------
+# ---------- 6. security ----------
+sect "Security"
+
+# Shared stat helpers: OS-portable owner uid / permission bits of ONE path.
+# Never dereference symlinks — callers check symlink-ness themselves first,
+# so a swapped target never silently passes as "the real thing, just fine".
+_sec_uid_of() {
+  if [[ "$OS" == "Linux" ]]; then stat -c '%u' "$1" 2>/dev/null; else stat -f '%u' "$1" 2>/dev/null; fi
+}
+_sec_mode_of() {
+  if [[ "$OS" == "Linux" ]]; then stat -c '%a' "$1" 2>/dev/null; else stat -f '%Lp' "$1" 2>/dev/null; fi
+}
+_sec_resolve() { readlink -f "$1" 2>/dev/null || readlink "$1" 2>/dev/null || printf '%s' "$1"; }
+my_uid=$(id -u)
+
+# _sec_check_entry path want-octal label — bad on symlink or foreign owner,
+# warn on any group/world bit set, silent (not "ok"-worthy noise) when the
+# path is simply absent: a stopped daemon leaves nothing to audit here, and
+# the Daemon section above already says so loudly.
+_sec_check_entry() {
+  local path="$1" want="$2" label="$3"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then return 0; fi
+  if [[ -L "$path" ]]; then
+    bad "$label is a SYMLINK ($path -> $(readlink "$path" 2>/dev/null)) — a swapped target could redirect zdev's runtime state"
+    fix "rm '$path' && restart zdevd so it recreates a real one"
+    return 0
+  fi
+  local uid; uid=$(_sec_uid_of "$path")
+  if [[ -n "$uid" && "$uid" != "$my_uid" ]]; then
+    bad "$label ($path) is owned by uid $uid, not you (uid $my_uid)"
+    fix "investigate — this path should only ever be owned by the user running zdevd"
+    return 0
+  fi
+  local mode; mode=$(_sec_mode_of "$path")
+  if [[ -n "$mode" ]]; then
+    if (( ($(( 8#$mode )) & 8#077) != 0 )); then
+      warn "$label ($path) mode is 0$mode, wider than 0$want"
+      fix "chmod $want '$path'"
+    else
+      ok "$label perms OK ($path)"
+    fi
+  fi
+}
+
+# 1. Socket & state perms — same path composition zdevd/internal/platform
+# resolves (paths.go / paths_darwin.go / paths_linux.go), reimplemented in
+# bash: shelling to zdevd just to print its own paths is its own attack
+# surface, and these paths are pure string composition, not disk state.
+if [[ "$OS" == "Linux" ]]; then
+  _sec_data_dir="${XDG_STATE_HOME:-$HOME/.local/state}/zdev"
+  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    _sec_runtime_dir="$XDG_RUNTIME_DIR/zdev"
+  else
+    _sec_runtime_dir="${TMPDIR:-/tmp}/zdev-$my_uid"
+  fi
+else
+  _sec_data_dir="$HOME/Library/Application Support/zdev"
+  _sec_runtime_dir="$_sec_data_dir"
+fi
+_sec_socket="${ZDEVD_SOCKET:-$_sec_runtime_dir/zdevd.sock}"
+_sec_state="$_sec_data_dir/zdevd-state.json"
+
+_sec_check_entry "$_sec_runtime_dir" 700 "daemon runtime dir"
+if [[ "$_sec_runtime_dir" != "$_sec_data_dir" ]]; then
+  _sec_check_entry "$_sec_data_dir" 700 "daemon data dir"
+fi
+_sec_check_entry "$_sec_socket" 600 "daemon socket"
+_sec_check_entry "$_sec_state" 600 "daemon state file"
+
+# 2. Notify-channel hygiene — the drop dir zdev-notify writes wait-tokens
+# into (bin/zdev-notify, internal/hub consumes them). A world-readable or
+# foreign-owned entry here means someone else can read — or forge — your
+# agents' wait/finish/death events.
+if [[ -z "${TMPDIR:-}" ]]; then
+  warn "notify channel falls back to /tmp (TMPDIR unset) — a shared, world-readable directory on multi-user boxes"
+  fix "export TMPDIR (per-user private tmp) in your shell profile"
+fi
+_sec_check_entry "$nd" 700 "notify channel dir"
+if [[ -d "$nd" ]]; then
+  for f in "$nd"/*.ts; do
+    [[ -e "$f" || -L "$f" ]] || continue
+    if [[ -L "$f" ]]; then
+      bad "notify channel has a SYMLINK token ($f -> $(readlink "$f" 2>/dev/null))"
+      continue
+    fi
+    if [[ ! -f "$f" ]]; then
+      bad "notify channel has a non-regular entry ($f)"
+      continue
+    fi
+    fuid=$(_sec_uid_of "$f")
+    if [[ -n "$fuid" && "$fuid" != "$my_uid" ]]; then
+      bad "notify channel token $f is owned by uid $fuid, not you — someone else may be holding your notify channel"
+      continue
+    fi
+    fmode=$(_sec_mode_of "$f")
+    if [[ -n "$fmode" ]] && (( ($(( 8#$fmode )) & 8#077) != 0 )); then
+      warn "notify token $f is group/world-readable (mode 0$fmode)"
+      fix "chmod 600 '$f'"
+    fi
+  done
+fi
+
+# 3. Remote-push disclosure — ZDEV_NOTIFY_CMD/ZDEV_NOTIFY_CMDS fan out to
+# whatever the operator wired (bin/zdev-notify-ntfy, -pushover, or a raw
+# script); zdevd deliberately never learns what they do (5-dep / zero-
+# network ethos, internal/hub/notifier.go), which is exactly why doctor has
+# to say it in plain words before a teammate copies this config blind.
+_sec_entries=()
+if [[ -n "${ZDEV_NOTIFY_CMDS:-}" ]]; then
+  while IFS= read -r _line; do
+    _line="${_line#"${_line%%[![:space:]]*}"}"; _line="${_line%"${_line##*[![:space:]]}"}"
+    [[ -z "$_line" || "$_line" == "desktop" ]] && continue
+    _sec_entries+=("$_line")
+  done <<< "$ZDEV_NOTIFY_CMDS"
+  if [[ -n "${ZDEV_NOTIFY_CMD:-}" ]]; then
+    _sec_entries=("$ZDEV_NOTIFY_CMD" "${_sec_entries[@]}")
+  fi
+elif [[ -n "${ZDEV_NOTIFY_CMD:-}" ]]; then
+  _sec_entries=("$ZDEV_NOTIFY_CMD")
+fi
+_sec_remote_found=0
+for _e in ${_sec_entries[@]+"${_sec_entries[@]}"}; do
+  case "$_e" in
+    *zdev-notify-ntfy*)
+      _sec_remote_found=1
+      _url="${ZDEV_NTFY_URL:-}"
+      if [[ -z "$_url" ]]; then
+        ok "ntfy adapter referenced but ZDEV_NTFY_URL unset — fails closed, nothing sent"
+        continue
+      fi
+      _host="${_url#*://}"; _host="${_host%%/*}"; _host="${_host%%:*}"
+      printf '      %sproject/initiative/stream names and agent death reasons are POSTed to %s (via zdev-notify-ntfy, configured in %s)%s\n' "$C_DIM" "$_host" "$_zdev_env" "$C_RST"
+      if [[ "$_host" == "ntfy.sh" ]]; then
+        bad "ZDEV_NTFY_URL points at the PUBLIC ntfy.sh — anyone who guesses/finds the topic reads your fleet's activity"
+        fix "self-host ntfy, or accept the exposure and treat the topic name as a secret"
+      elif [[ -z "${ZDEV_NTFY_TOKEN:-}" ]]; then
+        bad "ZDEV_NTFY_URL is set with no ZDEV_NTFY_TOKEN — the endpoint has no access control at all"
+        fix "set ZDEV_NTFY_TOKEN in $_zdev_env, or lock the topic down another way"
+      else
+        warn "ntfy endpoint ($_host) is a non-loopback push target — device push always leaves the machine"
+      fi
+      ;;
+    *zdev-notify-pushover*)
+      _sec_remote_found=1
+      if [[ -n "${ZDEV_PUSHOVER_TOKEN:-}" && -n "${ZDEV_PUSHOVER_USER:-}" ]]; then
+        printf '      %sproject/initiative/stream names and agent death reasons are POSTed to api.pushover.net (via zdev-notify-pushover, configured in %s)%s\n' "$C_DIM" "$_zdev_env" "$C_RST"
+        warn "pushover endpoint (api.pushover.net) is a non-loopback push target — device push always leaves the machine"
+      else
+        ok "pushover adapter referenced but incomplete config — fails closed, nothing sent"
+      fi
+      ;;
+    *://*)
+      _sec_remote_found=1
+      _host="${_e#*://}"; _host="${_host%%/*}"; _host="${_host%%[[:space:]]*}"; _host="${_host%%:*}"
+      printf '      %sproject/initiative/stream names and agent death reasons are POSTed to %s (from a raw URL in %s)%s\n' "$C_DIM" "$_host" "$_zdev_env" "$C_RST"
+      warn "notify command embeds a URL ($_host) — confirm it's a destination you trust"
+      ;;
+  esac
+done
+if [[ "$_sec_remote_found" -eq 0 ]]; then
+  ok "no remote push adapter configured — notifications stay local"
+fi
+
+# 4. MCP exposure — `zdevd mcp --http` (zdevd/cmd/zdevd/mcp.go) is the
+# agent-operations control plane: fleet_status/triage/review/run/park/
+# anchor/held over one POST endpoint, no auth of any kind in the handler.
+_sec_mcp_pids=$(pgrep -f 'zdevd mcp' 2>/dev/null || true)
+_sec_mcp_http_args=""
+for _pid in $_sec_mcp_pids; do
+  _args=$(ps -o args= -p "$_pid" 2>/dev/null || true)
+  case "$_args" in *--http*) _sec_mcp_http_args="$_args" ;; esac
+done
+if [[ -z "$_sec_mcp_http_args" ]]; then
+  ok "no zdevd mcp --http process running"
+else
+  _sec_mcp_addr=$(printf '%s\n' "$_sec_mcp_http_args" | sed -n 's/.*--http[=[:space:]]*\([^[:space:]]*\).*/\1/p')
+  case "$_sec_mcp_addr" in
+    127.0.0.1:*|localhost:*|\[::1\]:*) ;;
+    *)
+      bad "zdevd mcp --http is bound to a NON-loopback address ($_sec_mcp_addr) — reachable from other hosts on the network"
+      fix "bind to 127.0.0.1:<port>, or firewall the port"
+      ;;
+  esac
+  bad "zdevd mcp --http ($_sec_mcp_addr) has no auth — ZDEV_MCP_TOKEN has no enforcement path in zdevd today, and the 'run' tool (spawns agents) is exposed unconditionally to any client that reaches it"
+  fix "treat --http as trusted-network-only (loopback/tailnet) until token auth ships"
+  if [[ "${ZDEV_MCP_ACTUATE:-0}" == "1" ]]; then
+    warn "ZDEV_MCP_ACTUATE=1 is set — reminder: zdevd does not yet gate 'run' on this var, so actuation already fires regardless"
+  fi
+fi
+
+# 5. Actuator posture — one line making blast radius visible (bin/zdev's
+# `run` verb and the MCP 'run' tool both funnel here; see check 4).
+_sec_proj_count=""
+if command -v jq >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/zdev-show" ]]; then
+  _sec_proj_count=$("$HOME/.local/bin/zdev-show" list --json 2>/dev/null | jq 'length' 2>/dev/null)
+fi
+if [[ -z "$_sec_proj_count" && -x "$HOME/.local/bin/zdev" ]]; then
+  _sec_proj_count=$("$HOME/.local/bin/zdev" --list-projects 2>/dev/null | grep -c . || true)
+fi
+if [[ -n "$_sec_proj_count" && "$_sec_proj_count" != "0" ]]; then
+  warn "zdev run spawns claude with --dangerously-skip-permissions in any of $_sec_proj_count configured project(s) — full blast radius, no per-call approval"
+else
+  warn "zdev run spawns claude with --dangerously-skip-permissions — project count unavailable to size blast radius (daemon down?)"
+fi
+
+# 6. Reaper posture — the idle-session GC (launchd/systemd timer -> `zdev
+# reap`, bin/zdev do_reap). Read the SAME env var the code defaults so
+# this can't drift from bin/zdev's own fallback.
+_sec_reap_hours="${ZDEV_REAP_AFTER_HOURS:-8}"
+_sec_reap_interval="1h"
+_sec_reap_enabled=0
+if [[ "$OS" == "Linux" ]]; then
+  systemctl --user is-enabled zdev-reaper.timer >/dev/null 2>&1 && _sec_reap_enabled=1
+  _sec_timer_file="$HOME/.config/systemd/user/zdev-reaper.timer"
+  if [[ -f "$_sec_timer_file" ]]; then
+    _iv=$(sed -n 's/^OnUnitActiveSec=//p' "$_sec_timer_file" | head -1)
+    [[ -n "$_iv" ]] && _sec_reap_interval="$_iv"
+  fi
+else
+  launchctl print "gui/$my_uid/com.zdev.reaper" >/dev/null 2>&1 && _sec_reap_enabled=1
+  _sec_reaper_plist="$HOME/Library/LaunchAgents/com.zdev.reaper.plist"
+  if [[ -f "$_sec_reaper_plist" ]]; then
+    _iv=$(awk '/<key>StartInterval<\/key>/{getline; gsub(/[^0-9]/,""); print; exit}' "$_sec_reaper_plist")
+    [[ -n "$_iv" ]] && _sec_reap_interval="${_iv}s"
+  fi
+fi
+_sec_zdev_bin="$HOME/.local/bin/zdev"
+_sec_has_dryrun=0
+[[ -f "$_sec_zdev_bin" ]] && grep -q -- '--dry-run' "$_sec_zdev_bin" 2>/dev/null && _sec_has_dryrun=1
+if [[ "$_sec_reap_enabled" -eq 1 ]]; then
+  if [[ "$_sec_has_dryrun" -eq 1 ]]; then
+    ok "reaper enabled — idle threshold ${_sec_reap_hours}h, runs every $_sec_reap_interval"
+    _sec_dry=$("$_sec_zdev_bin" reap --dry-run 2>&1) || true
+    [[ -n "$_sec_dry" ]] && printf '%s\n' "$_sec_dry" | sed 's/^/      /'
+  else
+    ok "reaper enabled — idle threshold ${_sec_reap_hours}h, runs every $_sec_reap_interval (no 'reap --dry-run' yet — future enhancement to preview kills before they happen)"
+  fi
+else
+  warn "reaper NOT enabled (no launchd/systemd job loaded) — idle sessions accumulate forever; configured threshold is ${_sec_reap_hours}h / $_sec_reap_interval"
+  fix "make -C <zdev-repo>/zdevd install-launchd (or the systemd equivalent) to load the reaper job"
+fi
+
+# 7. Install integrity — a branch checkout backing ~/.local/bin or a
+# launchd job is effectively code that runs on this machine unattended.
+_sec_git_state() {
+  local root="$1"
+  if [[ -n "$(git -C "$root" status --porcelain 2>/dev/null)" ]]; then
+    printf 'dirty'
+    return
+  fi
+  local ahead
+  ahead=$(git -C "$root" rev-list --count '@{upstream}..HEAD' 2>/dev/null) || ahead=""
+  if [[ -n "$ahead" && "$ahead" != "0" ]]; then
+    printf 'clean, %s ahead of upstream' "$ahead"
+  else
+    printf 'clean'
+  fi
+}
+_sec_bin_root=""
+for b in zdevd zdev-show zdev-sidebar-render zdev-notify zdev; do
+  _p="$HOME/.local/bin/$b"
+  [[ -L "$_p" ]] || continue
+  _t=$(_sec_resolve "$_p")
+  _root=$(git -C "$(dirname "$_t")" rev-parse --show-toplevel 2>/dev/null) || continue
+  [[ -n "$_root" ]] && _sec_bin_root="$_root" && break
+done
+if [[ -n "$_sec_bin_root" ]]; then
+  warn "\$HOME/.local/bin/{zdevd,zdev,...} are symlinks into a git checkout ($_sec_bin_root, $(_sec_git_state "$_sec_bin_root")) — a branch checked out there is effectively code that will run"
+fi
+if [[ "$OS" != "Linux" ]]; then
+  for _lbl in com.zdev.zdevd com.zdev.reaper; do
+    _plist="$HOME/Library/LaunchAgents/$_lbl.plist"
+    [[ -L "$_plist" ]] || continue
+    _target=$(_sec_resolve "$_plist")
+    _root=$(git -C "$(dirname "$_target")" rev-parse --show-toplevel 2>/dev/null)
+    if [[ -z "$_root" ]]; then
+      warn "$_lbl.plist target is not inside a git checkout ($_target)"
+      continue
+    fi
+    _state=$(_sec_git_state "$_root")
+    case "$_state" in
+      dirty)
+        bad "$_lbl (launchd job) points into a DIRTY checkout ($_root) — what's running may not match any reviewed commit"
+        fix "commit or stash changes in $_root, then: launchctl kickstart -k gui/\$(id -u)/$_lbl"
+        ;;
+      "clean, "*)
+        warn "$_lbl (launchd job) checkout ($_root) is $_state"
+        ;;
+      *)
+        ok "$_lbl backs a clean, up-to-date checkout ($_root)"
+        ;;
+    esac
+    if ! git -C "$_root" check-ignore -q "$_target" 2>/dev/null; then
+      warn "$_lbl.plist target ($_target) is not gitignored in $_root — unexpected for a generated file"
+    fi
+  done
+fi
+
+# 8. PATH shadowing — anything ahead of /usr/bin in the daemon/reaper
+# plists' own PATH is on the hook for every exec they make (tmux, git,
+# jq, docker chief among them).
+if [[ "$OS" != "Linux" ]]; then
+  _sec_plist_path_of() {
+    awk '/<key>PATH<\/key>/{getline; print}' "$1" 2>/dev/null | sed -e 's/.*<string>//' -e 's/<\/string>.*//'
+  }
+  for _lbl in com.zdev.zdevd com.zdev.reaper; do
+    _plist="$HOME/Library/LaunchAgents/$_lbl.plist"
+    [[ -f "$_plist" || -L "$_plist" ]] || continue
+    _pathval=$(_sec_plist_path_of "$_plist")
+    [[ -z "$_pathval" ]] && continue
+    _sec_ahead=()
+    IFS=':' read -ra _sec_parts <<< "$_pathval"
+    for _seg in "${_sec_parts[@]}"; do
+      case "$_seg" in
+        /usr/bin|/bin) break ;;
+        *) _sec_ahead+=("$_seg") ;;
+      esac
+    done
+    for _seg in ${_sec_ahead[@]+"${_sec_ahead[@]}"}; do
+      [[ -d "$_seg" ]] || continue
+      _segmode=$(_sec_mode_of "$_seg")
+      if [[ -n "$_segmode" ]] && (( ($(( 8#$_segmode )) & 8#022) != 0 )); then
+        warn "$_lbl's PATH entry $_seg (ahead of /usr/bin) is group/world-writable — a write there could hijack what the daemon execs"
+      fi
+    done
+    for _tool in tmux git jq docker; do
+      _resolved=$(PATH="$_pathval" command -v "$_tool" 2>/dev/null || true)
+      case "$_resolved" in
+        ""|/usr/bin/*|/bin/*|/usr/sbin/*|/sbin/*) ;;
+        *) warn "$_lbl's PATH resolves '$_tool' to $_resolved — outside a system prefix" ;;
+      esac
+    done
+  done
+fi
+
+# 9. Registry integrity — bin/zdev's dedup/skip checks lean on
+# space-padded substring tests (` "$seen" == *" $p "* `). A name
+# containing whitespace — or one that is itself a space-delimited
+# substring of another registry name — breaks that idiom and silently
+# suppresses a row.
+_sec_names=()
+if command -v jq >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/zdev-show" ]]; then
+  while IFS= read -r _n; do
+    [[ -n "$_n" ]] && _sec_names+=("$_n")
+  done < <("$HOME/.local/bin/zdev-show" list --json 2>/dev/null | jq -r '.[].name' 2>/dev/null)
+fi
+if [[ "${ZDEV_PROJECTS_DISCOVER:-0}" == "1" && -d "$ws" ]]; then
+  for _d in "$ws"/*/ "$ws"/*/*/; do
+    [[ -d "$_d" ]] || continue
+    _b="${_d%/}"; _b="${_b##*/}"
+    [[ "$_b" == .* ]] && continue
+    _sec_names+=("$_b")
+  done
+fi
+_sec_ws_warn=0
+for _n in ${_sec_names[@]+"${_sec_names[@]}"}; do
+  case "$_n" in
+    *[[:space:]]*)
+      warn "discovery candidate/project name contains whitespace: \"$_n\" — breaks zdev's space-delimited membership checks"
+      _sec_ws_warn=$((_sec_ws_warn+1))
+      ;;
+  esac
+done
+_sec_n_count=${#_sec_names[@]}
+if [[ "$_sec_n_count" -gt 0 && "$_sec_n_count" -le 400 ]]; then
+  _sec_sub_warn=0
+  for ((_sec_i=0; _sec_i<_sec_n_count; _sec_i++)); do
+    for ((_sec_j=0; _sec_j<_sec_n_count; _sec_j++)); do
+      [[ "$_sec_i" -eq "$_sec_j" ]] && continue
+      _sec_a="${_sec_names[_sec_i]}"; _sec_b="${_sec_names[_sec_j]}"
+      [[ "$_sec_a" == "$_sec_b" ]] && continue
+      case " $_sec_b " in
+        *" $_sec_a "*)
+          warn "\"$_sec_a\" is a space-delimited substring of \"$_sec_b\" — the row-suppression bug (bin/zdev's ' \$seen ' membership check treats $_sec_a as already-shown once $_sec_b is)"
+          _sec_sub_warn=$((_sec_sub_warn+1))
+          ;;
+      esac
+    done
+  done
+  if [[ "$_sec_sub_warn" -eq 0 && "$_sec_ws_warn" -eq 0 ]]; then
+    ok "registry: no whitespace-in-name or space-delimited-substring collisions among $_sec_n_count candidate(s)"
+  fi
+elif [[ "$_sec_n_count" -eq 0 ]]; then
+  warn "registry integrity check skipped — no names available (daemon down and discovery off/unreachable)"
+fi
+
+# 10. Control-byte scan — a hostile or confused agent can write ANSI
+# escapes into its own wait/anchor/held titles; zdev-show and the sidebar
+# print these close to verbatim, so a raw ESC there is a terminal-
+# injection vector, not just cosmetic noise. C0 controls (minus tab/CR/LF,
+# which are ordinary formatting) are unambiguous over raw bytes; true
+# single-byte C1 (0x80-0x9F) is NOT scanned here because it is
+# indistinguishable from a legitimate UTF-8 continuation byte without a
+# full decode, and a byte-range false positive on someone's emoji title is
+# worse than the coverage gap.
+_sec_ctrl_pattern=$'[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]'
+_sec_ctrl_check() {
+  local label="$1" text="$2"
+  [[ -z "$text" ]] && return 0
+  if printf '%s' "$text" | LC_ALL=C grep -qE "$_sec_ctrl_pattern" 2>/dev/null; then
+    local clean
+    clean=$(printf '%s' "$text" | LC_ALL=C sed -E "s/$_sec_ctrl_pattern/¿/g")
+    bad "$label contains control bytes (C0/ESC) — could inject terminal escapes when rendered: $clean"
+    return 1
+  fi
+  return 0
+}
+_sec_ctrl_found=0
+if command -v jq >/dev/null 2>&1 && [[ -x "$HOME/.local/bin/zdev-show" ]]; then
+  while IFS=$'\t' read -r _name _summary; do
+    [[ -z "$_name" ]] && continue
+    _sec_ctrl_check "project $_name's wait summary" "$_summary" || _sec_ctrl_found=1
+  done < <("$HOME/.local/bin/zdev-show" list --json 2>/dev/null | jq -r '.[] | [.name, (.summary // "")] | @tsv' 2>/dev/null)
+  _sec_held_json=$("$HOME/.local/bin/zdev-show" held --json 2>/dev/null)
+  if [[ -n "$_sec_held_json" ]]; then
+    _sec_anchor_title=$(printf '%s' "$_sec_held_json" | jq -r '.anchor.title // ""' 2>/dev/null)
+    _sec_ctrl_check "the anchor title" "$_sec_anchor_title" || _sec_ctrl_found=1
+    while IFS= read -r _sec_htitle; do
+      [[ -z "$_sec_htitle" ]] && continue
+      _sec_ctrl_check "a held item title" "$_sec_htitle" || _sec_ctrl_found=1
+    done < <(printf '%s' "$_sec_held_json" | jq -r '.held[].title' 2>/dev/null)
+  fi
+fi
+[[ "$_sec_ctrl_found" -eq 0 ]] && ok "no control bytes found in live wait summaries / anchor / held titles"
+
+# ---------- 7. live probe (opt-in) ----------
 if [[ "$PROBE" -eq 1 ]]; then
   sect "Live probe (synthetic agent wait → triage)"
   if [[ -z "${TMUX:-}" ]]; then
