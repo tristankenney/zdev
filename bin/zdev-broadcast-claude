@@ -17,12 +17,21 @@
 # MarkerWaiting/Finished/ShellRunning, the new ✳ format, and the Braille/
 # quadrant spinner ranges) instead of a handful of literal strings.
 #
-# Scope (2026-08-20): with no path arguments, targets every claude pane
-# fleet-wide (original behavior — nothing below changes that default).
-# Pass one or more project paths (same spelling as `zdev <path>` —
-# an initiative, an initiative/stream, or a full initiative/stream/repo)
-# to scope the broadcast to just those sessions instead — e.g.
-# coordinating two streams on a requirement that touches both:
+# Ownership (2026-08-20 security fix): a pane is only ever a target when
+# its session is one zdev OWNS — i.e. maps to a registered project via
+# `zdev --list-projects`. This holds EVEN unscoped: "unscoped" means every
+# OWNED claude pane, never literally every pane on the tmux server. Before
+# this, an unscoped broadcast matched by title alone across the whole
+# server, so a plain shell pane holding prod creds — whose prompt glyph the
+# old Braille glob wrongly matched — was a live target. Targeting now rests
+# on daemon-style attribution (registry ownership + the title classifier),
+# not a title match alone. If the registry is unavailable, ownership can't
+# be proven and the tool targets NOTHING (fails closed, with a warning).
+#
+# Scope: with no path arguments, targets every owned claude pane. Pass one
+# or more project paths (same spelling as `zdev <path>` — an initiative, an
+# initiative/stream, or a full initiative/stream/repo) to narrow to just
+# those sessions — e.g. coordinating two streams on a shared requirement:
 #
 #   zdev-broadcast-claude marketplace/backend marketplace/analytics
 #
@@ -33,10 +42,14 @@
 # tmux session names collapse "/" and "-" identically, so the prefix
 # "init-backend-*" also swallowed a SIBLING stream named backend-x.
 # Registry resolution matches by project PATH, where the hierarchy is
-# unambiguous. When zdev's registry is unavailable, or a path resolves
-# to no registered project, that path falls back to the old prefix
-# match with a warning on stderr — degraded, never silently empty.
-# Multiple paths are a union.
+# unambiguous. A path resolving to no registered project keeps a prefix
+# fallback with a stderr warning, but ownership still fences it to zdev's
+# own sessions. Multiple paths are a union.
+#
+# Auto-submit: type-only by default (the message lands unsent so the human
+# can verify it in each pane); --submit auto-presses Enter. A non-TTY
+# invocation refuses unless --yes is passed. There is no in-band escape —
+# a leading '!!' is treated as literal text, not an auto-submit trigger.
 #
 # --list previews the matched panes (session names only) and exits
 # without prompting for a message or touching any pane — use it to
@@ -64,42 +77,83 @@ _is_claude_title() {
     case "$t" in
         claude) return 0 ;;
         "✳ Claude Code") return 0 ;;
-        "✳ "*) return 0 ;;   # waiting, new format
+        "✳ "*) return 0 ;;   # waiting / idle-with-task, Claude Code v2.1+
         "● "*) return 0 ;;   # waiting, legacy
         "◆ "*) return 0 ;;   # finished, legacy
         "◎ "*) return 0 ;;   # shell-running, legacy
-        "◐ "*|"◓ "*|"◑ "*|"◒ "*) return 0 ;;  # working, quadrant spinner
+        "◐ "*|"◓ "*|"◑ "*|"◒ "*) return 0 ;;  # working, quadrant spinner (U+25D0–U+25D3)
+        # Working spinner: the EXACT Braille frame set the daemon enumerates
+        # in agents.Builtin()'s claude spinner_markers, each requiring a
+        # TRAILING SPACE after the rune (tmuxctl/title.go's rune-then-space
+        # rule). Enumerated, not range-matched: bash's [a-z] glob compares
+        # BYTES, and the Braille block (⠀=E2 A0 80 …), ➜ (U+279C=E2 9E 9C)
+        # and € (U+20AC=E2 82 AC) all lead with 0xE2 — so the old
+        # `[$'⠀'-$'⣿']*` glob matched ordinary prompt glyphs and swept a
+        # plain shell holding prod creds into the broadcast. Verified.
+        "⠂ "*|"⠐ "*|"⠠ "*|"⠈ "*|"⠁ "*|"⠉ "*|"⠋ "*|"⠙ "*) return 0 ;;
+        "⠹ "*|"⠸ "*|"⠼ "*|"⠴ "*|"⠦ "*|"⠧ "*|"⠇ "*|"⠏ "*) return 0 ;;
     esac
-    # Braille Patterns block (U+2800-U+28FF) + anything — the working
-    # spinner's frame set in Claude Code v2.1+. A trailing space isn't
-    # required here (unlike title.go) since the loose superset costs
-    # nothing extra in a broadcast tool — a false positive just means an
-    # unusual title still gets treated as a claude pane.
-    if [[ "$t" == [$'⠀'-$'⣿']* ]]; then
-        return 0
-    fi
     return 1
 }
 
 list_only=0
+submit=0
+assume_yes=0
 scope_paths=()
 for arg in "$@"; do
     case "$arg" in
         --list) list_only=1 ;;
+        --submit) submit=1 ;;       # auto-press Enter in every pane (opt-in)
+        --yes|-y) assume_yes=1 ;;   # skip the interactive confirm (non-TTY)
         *) scope_paths+=("$arg") ;;
     esac
 done
+
+# The registry is the attribution basis for BOTH ownership and scoping —
+# fetched once. A pane is only ever a broadcast target when its session is
+# a session zdev OWNS (maps to a registered project); the tool never types
+# into a pane in a session it does not own, even unscoped. owned_sessions
+# is the newline-framed set of every registered project's session name.
+registry=$(zdev --list-projects 2>/dev/null || true)
+owned_sessions="
+"
+if [ -n "$registry" ]; then
+    while IFS= read -r _proj; do
+        [ -z "$_proj" ] && continue
+        owned_sessions="${owned_sessions}$(_to_session_prefix "$_proj")
+"
+    done <<REG
+$registry
+REG
+else
+    # No registry, no ownership proof — fail CLOSED (never blast every pane
+    # on the server). Warn so the operator sees WHY the result is empty
+    # rather than assuming there are no agents.
+    echo "warning: zdev registry unavailable (zdev --list-projects returned nothing) — cannot establish session ownership; refusing to target anything" >&2
+fi
+
+# A pane's session must be zdev-owned to qualify (line-anchored against the
+# newline-framed owned set — a substring test would let "backend" match
+# "x-backend").
+_session_owned() {
+    case "$owned_sessions" in
+        *"
+$1
+"*) return 0 ;;
+    esac
+    return 1
+}
 
 # Resolve scope paths to EXACT session names via the registry. For each
 # path: itself plus every registered project strictly beneath it, each
 # run through the session_name translation. scope_exact collects exact
 # names (newline-separated); scope_prefixes collects fallback prefixes
-# for paths the registry couldn't resolve.
+# for paths the registry couldn't resolve. (Ownership already fenced the
+# universe to zdev's own sessions; scope narrows within that.)
 scope_exact="
 "
 scope_prefixes=()
 if [ "${#scope_paths[@]}" -gt 0 ]; then
-    registry=$(zdev --list-projects 2>/dev/null || true)
     for _path in "${scope_paths[@]}"; do
         _hit=0
         if [ -n "$registry" ]; then
@@ -122,9 +176,10 @@ REG
     done
 fi
 
-# Empty scope = unscoped (matches everything) — the pre-scoping default.
-# Exact matching is LINE-anchored against the newline-framed scope_exact
-# list — a bare substring test would let "backend" swallow "x-backend".
+# Empty scope = every OWNED session (the pre-scoping default, now fenced by
+# ownership above — never literally every pane on the server). Exact
+# matching is LINE-anchored against the newline-framed scope_exact list — a
+# bare substring test would let "backend" swallow "x-backend".
 _session_in_scope() {
     local sn="$1" p
     if [ "${#scope_paths[@]}" -eq 0 ]; then
@@ -146,7 +201,7 @@ $sn
 panes=""
 while IFS='|' read -r pid sn title; do
     [ -z "$pid" ] && continue
-    if _is_claude_title "$title" && _session_in_scope "$sn"; then
+    if _session_owned "$sn" && _is_claude_title "$title" && _session_in_scope "$sn"; then
         panes="${panes}${pid}|${sn}
 "
     fi
@@ -181,36 +236,45 @@ if [ "$list_only" -eq 1 ]; then
     exit 0
 fi
 
-# Read the prompt — supports plain bash readline.
-read -r -p "> " message
+# Read the prompt. Interactive on a TTY (readline prompt); otherwise the
+# first line of stdin. A non-interactive caller (a pipe, a hook, the MCP
+# actuator) must pass --yes to proceed at all — typing into live agent
+# panes without a human at the keyboard is opt-in, never the default.
+if [ -t 0 ]; then
+    read -r -p "> " message
+else
+    if [ "$assume_yes" -eq 0 ]; then
+        echo "refusing: stdin is not a TTY — pass --yes to broadcast non-interactively (add --submit to auto-press Enter)" >&2
+        exit 2
+    fi
+    IFS= read -r message || true
+fi
 [ -z "$message" ] && { echo "(cancelled)"; exit 0; }
 
-# Default: type-only (no Enter) so user can verify in each pane before
-# submitting. Pass --submit to auto-Enter.
-submit=0
-case "$message" in
-  '!!'*)
-    # Shorthand: lead with '!!' to auto-submit, e.g. '!! /clear'
-    message="${message#!!}"
-    message="${message# }"
-    submit=1
-    ;;
-esac
-
-if (( submit == 0 )); then
-  read -r -n 1 -p "Auto-submit (Enter) in every pane? [y/N] " confirm
-  echo
-  case "$confirm" in y|Y) submit=1 ;; esac
+# Auto-submit (press Enter in every pane) is OPT-IN via --submit only —
+# NEVER inferred from the message text. The old in-band '!!' prefix is
+# deleted: it let any payload (including one piped in non-interactively)
+# silently auto-submit into every agent. On a TTY, when neither --submit
+# nor --yes was given, offer the legacy interactive confirm.
+if [ "$submit" -eq 0 ] && [ "$assume_yes" -eq 0 ] && [ -t 0 ]; then
+    read -r -n 1 -p "Auto-submit (Enter) in every pane? [y/N] " confirm
+    echo
+    case "$confirm" in y|Y) submit=1 ;; esac
 fi
 
 printf '%s\n' "$panes" | cut -d'|' -f1 | while read -r pane; do
   [ -z "$pane" ] && continue
   tmux send-keys -t "$pane" -l -- "$message"
-  (( submit == 1 )) && tmux send-keys -t "$pane" Enter
+  # An `if`, not `(( )) &&`: a false `(( submit == 1 ))` returns non-zero,
+  # which as the loop body's last command makes the whole send pipeline
+  # exit 1 and trips `set -e` — a spurious failure in type-only mode.
+  if [ "$submit" -eq 1 ]; then
+    tmux send-keys -t "$pane" Enter
+  fi
 done
 
 echo
-if (( submit == 1 )); then
+if [ "$submit" -eq 1 ]; then
   echo "Sent + submitted to ${count} pane(s)."
 else
   echo "Typed into ${count} pane(s) (no auto-submit)."
