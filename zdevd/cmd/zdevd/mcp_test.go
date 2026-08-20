@@ -34,6 +34,7 @@ func drive(t *testing.T, requests ...string) []rpcResponse {
 }
 
 func TestMCP_InitializeAndList(t *testing.T) {
+	t.Setenv("ZDEV_MCP_ACTUATE", "1") // actuator gating is exercised separately; here we want `run` advertised
 	resps := drive(t,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`, // notification → no response
@@ -60,6 +61,7 @@ func TestMCP_InitializeAndList(t *testing.T) {
 }
 
 func TestMCP_ToolCall_ReadAndRun(t *testing.T) {
+	t.Setenv("ZDEV_MCP_ACTUATE", "1") // register the `run` actuator for this test
 	// Stub the exec seam: record calls, return canned output.
 	var calls [][]string
 	mcpExec = func(_ context.Context, bin string, args ...string) ([]byte, error) {
@@ -91,7 +93,7 @@ func TestMCP_ToolCall_ReadAndRun(t *testing.T) {
 	if got := strings.Join(calls[0], " "); got != "zdev-show review --json" {
 		t.Errorf("review exec = %q", got)
 	}
-	if got := strings.Join(calls[1], " "); got != "zdev run zitcha/backend /rigorous-review #1234" {
+	if got := strings.Join(calls[1], " "); got != "zdev run --supervised -- zitcha/backend /rigorous-review #1234" {
 		t.Errorf("run exec = %q", got)
 	}
 }

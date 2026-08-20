@@ -16,7 +16,12 @@ package main
 //   fleet_status -> zdev-show list --json
 //   triage       -> zdev-show triage --json
 //   review       -> zdev-show review --json
-//   run          -> zdev run <project> "<prompt>"   (the actuator verb)
+//   run          -> zdev run --supervised -- <project> "<prompt>"   (actuator)
+//
+// The read tools register unconditionally; `run` is an ACTUATOR and registers
+// only when ZDEV_MCP_ACTUATE=1 (mcpActuateEnabled). The HTTP transport is
+// bearer-authenticated and loopback-only unless explicitly opted out. Both are
+// hardening for the phase-1b security audit (C1 / H4).
 //
 // The focus-loop tools (zdev_park / zdev_anchor* / zdev_held* —
 // docs/design/command-centre.md) are the exception: there is no
@@ -29,10 +34,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -207,9 +217,35 @@ func objectSchema(props map[string]any, required ...string) map[string]any {
 	return s
 }
 
-// mcpTools is the registry. Read tools shell to zdev-show --json; run shells
-// to the zdev actuator verb.
+// mcpActuateEnabled reports whether ACTUATOR tools (run — and anything else
+// that spawns, kills, or mutates OTHER sessions) are registered. It is OFF by
+// default and the operator opts in per process with ZDEV_MCP_ACTUATE=1.
+//
+// This is the primary containment for the C1 finding: the `run` actuator
+// shells to `bin/zdev run`, which execs an agent with all permission gates
+// off. A prompt-injected agent that can reach this MCP server must NOT be able
+// to spawn permission-less agents across the fleet just by calling a tool.
+// Read-only tools (fleet_status/triage/review) and focus-loop tools that only
+// adjust the operator's OWN view (park/anchor/held/schedule) carry no such
+// blast radius, so they register unconditionally; actuators do not.
+func mcpActuateEnabled() bool { return os.Getenv("ZDEV_MCP_ACTUATE") == "1" }
+
+// mcpTools is the registry actually served. Read-only tools always register;
+// actuator tools register only when mcpActuateEnabled(). Both transports go
+// through here (stdio and HTTP), so the gate holds regardless of wire.
 func mcpTools() []mcpTool {
+	tools := mcpReadTools()
+	if mcpActuateEnabled() {
+		tools = append(tools, mcpActuatorTools()...)
+	}
+	return tools
+}
+
+// mcpReadTools is the always-on surface: reads of fleet state and adjustments
+// to the operator's own focus view. Nothing here spawns, kills, or mutates
+// another session. Read tools shell to zdev-show --json; the focus-loop tools
+// talk to the daemon socket directly.
+func mcpReadTools() []mcpTool {
 	readTool := func(name, desc string, showArgs ...string) mcpTool {
 		return mcpTool{
 			Name: name, Description: desc,
@@ -233,31 +269,6 @@ func mcpTools() []mcpTool {
 		readTool("review",
 			"Landing-readiness gauge: per repo, which PRs are ready to land vs need a fix vs will rot uncommitted, longest-rotting first. Returns JSON.",
 			"review", "--json"),
-		{
-			Name:        "run",
-			Description: "Spawn a SUPERVISED agent loop in a project: opens a window running an agent seeded with <prompt>, supervised by zdev like any session. The actuator for triggers (a PR/Slack/cron event calls this). Returns the spawned target.",
-			InputSchema: objectSchema(map[string]any{
-				"project": map[string]any{"type": "string", "description": "Configured project name (e.g. zitcha/backend)."},
-				"prompt":  map[string]any{"type": "string", "description": "The initial prompt or slash command (e.g. \"/rigorous-review #1234\")."},
-				"name":    map[string]any{"type": "string", "description": "Optional window name; defaults to a slug of the prompt."},
-			}, "project", "prompt"),
-			run: func(ctx context.Context, args map[string]any) (string, error) {
-				project, _ := args["project"].(string)
-				prompt, _ := args["prompt"].(string)
-				if project == "" || prompt == "" {
-					return "", fmt.Errorf("run requires 'project' and 'prompt'")
-				}
-				cli := []string{"run", project, prompt}
-				if name, _ := args["name"].(string); name != "" {
-					cli = append(cli, "--name", name)
-				}
-				out, err := mcpExec(ctx, "zdev", cli...)
-				if err != nil {
-					return "", fmt.Errorf("zdev run: %w", err)
-				}
-				return string(out), nil
-			},
-		},
 		{
 			Name:        "zdev_park",
 			Description: "Park a thought into the held set (docs/design/command-centre.md — the focus loop). Use this instead of interrupting the operator with a question or a suggestion mid-focus: capture it and move on, and it gets a guaranteed hearing at the next boundary review. The reply only confirms the park succeeded — it does NOT return the created item's id. The daemon assigns one internally (convention: \"parked-<nanos>\") but that id is not echoed on this call; call zdev_held afterwards if you need it (e.g. to remove the item you just parked).",
@@ -448,11 +459,87 @@ func mcpTools() []mcpTool {
 	}
 }
 
+// mcpActuatorTools is the gated surface — tools that spawn/kill/mutate OTHER
+// sessions. Registered only when mcpActuateEnabled(); see mcpActuateEnabled
+// for why the default is off. Today the only actuator is `run`.
+func mcpActuatorTools() []mcpTool {
+	return []mcpTool{
+		{
+			Name:        "run",
+			Description: "Spawn a SUPERVISED agent loop in a project: opens a window running an agent seeded with <prompt>, supervised by zdev like any session. The actuator for triggers (a PR/Slack/cron event calls this). Returns the spawned target.",
+			InputSchema: objectSchema(map[string]any{
+				"project": map[string]any{"type": "string", "description": "Configured project name (e.g. zitcha/backend)."},
+				"prompt":  map[string]any{"type": "string", "description": "The initial prompt or slash command (e.g. \"/rigorous-review #1234\")."},
+				"name":    map[string]any{"type": "string", "description": "Optional window name; defaults to a slug of the prompt."},
+			}, "project", "prompt"),
+			run: func(ctx context.Context, args map[string]any) (string, error) {
+				project, _ := args["project"].(string)
+				prompt, _ := args["prompt"].(string)
+				if project == "" || prompt == "" {
+					return "", fmt.Errorf("run requires 'project' and 'prompt'")
+				}
+				// `--supervised` is the agreed contract with bin/zdev: run the
+				// agent WITHOUT --dangerously-skip-permissions. `--` stops
+				// bin/zdev's option parsing so a prompt beginning with '-' can
+				// never be read as a flag. Both must precede the positionals.
+				cli := []string{"run", "--supervised", "--", project, prompt}
+				if name, _ := args["name"].(string); name != "" {
+					cli = append(cli, "--name", name)
+				}
+				logActuatorFired("run", project, prompt)
+				out, err := mcpExec(ctx, "zdev", cli...)
+				if err != nil {
+					return "", fmt.Errorf("zdev run: %w", err)
+				}
+				return string(out), nil
+			},
+		},
+	}
+}
+
+// logActuatorFired records that an MCP actuator fired, for the forensic trail
+// the C1 finding asks for (which project, a redacted prompt summary, that it
+// came from MCP).
+//
+// It uses slog rather than the eventlog.Writer on purpose: `zdevd mcp` runs as
+// its OWN process, and eventlog's single-writer goroutine (its file handle and
+// rotation state) is owned by the DAEMON process — see internal/eventlog. From
+// here a real eventlog record is out of reach without either a new daemon
+// socket verb (internal/socket + the hub, owned elsewhere) or a second Writer
+// racing the daemon on the same events.ndjson and its rotation, which would
+// violate that single-writer invariant. slog.Info lands in the same structured
+// log stream the daemon uses and is the correct fallback the task allows.
+//
+// The prompt is redacted to a bounded, single-line preview so a long or
+// sensitive prompt is not spilled verbatim into the log while still leaving
+// something identifiable for forensics.
+func logActuatorFired(tool, project, prompt string) {
+	slog.Info("mcp actuator fired",
+		"source", "mcp",
+		"tool", tool,
+		"project", project,
+		"prompt_chars", len(prompt),
+		"prompt_preview", redactPrompt(prompt),
+	)
+}
+
+// redactPrompt collapses a prompt to a bounded single-line preview: newlines
+// folded to spaces, trimmed, and capped with an ellipsis. Pure.
+func redactPrompt(prompt string) string {
+	s := strings.Join(strings.Fields(prompt), " ")
+	const max = 80
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
+}
+
 // mcpSubcmd implements `zdevd mcp`: the stdio JSON-RPC serve loop.
 func mcpSubcmd(args []string) int {
 	fs := flag.NewFlagSet("zdevd mcp", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	httpAddr := fs.String("http", "", "serve MCP over HTTP at this address (e.g. 127.0.0.1:7399) instead of stdio; phase 2 binds this to a tailnet (tsnet) listener")
+	insecureBind := fs.Bool("insecure-bind", false, "allow --http to bind a non-loopback address (off-host reachable); required to bind anything other than localhost/127.0.0.1")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -462,7 +549,7 @@ func mcpSubcmd(args []string) int {
 		byName[t.Name] = t
 	}
 	if *httpAddr != "" {
-		return serveMCPHTTP(*httpAddr, tools, byName)
+		return serveMCPHTTP(*httpAddr, *insecureBind, tools, byName)
 	}
 	return serveMCP(os.Stdin, os.Stdout, tools, byName)
 }
@@ -556,17 +643,104 @@ func serveMCP(in io.Reader, out io.Writer, tools []mcpTool, byName map[string]mc
 	}
 }
 
-// serveMCPHTTP serves the SAME dispatch over a minimal Streamable-HTTP
-// transport: one POST endpoint that takes a single JSON-RPC message and
-// returns its response (202 for a notification). Server-initiated SSE streams
-// aren't needed yet — every tool is request/response — so this is the minimal
-// compliant shape Claude Code's `--transport http` consumes. Phase 2 swaps
-// this listener for a tsnet (tailnet-only) one; the handler is unchanged.
-func serveMCPHTTP(addr string, tools []mcpTool, byName map[string]mcpTool) int {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/mcp", func(wr http.ResponseWriter, r *http.Request) {
+// mcpTokenPath is where a generated bearer token is persisted (0600) when
+// ZDEV_MCP_TOKEN is unset. It sits beside the daemon's other state under the
+// platform data dir so it survives reboots and is resolvable by whoever needs
+// to read the token back (the operator wiring an MCP client).
+func mcpTokenPath() string { return filepath.Join(platform.DataDir(), "mcp-token") }
+
+// resolveMCPToken returns the HTTP bearer token and a human-readable note of
+// where it came from. ZDEV_MCP_TOKEN wins when set; otherwise a 256-bit token
+// is generated with crypto/rand and written 0600 to mcpTokenPath().
+func resolveMCPToken() (token, source string, err error) {
+	if v := os.Getenv("ZDEV_MCP_TOKEN"); v != "" {
+		return v, "ZDEV_MCP_TOKEN", nil
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", fmt.Errorf("generate token: %w", err)
+	}
+	tok := hex.EncodeToString(buf)
+	p := mcpTokenPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return "", "", fmt.Errorf("mkdir token dir: %w", err)
+	}
+	if err := os.WriteFile(p, []byte(tok), 0o600); err != nil {
+		return "", "", fmt.Errorf("write token %s: %w", p, err)
+	}
+	return tok, "generated → " + p, nil
+}
+
+// isLoopbackBind reports whether addr binds only the loopback interface. An
+// empty host ("" or ":7399") means all interfaces and is NOT loopback.
+func isLoopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// originAllowed enforces the loopback Origin allowlist. A legitimate MCP
+// client sends no Origin; a browser always does, so a same-simple-request
+// attack from a web page carries a non-loopback (or null) Origin and is
+// refused. Empty Origin passes (non-browser client).
+func originAllowed(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	for _, p := range []string{"http://localhost", "http://127.0.0.1", "http://[::1]"} {
+		if origin == p || strings.HasPrefix(origin, p+":") || strings.HasPrefix(origin, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// bearerOK constant-time-compares the request's Authorization bearer against
+// the expected token.
+func bearerOK(r *http.Request, token string) bool {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return false
+	}
+	got := strings.TrimPrefix(h, prefix)
+	return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
+}
+
+// mcpHTTPHandler builds the hardened /mcp handler. Split out from
+// serveMCPHTTP so the auth/origin/content-type paths are testable with
+// httptest without binding a socket. Check order is cheap-rejections first
+// (method, Origin, Content-Type) then the bearer, so a browser probe never
+// even reaches the token comparison.
+func mcpHTTPHandler(token string, tools []mcpTool, byName map[string]mcpTool) http.HandlerFunc {
+	return func(wr http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(wr, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		if !originAllowed(r.Header.Get("Origin")) {
+			http.Error(wr, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		// Reject the CORS-simple bypass: text/plain is sendable cross-origin
+		// without a preflight, application/json is not.
+		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			http.Error(wr, "Content-Type: application/json required", http.StatusUnsupportedMediaType)
+			return
+		}
+		if !bearerOK(r, token) {
+			http.Error(wr, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		defer r.Body.Close()
@@ -584,7 +758,39 @@ func serveMCPHTTP(addr string, tools []mcpTool, byName map[string]mcpTool) int {
 		resp.JSONRPC = "2.0"
 		wr.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(wr).Encode(resp)
-	})
+	}
+}
+
+// serveMCPHTTP serves the SAME dispatch over a minimal Streamable-HTTP
+// transport: one POST endpoint that takes a single JSON-RPC message and
+// returns its response (202 for a notification). Server-initiated SSE streams
+// aren't needed yet — every tool is request/response — so this is the minimal
+// compliant shape Claude Code's `--transport http` consumes. Phase 2 swaps
+// this listener for a tsnet (tailnet-only) one; the handler is unchanged.
+//
+// It is hardened per the H4 finding: a non-loopback bind is refused unless
+// insecureBind is set (and warns loudly when it is), and every request must
+// carry a matching bearer token, a loopback Origin (or none), and an
+// application/json Content-Type — see mcpHTTPHandler.
+func serveMCPHTTP(addr string, insecureBind bool, tools []mcpTool, byName map[string]mcpTool) int {
+	if !isLoopbackBind(addr) {
+		if !insecureBind {
+			fmt.Fprintf(os.Stderr, "zdevd mcp: refusing to bind non-loopback address %q without --insecure-bind (the control plane would be reachable off-host)\n", addr)
+			return 2
+		}
+		slog.Warn("zdevd mcp: binding a NON-LOOPBACK address; the control plane is reachable off-host", "addr", addr)
+		fmt.Fprintf(os.Stderr, "zdevd mcp: WARNING: binding non-loopback %q (--insecure-bind) — the control plane is reachable off-host\n", addr)
+	}
+	token, source, err := resolveMCPToken()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zdevd mcp: bearer token: %v\n", err)
+		return 1
+	}
+	slog.Info("zdevd mcp: HTTP bearer token ready", "source", source)
+	fmt.Fprintf(os.Stderr, "zdevd mcp: HTTP bearer token (%s)\n", source)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mcp", mcpHTTPHandler(token, tools, byName))
 	fmt.Fprintf(os.Stderr, "zdevd mcp: serving HTTP at %s/mcp\n", addr)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
