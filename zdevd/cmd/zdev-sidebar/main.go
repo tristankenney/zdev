@@ -476,6 +476,13 @@ func setupRenderer(ctx context.Context) (*rendererSetup, error) {
 		}
 	}
 
+	// Daemon self-health row (zd-6e1): dim row shown only when health
+	// thresholds are breached (daemon_health.go). Default on — the row is
+	// invisible on a healthy fleet regardless, so on-by-default is
+	// byte-identical to today until the daemon actually degrades.
+	// ZDEV_SIDEBAR_HEALTH=off is the escape hatch.
+	render.HealthRowEnabled = os.Getenv("ZDEV_SIDEBAR_HEALTH") != "off"
+
 	// Agent Teams nested member rows (slice B): the same ZDEV_TEAM_WINDOWS=1
 	// knob that drives the daemon's team-sweep and lead de-aggregation also
 	// switches the sidebar from per-member badge bullets to indented member

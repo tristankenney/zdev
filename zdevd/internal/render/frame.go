@@ -638,7 +638,7 @@ func RenderWithOpts(snap *proto.Snapshot, width int, animator *Animator, nowFn f
 	// Daemon self-health row (zd-6e1): appears between the project list and
 	// the footer ONLY when health thresholds are breached. Never on a healthy
 	// fleet, so project row positions are unchanged in the common case.
-	if daemonIsDegraded(snap, nowFn) {
+	if HealthRowEnabled && daemonIsDegraded(snap, nowFn) {
 		renderDaemonHealthRow(&buf, snap, nowFn)
 	}
 
@@ -720,6 +720,17 @@ var DemoteThresholdSec = DemoteThresholdSecDefault
 // the flat list is the mode nobody chose. Default flips to "prefix";
 // "off" remains the escape hatch.
 var GroupMode = "prefix"
+
+// HealthRowEnabled gates the daemon self-health degraded row (zd-6e1,
+// daemon_health.go). cmd/zdev-sidebar sets this from ZDEV_SIDEBAR_HEALTH:
+//
+//	unset/anything but "off" — on (default). The row only ever renders
+//	when daemonIsDegraded reports true, so a healthy fleet's frames are
+//	byte-identical whether this is on or off.
+//	off — the row never renders, even under a degraded snapshot. Escape
+//	hatch for an operator who decides the signal is noise before the
+//	kill criterion (never fires in practice) has had time to prove out.
+var HealthRowEnabled = true
 
 // displayName returns the row text for a project name under
 // GroupMode=prefix: the portion after the group-key segment — the header
