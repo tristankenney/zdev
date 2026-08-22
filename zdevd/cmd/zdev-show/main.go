@@ -397,7 +397,7 @@ func formatLegend() string {
 	section("Footer tally (non-zero buckets only)")
 	row(redPulse+"1 dead"+reset+dim+" · "+reset+orange+"2 waiting"+reset+dim+" · "+reset+icy+"3 working"+reset,
 		"what demands you; blank when the fleet is quiet")
-	row("", "ZDEV_SIDEBAR_FOOTER=compact restores the glyph tally; =off hides it")
+	row("", "ZDEV_SIDEBAR_FOOTER=off hides the footer")
 
 	section("Visual cues")
 	row(render.PaletteFor("project")+"▌"+reset+" (left edge)", "breath bar — the project's identity hue, breathing")
@@ -481,7 +481,7 @@ func formatList(snap *proto.Snapshot) string {
 		}
 		preview := firstNonEmptyLine(p.WaitContext)
 		if len(preview) > 80 {
-			preview = preview[:77] + "..."
+			preview = render.CellTruncate(preview, 80, "...")
 		}
 		if preview == "" {
 			preview = "(no captured context)"
@@ -577,7 +577,7 @@ func triageEntry(p *proto.Project, now int64) (glyph, age, gist string) {
 		gist = firstNonEmptyLine(p.WaitContext)
 	}
 	if len(gist) > 60 {
-		gist = gist[:57] + "..."
+		gist = render.CellTruncate(gist, 60, "...")
 	}
 	if gist == "" {
 		switch p.Attention {
@@ -783,15 +783,16 @@ func formatHeldJSON(snap *proto.Snapshot) (string, error) {
 	return string(b), err
 }
 
-// reviewRepoGlyph picks the dominant-bucket glyph for a repo: ready (green ◆ —
-// landable now) outranks needs-fix (orange ✗) outranks will-rot (yellow ⌁).
-// Mirrors the sidebar gauge's glyph precedence (internal/render/review_gauge.go).
+// reviewRepoGlyph picks the dominant-bucket glyph for a repo: ready (green ✓ —
+// all green, land it) outranks needs-fix (orange ↺ — rework requested)
+// outranks will-rot (yellow ⌁). Mirrors the sidebar gauge's glyph grammar
+// (internal/render/review_gauge.go).
 func reviewRepoGlyph(r proto.ReviewRepo) string {
 	switch {
 	case r.Ready > 0:
-		return green + "◆" + reset
+		return green + "✓" + reset
 	case r.NeedsFix > 0:
-		return orange + "✗" + reset
+		return orange + "↺" + reset
 	default:
 		return yellow + "⌁" + reset
 	}
@@ -1027,11 +1028,17 @@ func formatAgentsFromRegistry(r *agents.Registry) string {
 		if spec.Launch == "" {
 			continue
 		}
-		binary := strings.Fields(spec.Launch)
-		if len(binary) == 0 {
+		command := spec.Command
+		if command == "" {
+			words := strings.Fields(spec.Launch)
+			if len(words) > 0 {
+				command = words[0]
+			}
+		}
+		if command == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "%s\t%s\n", binary[0], spec.Launch)
+		fmt.Fprintf(&b, "%s\t%s\n", command, spec.Launch)
 	}
 	return b.String()
 }
