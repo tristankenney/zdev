@@ -91,6 +91,9 @@ type Pane struct {
 	// an agent viewport and logs row can coexist without either planner
 	// mistaking the other for its own surface.
 	LogsOpt string
+
+	// CIOpt is @zdev-ci: non-empty marks the inferred CI failure row.
+	CIOpt string
 }
 
 func (p Pane) isSidebar() bool { return p.SidebarOpt || p.Title == SidebarTitle }

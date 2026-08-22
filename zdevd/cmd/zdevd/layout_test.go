@@ -57,12 +57,11 @@ func TestParseInventory(t *testing.T) {
 	// contains the '|' delimiter to exercise the bounded split (title is
 	// the final field and must survive intact). Window-level width/session
 	// repeat per row and are taken from the first.
-	// Fields 10-14 are @zdev-team, window_zoomed_flag, pane_in_mode,
-	// @zdev-pane and @zdev-logs (all empty/0 here).
+	// Fields 10-15 add the three zdev-owned row options.
 	out := strings.Join([]string{
-		"%9|0|0|50|50|0|1|240|work||0|0|||zdev-sidebar",
-		"%0|51|0|94|50|1|0|240|work||0|0|||nvim | src/main.go",
-		"%1|146|0|94|50|0|0|240|work||0|0|||bash",
+		"%9|0|0|50|50|0|1|240|work||0|0||||zdev-sidebar",
+		"%0|51|0|94|50|1|0|240|work||0|0||||nvim | src/main.go",
+		"%1|146|0|94|50|0|0|240|work||0|0||||bash",
 	}, "\n")
 
 	win, ok := parseInventory("@3", out)
@@ -89,8 +88,8 @@ func TestParseInventory(t *testing.T) {
 // planners mutating a window the operator has taken over.
 func TestParseInventoryGuardFields(t *testing.T) {
 	out := strings.Join([]string{
-		"%0|0|0|100|50|1|0|240|work||1|0|||● claude",
-		"%1|101|0|100|50|0|0|240|work||1|1|work||api · tests",
+		"%0|0|0|100|50|1|0|240|work||1|0||||● claude",
+		"%1|101|0|100|50|0|0|240|work||1|1|work|||api · tests",
 	}, "\n")
 	win, ok := parseInventory("@3", out)
 	if !ok {

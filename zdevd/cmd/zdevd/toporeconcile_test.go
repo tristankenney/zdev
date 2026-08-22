@@ -75,14 +75,36 @@ func TestSnapshotAnchored(t *testing.T) {
 
 func TestRunnerStateUsesListeningPorts(t *testing.T) {
 	got := runnerState(recSnap(
-		proto.Project{Name: "up", ListeningPorts: []int{3000}},
+		proto.Project{Name: "group/up", ListeningPorts: []int{3000}},
 		proto.Project{Name: "down"},
 	))
-	if !got["up"] {
+	if !got["group-up"] {
 		t.Error("project with a listening port should be runner-up")
 	}
 	if got["down"] {
 		t.Error("project without listening ports should be runner-down")
+	}
+}
+
+func TestCIStateAndSuppressionCycle(t *testing.T) {
+	got := ciState(recSnap(
+		proto.Project{Name: "group/api", FailingChecks: []string{"lint"}},
+		proto.Project{Name: "green", CIConclusion: "success"},
+	))
+	if !got["group-api"] || got["green"] {
+		t.Fatalf("CI state = %v", got)
+	}
+	st := &paneState{sawCI: true, ciFailing: true}
+	if !advanceCIState(st, false, true, false) {
+		t.Fatal("manual CI close should suppress")
+	}
+	st.ciSuppressed = true
+	st.sawCI = false
+	if advanceCIState(st, false, false, false) {
+		t.Fatal("clear is not a manual close")
+	}
+	if st.ciSuppressed {
+		t.Fatal("CI clear must lift suppression")
 	}
 }
 

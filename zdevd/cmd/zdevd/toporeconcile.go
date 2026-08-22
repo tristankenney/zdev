@@ -277,6 +277,9 @@ type paneState struct {
 	sawLogs        bool
 	logsSuppressed bool
 	runnerUp       bool
+	sawCI          bool
+	ciSuppressed   bool
+	ciFailing      bool
 }
 
 // reconcilePanes reconciles every window's agent viewport. Called from the same
@@ -301,6 +304,7 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 	}
 	turns := turnState(snap)
 	runners := runnerState(snap)
+	ciFailures := ciState(snap)
 	anchored := snapshotAnchored(snap)
 
 	// Withdraw requests the daemon can prove are finished. The Stop hook is
@@ -347,6 +351,45 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 			st.vetoed = true
 		}
 		v.Vetoed = st.vetoed
+		_, haveLogs := logsViewport(v.Window)
+		_, haveCI := ciViewport(v.Window)
+		runnerUp := runners[session]
+		ciFailing := ciFailures[session]
+		if advanceLogsState(st, haveLogs, runnerUp, anchored) {
+			if !st.logsSuppressed {
+				slog.Info("topology: operator closed logs pane — suppressed until runner cycles", "session", session)
+			}
+			st.logsSuppressed = true
+		}
+		if advanceCIState(st, haveCI, ciFailing, anchored) {
+			if !st.ciSuppressed {
+				slog.Info("topology: operator closed CI pane — suppressed until CI cycles", "session", session)
+			}
+			st.ciSuppressed = true
+		}
+
+		budgetPlan := layout.PlanRowBudget(layout.RowBudgetView{
+			Window:    v.Window,
+			WantAgent: v.Requested && v.TurnLive && !v.Vetoed,
+			WantLogs:  runnerUp && !st.logsSuppressed && r.paneCfg.LogsCommand != "",
+			WantCI:    ciFailing && !st.ciSuppressed && r.paneCfg.CICommand != "",
+		}, r.paneCfg)
+		if len(budgetPlan) > 0 {
+			if err := r.eng.apply(ctx, budgetPlan); err != nil {
+				slog.Warn("topology: row-budget apply failed", "window", wid, "err", err)
+			} else {
+				target := budgetPlan[0].Args[2]
+				if p, ok := logsViewport(v.Window); ok && p.ID == target {
+					st.sawLogs = false
+				}
+				if p, ok := ciViewport(v.Window); ok && p.ID == target {
+					st.sawCI = false
+				}
+				slog.Info("topology: row budget evicted pane", "session", session, "pane", target)
+			}
+			st.runnerUp, st.ciFailing = runnerUp, ciFailing
+			continue
+		}
 
 		plan := layout.PlanPanes(v, r.paneCfg, nowUnix)
 		appliedPlan := plan
@@ -362,16 +405,10 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 		// know whether the pane exists would double the tmux cost; the plan
 		// tells us what it did.
 		st.sawPane = expectedPane(havePane, appliedPlan)
-
-		_, haveLogs := logsViewport(v.Window)
-		runnerUp := runners[session]
-		// A down edge clears suppression; the next up edge may open again.
-		manualClose := advanceLogsState(st, haveLogs, runnerUp, anchored)
-		if manualClose {
-			if !st.logsSuppressed {
-				slog.Info("topology: operator closed logs pane — suppressed until runner cycles", "session", session)
-			}
-			st.logsSuppressed = true
+		if expectedPane(havePane, appliedPlan) != havePane {
+			st.sawLogs, st.sawCI = haveLogs, haveCI
+			st.runnerUp, st.ciFailing = runnerUp, ciFailing
+			continue
 		}
 		logsAttach := ""
 		if r.paneCfg.LogsCommand != "" {
@@ -381,12 +418,6 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 			Window: v.Window, RunnerUp: runnerUp, Suppressed: st.logsSuppressed,
 			Anchored: anchored, AttachCommand: logsAttach,
 		}, r.paneCfg)
-		// Both planners gathered the same geometry. If the requested viewport
-		// just split the donor, defer logs until the resulting tmux snapshot so
-		// its floor check uses the real post-split height.
-		if expectedPane(havePane, plan) != havePane {
-			logsPlan = nil
-		}
 		if len(logsPlan) > 0 {
 			if err := r.eng.apply(ctx, logsPlan); err != nil {
 				slog.Warn("topology: logs pane apply failed", "window", wid, "err", err)
@@ -396,7 +427,28 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 			}
 		}
 		st.sawLogs = expectedPane(haveLogs, logsPlan)
-		st.runnerUp = runnerUp
+		if st.sawLogs != haveLogs {
+			st.sawCI = haveCI
+			st.runnerUp, st.ciFailing = runnerUp, ciFailing
+			continue
+		}
+
+		ciAttach := ""
+		if r.paneCfg.CICommand != "" {
+			ciAttach = r.eng.ciAttachCommand(session)
+		}
+		ciPlan := layout.PlanCI(layout.CIView{Window: v.Window, Failing: ciFailing,
+			Suppressed: st.ciSuppressed, Anchored: anchored, AttachCommand: ciAttach}, r.paneCfg)
+		if len(ciPlan) > 0 {
+			if err := r.eng.apply(ctx, ciPlan); err != nil {
+				slog.Warn("topology: CI pane apply failed", "window", wid, "err", err)
+				ciPlan = nil
+			} else {
+				slog.Info("topology: CI pane reconciled", "session", session, "commands", len(ciPlan))
+			}
+		}
+		st.sawCI = expectedPane(haveCI, ciPlan)
+		st.runnerUp, st.ciFailing = runnerUp, ciFailing
 	}
 }
 
@@ -410,13 +462,31 @@ func advanceLogsState(st *paneState, haveLogs, runnerUp, anchored bool) bool {
 	return st.sawLogs && !haveLogs && runnerUp && !anchored
 }
 
+func advanceCIState(st *paneState, haveCI, failing, anchored bool) bool {
+	if st.ciFailing && !failing {
+		st.ciSuppressed = false
+	}
+	return st.sawCI && !haveCI && failing && !anchored
+}
+
 func runnerState(snap *proto.Snapshot) map[string]bool {
 	out := map[string]bool{}
 	if snap == nil {
 		return out
 	}
 	for _, p := range snap.Projects {
-		out[p.Name] = len(p.ListeningPorts) > 0
+		out[proto.SessionKey(p.Name)] = len(p.ListeningPorts) > 0
+	}
+	return out
+}
+
+func ciState(snap *proto.Snapshot) map[string]bool {
+	out := map[string]bool{}
+	if snap == nil {
+		return out
+	}
+	for _, p := range snap.Projects {
+		out[proto.SessionKey(p.Name)] = p.PRFail > 0 || len(p.FailingChecks) > 0 || p.CIConclusion == "failure"
 	}
 	return out
 }
@@ -424,6 +494,15 @@ func runnerState(snap *proto.Snapshot) map[string]bool {
 func logsViewport(w layout.Window) (layout.Pane, bool) {
 	for _, p := range w.Panes {
 		if p.LogsOpt != "" {
+			return p, true
+		}
+	}
+	return layout.Pane{}, false
+}
+
+func ciViewport(w layout.Window) (layout.Pane, bool) {
+	for _, p := range w.Panes {
+		if p.CIOpt != "" {
 			return p, true
 		}
 	}

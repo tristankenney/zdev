@@ -200,7 +200,7 @@ func TestAgentPaneLifecycleAgainstRealTmux(t *testing.T) {
 	}
 }
 
-func TestLogsPaneLifecycleAgainstRealTmux(t *testing.T) {
+func TestInferredPaneLifecycleAgainstRealTmux(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not on PATH")
 	}
@@ -216,10 +216,12 @@ func TestLogsPaneLifecycleAgainstRealTmux(t *testing.T) {
 
 	t.Setenv("ZDEV_PANES", "1")
 	t.Setenv("ZDEV_PANES_LOGS_COMMAND", "exec sleep 900")
+	t.Setenv("ZDEV_PANES_CI_COMMAND", "exec sleep 900")
 	// The scratch server predates t.Setenv, so publish the command into tmux's
 	// own child environment as the installed daemon's launch environment would.
 	pTmux(t, "set-environment", "-g", "ZDEV_PANES", "1")
 	pTmux(t, "set-environment", "-g", "ZDEV_PANES_LOGS_COMMAND", "exec sleep 900")
+	pTmux(t, "set-environment", "-g", "ZDEV_PANES_CI_COMMAND", "exec sleep 900")
 	eng := &layoutEngine{tmux: tmuxBin, socketName: paneLiveSocket, cfg: layout.DefaultConfig(), execPath: buildZdevd(t)}
 	v, ok := eng.paneView(context.Background(), windowID(t), "", nil, nil)
 	if !ok {
@@ -254,6 +256,21 @@ func TestLogsPaneLifecycleAgainstRealTmux(t *testing.T) {
 	}
 	if strings.Contains(pTmux(t, "list-panes", "-t", "api:work", "-F", "#{@zdev-logs}"), "api") {
 		t.Fatal("logs pane survived runner-down reconciliation")
+	}
+
+	v, ok = eng.paneView(context.Background(), windowID(t), "", nil, nil)
+	if !ok {
+		t.Fatal("CI paneView failed")
+	}
+	attach = "exec " + shellQuote(eng.execPath) + " pane ci-attach api"
+	plan = layout.PlanCI(layout.CIView{Window: v.Window, Failing: true, AttachCommand: attach}, cfg)
+	if err := eng.apply(context.Background(), plan); err != nil {
+		t.Fatalf("open CI: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	ciRows := pTmux(t, "list-panes", "-t", "api:work", "-F", "#{@zdev-ci}|#{pane_title}|#{pane_active}")
+	if !strings.Contains(ciRows, "api|ci · failing|0") {
+		t.Fatalf("tagged detached CI pane missing:\n%s", ciRows)
 	}
 }
 

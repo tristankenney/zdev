@@ -225,9 +225,9 @@ func (e *layoutEngine) allWindows(ctx context.Context) []string {
 // we read them off the first row.
 const inventoryFormat = "#{pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|" +
 	"#{pane_height}|#{pane_active}|#{@is-sidebar}|#{window_width}|#{session_name}|" +
-	"#{@zdev-team}|#{window_zoomed_flag}|#{pane_in_mode}|#{@zdev-pane}|#{@zdev-logs}|#{pane_title}"
+	"#{@zdev-team}|#{window_zoomed_flag}|#{pane_in_mode}|#{@zdev-pane}|#{@zdev-logs}|#{@zdev-ci}|#{pane_title}"
 
-const inventoryFields = 15
+const inventoryFields = 16
 
 // processWindow reconciles a single window: lock, gather inventory (one
 // list-panes), compute the batch, apply it (one tmux exec). All failures are
@@ -333,7 +333,8 @@ func parseInventory(windowID, out string) (layout.Window, bool) {
 			InMode:     f[11] == "1",
 			PaneOpt:    f[12],
 			LogsOpt:    f[13],
-			Title:      f[14],
+			CIOpt:      f[14],
+			Title:      f[15],
 		}
 		win.Panes = append(win.Panes, p)
 		if !have {

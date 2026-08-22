@@ -65,7 +65,7 @@ func logsDonor(w Window, cfg PaneConfig) (Pane, bool) {
 	var best Pane
 	found := false
 	for _, p := range w.Panes {
-		if p.isSidebar() || p.Agent || p.PaneOpt != "" || p.LogsOpt != "" {
+		if p.isSidebar() || p.Agent || p.PaneOpt != "" || p.LogsOpt != "" || p.CIOpt != "" {
 			continue
 		}
 		if p.Height-cfg.Rows-1 < cfg.DonorFloorRows {

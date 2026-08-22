@@ -72,5 +72,8 @@ func PaneConfigFromEnv(lookup func(string) (string, bool)) PaneConfig {
 	if v, ok := lookup("ZDEV_PANES_LOGS_COMMAND"); ok {
 		cfg.LogsCommand = v
 	}
+	if v, ok := lookup("ZDEV_PANES_CI_COMMAND"); ok {
+		cfg.CICommand = v
+	}
 	return cfg
 }

@@ -104,6 +104,18 @@ func paneSubcmd(args []string) int {
 		}
 		return logsAttach(pos[1], *socketName, cmd)
 
+	case "ci-attach":
+		if len(pos) != 2 {
+			fmt.Fprintln(os.Stderr, "usage: zdevd pane ci-attach <session>")
+			return 2
+		}
+		cmd := layout.PaneConfigFromEnv(os.LookupEnv).CICommand
+		if cmd == "" {
+			fmt.Fprintln(os.Stderr, "zdevd pane ci-attach: ZDEV_PANES_CI_COMMAND is empty")
+			return 1
+		}
+		return surfaceAttach("CI", cmd)
+
 	case "reconcile":
 		if len(pos) != 1 {
 			fmt.Fprintln(os.Stderr, "usage: zdevd pane reconcile [-dry-run]")
@@ -127,17 +139,21 @@ func logsAttach(session, _ string, command string) int {
 		fmt.Fprintln(os.Stderr, "zdevd pane logs-attach: no $TMUX_PANE — not running inside tmux")
 		return 1
 	}
+	return surfaceAttach("logs", command)
+}
+
+func surfaceAttach(kind, command string) int {
 	c := exec.Command("/bin/sh", "-lc", command)
 	c.Stdout, c.Stderr = os.Stdout, os.Stderr
 	if err := c.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "\n[zdev] logs command exited: %v; pane remains until the runner goes down or you close it\n", err)
+		fmt.Fprintf(os.Stderr, "\n[zdev] %s command exited: %v; pane remains until its condition clears or you close it\n", kind, err)
 	} else {
-		fmt.Fprintln(os.Stderr, "\n[zdev] logs command exited; pane remains until the runner goes down or you close it")
+		fmt.Fprintf(os.Stderr, "\n[zdev] %s command exited; pane remains until its condition clears or you close it\n", kind)
 	}
-	// Do not let an unexpectedly short-lived logs command look like an
-	// operator close: disappearance while RunnerUp is still true is the
-	// suppression signal. Keep the tagged pane around until the reconciler
-	// retires it on a real down edge (or the operator explicitly closes it).
+	// Do not let an unexpectedly short-lived command look like an operator
+	// close: disappearance while the inferred condition still stands is the
+	// suppression signal. Keep the tagged pane until a real clear edge (or
+	// the operator explicitly closes it).
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigs)
@@ -305,6 +321,14 @@ func (e *layoutEngine) attachCommand(session, dir string) string {
 }
 
 func (e *layoutEngine) logsAttachCommand(session string) string {
+	return e.surfaceAttachCommand("logs-attach", session)
+}
+
+func (e *layoutEngine) ciAttachCommand(session string) string {
+	return e.surfaceAttachCommand("ci-attach", session)
+}
+
+func (e *layoutEngine) surfaceAttachCommand(verb, session string) string {
 	self := e.execPath
 	if self == "" {
 		var err error
@@ -316,7 +340,7 @@ func (e *layoutEngine) logsAttachCommand(session string) string {
 	if e.socketName != "" {
 		parts = append(parts, "-socket-name", shellQuote(e.socketName))
 	}
-	parts = append(parts, "logs-attach", shellQuote(session))
+	parts = append(parts, verb, shellQuote(session))
 	return "exec " + strings.Join(parts, " ")
 }
 

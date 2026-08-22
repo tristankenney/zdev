@@ -85,6 +85,7 @@ type PaneConfig struct {
 	// runner logs pane. Empty disables inferred logs while leaving requested
 	// agent panes available.
 	LogsCommand string
+	CICommand   string
 }
 
 // DefaultPaneConfig returns the disabled-by-default configuration.
@@ -168,7 +169,7 @@ func (v PaneView) donor(cfg PaneConfig) (Pane, bool) {
 	var best Pane
 	found := false
 	for _, p := range v.Window.Panes {
-		if p.isSidebar() || p.Agent || p.PaneOpt != "" || p.LogsOpt != "" {
+		if p.isSidebar() || p.Agent || p.PaneOpt != "" || p.LogsOpt != "" || p.CIOpt != "" {
 			continue
 		}
 		// A split costs the donor cfg.Rows plus the border line.
