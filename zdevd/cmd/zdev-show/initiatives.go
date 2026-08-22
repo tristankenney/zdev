@@ -89,7 +89,7 @@ type memberDigest struct {
 	// Stream names the WORKSTREAM folder this member lives in (decision
 	// 2026-08-17 rev 2: a workstream is an unmarked child folder of the
 	// initiative holding full clones — one pay-cli stack, one runner,
-	// one DNS namespace <service>.<init>-<stream>.orb.local). Member
+	// one DNS namespace <service>.<init>-<stream>.localhost). Member
 	// Name is then "<stream>/<repo>"; empty for direct members.
 	// Additive to the v1 contract — see docs/initiatives-digest.md.
 	Stream string `json:"stream,omitempty"`

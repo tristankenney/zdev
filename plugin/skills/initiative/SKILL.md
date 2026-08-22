@@ -63,7 +63,7 @@ usually needs its own RUNNING environment. A **workstream** is a child
 FOLDER of the initiative holding one full clone per repo it needs —
 exactly a pay-cli stack, so each stream is one runner: its own set of
 containers, its own compose project, its own DNS namespace
-(`<service>.<init>-<stream>.orb.local`), all up simultaneously with no
+(`<service>.<init>-<stream>.localhost`), all up simultaneously with no
 port conflicts.
 
 ```bash
