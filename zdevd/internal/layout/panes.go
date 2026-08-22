@@ -80,6 +80,11 @@ type PaneConfig struct {
 	// MaxAgeSec is the backstop that retires a request whose turn-end signal
 	// never came.
 	MaxAgeSec int
+
+	// LogsCommand is the operator-configured command followed by the inferred
+	// runner logs pane. Empty disables inferred logs while leaving requested
+	// agent panes available.
+	LogsCommand string
 }
 
 // DefaultPaneConfig returns the disabled-by-default configuration.
@@ -163,7 +168,7 @@ func (v PaneView) donor(cfg PaneConfig) (Pane, bool) {
 	var best Pane
 	found := false
 	for _, p := range v.Window.Panes {
-		if p.isSidebar() || p.Agent || p.PaneOpt != "" {
+		if p.isSidebar() || p.Agent || p.PaneOpt != "" || p.LogsOpt != "" {
 			continue
 		}
 		// A split costs the donor cfg.Rows plus the border line.

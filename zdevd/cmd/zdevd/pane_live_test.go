@@ -200,6 +200,63 @@ func TestAgentPaneLifecycleAgainstRealTmux(t *testing.T) {
 	}
 }
 
+func TestLogsPaneLifecycleAgainstRealTmux(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH")
+	}
+	tmuxBin, _ := exec.LookPath("tmux")
+	_, _ = exec.Command("tmux", tmuxIsolated(paneLiveSocket, "kill-server")...).CombinedOutput()
+	time.Sleep(300 * time.Millisecond)
+	pTmux(t, "new-session", "-d", "-s", "api", "-n", "work", "-x", "200", "-y", "50", "sleep 900")
+	pTmux(t, "split-window", "-d", "-h", "-t", "api:work", "sleep 900")
+	panes := strings.Fields(pTmux(t, "list-panes", "-t", "api:work", "-F", "#{pane_id}"))
+	pTmux(t, "select-pane", "-t", panes[1], "-T", "● claude")
+	pTmux(t, "select-pane", "-t", panes[0])
+	t.Cleanup(func() { _, _ = exec.Command("tmux", tmuxIsolated(paneLiveSocket, "kill-server")...).CombinedOutput() })
+
+	t.Setenv("ZDEV_PANES", "1")
+	t.Setenv("ZDEV_PANES_LOGS_COMMAND", "exec sleep 900")
+	// The scratch server predates t.Setenv, so publish the command into tmux's
+	// own child environment as the installed daemon's launch environment would.
+	pTmux(t, "set-environment", "-g", "ZDEV_PANES", "1")
+	pTmux(t, "set-environment", "-g", "ZDEV_PANES_LOGS_COMMAND", "exec sleep 900")
+	eng := &layoutEngine{tmux: tmuxBin, socketName: paneLiveSocket, cfg: layout.DefaultConfig(), execPath: buildZdevd(t)}
+	v, ok := eng.paneView(context.Background(), windowID(t), "", nil, nil)
+	if !ok {
+		t.Fatal("paneView failed")
+	}
+	cfg := layout.PaneConfigFromEnv(os.LookupEnv)
+	attach := "exec " + shellQuote(eng.execPath) + " pane logs-attach api"
+	plan := layout.PlanLogs(layout.LogsView{Window: v.Window, RunnerUp: true, AttachCommand: attach}, cfg)
+	if err := eng.apply(context.Background(), plan); err != nil {
+		t.Fatalf("open logs: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	rows := pTmux(t, "list-panes", "-t", "api:work", "-F", "#{pane_id}|#{@zdev-logs}|#{pane_title}|#{pane_active}|#{pane_current_command}|#{pane_dead}")
+	if !strings.Contains(rows, "api|logs · runner|0") {
+		capture := ""
+		for _, row := range strings.Split(rows, "\n") {
+			f := strings.Split(row, "|")
+			if len(f) > 4 && f[4] == "zdevd" {
+				capture = pTmux(t, "capture-pane", "-p", "-t", f[0])
+			}
+		}
+		t.Fatalf("tagged detached logs pane missing:\n%s\ncapture:\n%s", rows, capture)
+	}
+
+	v, ok = eng.paneView(context.Background(), windowID(t), "", nil, nil)
+	if !ok {
+		t.Fatal("second paneView failed")
+	}
+	plan = layout.PlanLogs(layout.LogsView{Window: v.Window, RunnerUp: false}, cfg)
+	if err := eng.apply(context.Background(), plan); err != nil {
+		t.Fatalf("close logs: %v", err)
+	}
+	if strings.Contains(pTmux(t, "list-panes", "-t", "api:work", "-F", "#{@zdev-logs}"), "api") {
+		t.Fatal("logs pane survived runner-down reconciliation")
+	}
+}
+
 // A pane the operator is sitting in must be demoted, never killed, when the
 // turn ends — killing a pane somebody is mid-read is the failure this rule
 // exists to prevent.

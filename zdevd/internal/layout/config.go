@@ -69,5 +69,8 @@ func PaneConfigFromEnv(lookup func(string) (string, bool)) PaneConfig {
 	cfg.Rows = envInt(lookup, "ZDEV_PANES_ROWS", DefaultPaneRows, 2)
 	cfg.DonorFloorRows = envInt(lookup, "ZDEV_PANES_DONOR_FLOOR", DefaultDonorFloorRows, 1)
 	cfg.MaxAgeSec = envInt(lookup, "ZDEV_PANES_MAX_AGE", DefaultPaneMaxAgeSec, 0)
+	if v, ok := lookup("ZDEV_PANES_LOGS_COMMAND"); ok {
+		cfg.LogsCommand = v
+	}
 	return cfg
 }

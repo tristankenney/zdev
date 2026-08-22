@@ -85,6 +85,12 @@ type Pane struct {
 	// PaneOpt is the @zdev-pane option: non-empty means this pane IS a zdev
 	// agent viewport, and the value names the session it was opened for.
 	PaneOpt string
+
+	// LogsOpt is @zdev-logs: non-empty means this is the inferred runner
+	// logs pane owned by zdev. It is deliberately distinct from PaneOpt so
+	// an agent viewport and logs row can coexist without either planner
+	// mistaking the other for its own surface.
+	LogsOpt string
 }
 
 func (p Pane) isSidebar() bool { return p.SidebarOpt || p.Title == SidebarTitle }

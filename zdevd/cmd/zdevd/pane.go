@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/agents"
@@ -90,6 +92,18 @@ func paneSubcmd(args []string) int {
 		}
 		return paneAttach(dir, pos[1], *socketName)
 
+	case "logs-attach":
+		if len(pos) != 2 {
+			fmt.Fprintln(os.Stderr, "usage: zdevd pane logs-attach <session>")
+			return 2
+		}
+		cmd := layout.PaneConfigFromEnv(os.LookupEnv).LogsCommand
+		if cmd == "" {
+			fmt.Fprintln(os.Stderr, "zdevd pane logs-attach: ZDEV_PANES_LOGS_COMMAND is empty")
+			return 1
+		}
+		return logsAttach(pos[1], *socketName, cmd)
+
 	case "reconcile":
 		if len(pos) != 1 {
 			fmt.Fprintln(os.Stderr, "usage: zdevd pane reconcile [-dry-run]")
@@ -105,6 +119,30 @@ func paneSubcmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "zdevd pane: unknown verb %q\n", verb)
 		return 2
 	}
+}
+
+func logsAttach(session, _ string, command string) int {
+	self := os.Getenv("TMUX_PANE")
+	if self == "" {
+		fmt.Fprintln(os.Stderr, "zdevd pane logs-attach: no $TMUX_PANE — not running inside tmux")
+		return 1
+	}
+	c := exec.Command("/bin/sh", "-lc", command)
+	c.Stdout, c.Stderr = os.Stdout, os.Stderr
+	if err := c.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "\n[zdev] logs command exited: %v; pane remains until the runner goes down or you close it\n", err)
+	} else {
+		fmt.Fprintln(os.Stderr, "\n[zdev] logs command exited; pane remains until the runner goes down or you close it")
+	}
+	// Do not let an unexpectedly short-lived logs command look like an
+	// operator close: disappearance while RunnerUp is still true is the
+	// suppression signal. Keep the tagged pane around until the reconciler
+	// retires it on a real down edge (or the operator explicitly closes it).
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	<-sigs
+	return 0
 }
 
 // paneAttach runs inside the freshly split pane. It tags and titles ITSELF via
@@ -263,6 +301,22 @@ func (e *layoutEngine) attachCommand(session, dir string) string {
 		parts = append(parts, "-socket-name", shellQuote(e.socketName))
 	}
 	parts = append(parts, "attach", shellQuote(session))
+	return "exec " + strings.Join(parts, " ")
+}
+
+func (e *layoutEngine) logsAttachCommand(session string) string {
+	self := e.execPath
+	if self == "" {
+		var err error
+		if self, err = os.Executable(); err != nil || self == "" {
+			return ""
+		}
+	}
+	parts := []string{shellQuote(self), "pane"}
+	if e.socketName != "" {
+		parts = append(parts, "-socket-name", shellQuote(e.socketName))
+	}
+	parts = append(parts, "logs-attach", shellQuote(session))
 	return "exec " + strings.Join(parts, " ")
 }
 

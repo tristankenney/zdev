@@ -272,8 +272,11 @@ func snapshotAnchored(snap *proto.Snapshot) bool {
 
 // paneState is the reconciler's per-session memory for panes.
 type paneState struct {
-	sawPane bool // a tagged viewport was present at the last gather
-	vetoed  bool // the operator closed it during this turn
+	sawPane        bool // a tagged viewport was present at the last gather
+	vetoed         bool // the operator closed it during this turn
+	sawLogs        bool
+	logsSuppressed bool
+	runnerUp       bool
 }
 
 // reconcilePanes reconciles every window's agent viewport. Called from the same
@@ -296,6 +299,8 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 		bySession[q.Session] = q
 	}
 	turns := turnState(snap)
+	runners := runnerState(snap)
+	anchored := snapshotAnchored(snap)
 
 	// Withdraw requests the daemon can prove are finished. The Stop hook is
 	// the normal path (bin/zdev-notify closes the request itself), so this is
@@ -343,9 +348,11 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 		v.Vetoed = st.vetoed
 
 		plan := layout.PlanPanes(v, r.paneCfg, nowUnix)
+		appliedPlan := plan
 		if len(plan) > 0 {
 			if err := r.eng.apply(ctx, plan); err != nil {
 				slog.Warn("topology: pane apply failed", "window", wid, "err", err)
+				appliedPlan = nil
 			} else {
 				slog.Info("topology: pane reconciled", "session", session, "commands", len(plan))
 			}
@@ -353,8 +360,73 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 		// Record what the NEXT pass compares against. Re-gathering just to
 		// know whether the pane exists would double the tmux cost; the plan
 		// tells us what it did.
-		st.sawPane = expectedPane(havePane, plan)
+		st.sawPane = expectedPane(havePane, appliedPlan)
+
+		_, haveLogs := logsViewport(v.Window)
+		runnerUp := runners[session]
+		// A down edge clears suppression; the next up edge may open again.
+		manualClose := advanceLogsState(st, haveLogs, runnerUp, anchored)
+		if manualClose {
+			if !st.logsSuppressed {
+				slog.Info("topology: operator closed logs pane — suppressed until runner cycles", "session", session)
+			}
+			st.logsSuppressed = true
+		}
+		logsAttach := ""
+		if r.paneCfg.LogsCommand != "" {
+			logsAttach = r.eng.logsAttachCommand(session)
+		}
+		logsPlan := layout.PlanLogs(layout.LogsView{
+			Window: v.Window, RunnerUp: runnerUp, Suppressed: st.logsSuppressed,
+			Anchored: anchored, AttachCommand: logsAttach,
+		}, r.paneCfg)
+		// Both planners gathered the same geometry. If the requested viewport
+		// just split the donor, defer logs until the resulting tmux snapshot so
+		// its floor check uses the real post-split height.
+		if expectedPane(havePane, plan) != havePane {
+			logsPlan = nil
+		}
+		if len(logsPlan) > 0 {
+			if err := r.eng.apply(ctx, logsPlan); err != nil {
+				slog.Warn("topology: logs pane apply failed", "window", wid, "err", err)
+				logsPlan = nil
+			} else {
+				slog.Info("topology: logs pane reconciled", "session", session, "commands", len(logsPlan))
+			}
+		}
+		st.sawLogs = expectedPane(haveLogs, logsPlan)
+		st.runnerUp = runnerUp
 	}
+}
+
+// advanceLogsState applies the edge-sensitive half of suppression. It returns
+// true only for disappearance while the condition still stands; a down edge
+// clears the veto so the next up edge may earn the pane again.
+func advanceLogsState(st *paneState, haveLogs, runnerUp, anchored bool) bool {
+	if st.runnerUp && !runnerUp {
+		st.logsSuppressed = false
+	}
+	return st.sawLogs && !haveLogs && runnerUp && !anchored
+}
+
+func runnerState(snap *proto.Snapshot) map[string]bool {
+	out := map[string]bool{}
+	if snap == nil {
+		return out
+	}
+	for _, p := range snap.Projects {
+		out[p.Name] = len(p.ListeningPorts) > 0
+	}
+	return out
+}
+
+func logsViewport(w layout.Window) (layout.Pane, bool) {
+	for _, p := range w.Panes {
+		if p.LogsOpt != "" {
+			return p, true
+		}
+	}
+	return layout.Pane{}, false
 }
 
 func (r *topoReconciler) paneStateFor(session string) *paneState {

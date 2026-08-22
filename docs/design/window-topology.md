@@ -1,7 +1,8 @@
 # Window topology — what opens, what closes, and who pays for it
 
-**Status:** phase 1 windows, phase 2 guards, and agent-requested panes all
-built (2026-08-22). Inferred panes (logs / CI, phases 3–4) remain design.
+**Status:** phase 1 windows, phase 2 guards, agent-requested panes, and phase 3
+runner logs panes built (2026-08-22). CI panes / row eviction (phase 4) remain
+design.
 **Started:** 2026-08-21 (operator signal: *"if zdev-core serves as the brain, it
 should then be open and closing windows in tmux based on what's happening"*).
 **Siblings:** `command-centre.md` owns the airlock this must obey;
@@ -302,13 +303,23 @@ one does, the move is reviewed against
 | 1 ✅ | permission-prompt **windows**, link/unlink, dwell | operator loses a window, loses focus mid-keystroke, or pre-emptively closes zdev's windows |
 | 2 ✅ | zoom + copy-mode guards, retrofitted to `layout.Plan` | none — this is a bug fix |
 | 2b ✅ | **agent-requested panes** — `panereq`, `PlanPanes`, `pane_open`/`pane_close` | agent panes appear when unwanted, or the operator vetoes twice in a week |
-| 3 | **logs pane** on runner up/down, with suppression | operator closes it twice in a week → the condition wasn't worth a pane |
+| 3 ✅ | **logs pane** on runner up/down, with suppression | operator closes it twice in a week → the condition wasn't worth a pane |
 | 4 | row budget + eviction, **CI pane** | any eviction the operator did not predict |
 | 5 | dead-agent **window** pinning + `remain-on-exit` | corpses accumulate unacked → reap like sessions |
 
 Phase 2 before phase 3 is deliberate: the guards are a prerequisite for touching
 geometry at all, and they pay for themselves immediately by fixing a live bug in
 the sidebar.
+
+### Phase 3 configuration
+
+Phase 3 remains behind the existing `ZDEV_PANES=1` gate and additionally
+requires `ZDEV_PANES_LOGS_COMMAND` to be non-empty. The daemon infers
+runner-up from the project's listening-port signal, then runs that configured
+command in the donor pane's working directory. Public zdev deliberately does
+not hard-code a private runner CLI. The creation batch tags the pane with
+`@zdev-logs` before restoring focus, so it can coexist with an agent-requested
+`@zdev-pane` viewport and each planner can only retire its own surface.
 
 **Global kill criterion.** If the operator starts arranging panes by hand *around*
 zdev — closing what it opens, reopening what it evicts — the budget model is

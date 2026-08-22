@@ -73,6 +73,45 @@ func TestSnapshotAnchored(t *testing.T) {
 	}
 }
 
+func TestRunnerStateUsesListeningPorts(t *testing.T) {
+	got := runnerState(recSnap(
+		proto.Project{Name: "up", ListeningPorts: []int{3000}},
+		proto.Project{Name: "down"},
+	))
+	if !got["up"] {
+		t.Error("project with a listening port should be runner-up")
+	}
+	if got["down"] {
+		t.Error("project without listening ports should be runner-down")
+	}
+}
+
+func TestLogsSuppressionLiftsOnlyWhenRunnerCycles(t *testing.T) {
+	st := &paneState{sawLogs: true, runnerUp: true}
+	if !advanceLogsState(st, false, true, false) {
+		t.Fatal("manual disappearance should suppress")
+	}
+	st.logsSuppressed = true
+	st.sawLogs = false
+	if advanceLogsState(st, false, true, false) {
+		t.Fatal("steady up state is not another close edge")
+	}
+	if !st.logsSuppressed {
+		t.Fatal("suppression must persist while runner stays up")
+	}
+	if advanceLogsState(st, false, false, false) {
+		t.Fatal("runner-down is not a manual close")
+	}
+	if st.logsSuppressed {
+		t.Fatal("runner-down must clear suppression")
+	}
+
+	anchored := &paneState{sawLogs: true, runnerUp: true}
+	if advanceLogsState(anchored, false, true, true) {
+		t.Fatal("anchored topology is frozen")
+	}
+}
+
 // The signature is what keeps an idle fleet from spending subprocesses: it
 // must be stable across snapshots that cannot change the plan, and must move
 // when the set of link-earning sessions does.
