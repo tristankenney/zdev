@@ -257,6 +257,16 @@ case "$STATE" in
         TITLE="◆ $TOOL"
         if [ -n "$SESSION" ]; then
             printf '%s\ndone\n' "$(date +%s)" > "$TS_FILE" 2>/dev/null || true
+            # Withdraw any agent-requested viewport pane (see
+            # docs/design/window-topology.md). This is the ONLY authoritative
+            # turn-end signal: the pane planner deliberately does NOT infer
+            # "turn over" from the agent looking idle, because a bare "claude"
+            # title plus a HookWorkTS older than hookWorkFreshSec (180s) reads
+            # as idle mid-turn, which would retire a pane the operator is
+            # still watching output in. Best-effort — a missing zdevd or a
+            # stale request is harmless, and the daemon ages requests out.
+            command -v zdevd >/dev/null 2>&1 \
+                && zdevd pane close "$SESSION" >/dev/null 2>&1 || true
         fi
         ;;
     alive|started|resumed)

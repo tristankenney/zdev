@@ -460,8 +460,8 @@ func mcpReadTools() []mcpTool {
 }
 
 // mcpActuatorTools is the gated surface — tools that spawn/kill/mutate OTHER
-// sessions. Registered only when mcpActuateEnabled(); see mcpActuateEnabled
-// for why the default is off. Today the only actuator is `run`.
+// sessions, or change what is on the operator's screen. Registered only when
+// mcpActuateEnabled(); see mcpActuateEnabled for why the default is off.
 func mcpActuatorTools() []mcpTool {
 	return []mcpTool{
 		{
@@ -492,6 +492,55 @@ func mcpActuatorTools() []mcpTool {
 					return "", fmt.Errorf("zdev run: %w", err)
 				}
 				return string(out), nil
+			},
+		},
+		{
+			Name: "pane_open",
+			Description: "Ask for a turn-scoped viewport pane beside your own, and get back a file path. " +
+				"Append to that path and the operator sees the output live, WITHOUT it entering your " +
+				"transcript or context — use it for a command's output you are watching, or evidence for " +
+				"a question you are asking. One pane per session; it appears only in your own window, " +
+				"never steals focus, and is retired automatically when your turn ends. The daemon may " +
+				"decline (the operator is in focus mode, closed it already, or the window has no room) — " +
+				"a path is always returned, so write to it regardless and it will be shown if allowed.",
+			InputSchema: objectSchema(map[string]any{
+				"session": map[string]any{"type": "string", "description": "Your own tmux session name (the project key). A pane can only ever open in this session's window."},
+				"title":   map[string]any{"type": "string", "description": "Short border label, e.g. \"tests\" or \"failing diff\"."},
+			}, "session"),
+			run: func(ctx context.Context, args map[string]any) (string, error) {
+				session, _ := args["session"].(string)
+				if session == "" {
+					return "", fmt.Errorf("pane_open requires 'session'")
+				}
+				title, _ := args["title"].(string)
+				cli := []string{"pane", "open", session}
+				if title != "" {
+					cli = append(cli, "-title", title)
+				}
+				logActuatorFired("pane_open", session, title)
+				out, err := mcpExec(ctx, "zdevd", cli...)
+				if err != nil {
+					return "", fmt.Errorf("zdevd pane open: %w", err)
+				}
+				return strings.TrimSpace(string(out)), nil
+			},
+		},
+		{
+			Name:        "pane_close",
+			Description: "Withdraw your viewport pane before your turn ends. Rarely needed — the turn boundary retires it for you.",
+			InputSchema: objectSchema(map[string]any{
+				"session": map[string]any{"type": "string", "description": "Your own tmux session name (the project key)."},
+			}, "session"),
+			run: func(ctx context.Context, args map[string]any) (string, error) {
+				session, _ := args["session"].(string)
+				if session == "" {
+					return "", fmt.Errorf("pane_close requires 'session'")
+				}
+				logActuatorFired("pane_close", session, "")
+				if _, err := mcpExec(ctx, "zdevd", "pane", "close", session); err != nil {
+					return "", fmt.Errorf("zdevd pane close: %w", err)
+				}
+				return "closed", nil
 			},
 		},
 	}
