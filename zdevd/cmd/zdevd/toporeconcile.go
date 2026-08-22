@@ -41,6 +41,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -63,8 +64,10 @@ type topoReconciler struct {
 	// lastSig is the signature of the fleet as of the last reconcile that
 	// actually ran. Empty string is a real value (nothing earns a window),
 	// so applied tracks whether we have reconciled at all.
-	lastSig string
-	applied bool
+	lastSig      string
+	applied      bool
+	lastStateSig string
+	stateApplied bool
 
 	// paneCfg / paneDir / panes drive the pane half; see the panes section
 	// at the bottom of this file.
@@ -92,7 +95,7 @@ func newTopoReconciler(h *hub.Hub, eng *layoutEngine, cfg layout.TopoConfig,
 // and the daemon never subscribes, so the feature costs nothing until it is
 // switched on.
 func (r *topoReconciler) Run(ctx context.Context) error {
-	if !r.cfg.Enabled && !r.paneCfg.Enabled {
+	if !r.cfg.Enabled && !r.paneCfg.Enabled && !r.cfg.PublishState {
 		slog.Debug("topology: disabled (set ZDEV_TOPOLOGY=1 / ZDEV_PANES=1 to enable)")
 		return nil
 	}
@@ -143,6 +146,7 @@ func (r *topoReconciler) Run(ctx context.Context) error {
 
 		r.consider(ctx, latest)
 		r.considerPanes(ctx, latest)
+		r.considerStateOptions(ctx, latest)
 
 		// Re-arm for the next dwell crossing, if there is one. Recomputed
 		// from the current snapshot every pass so an answered wait cancels
@@ -161,6 +165,36 @@ func (r *topoReconciler) Run(ctx context.Context) error {
 	}
 }
 
+func (r *topoReconciler) considerStateOptions(ctx context.Context, snap *proto.Snapshot) {
+	if !r.cfg.PublishState || snap == nil {
+		return
+	}
+	var c layout.StateCounts
+	c.Anchored = snapshotAnchored(snap)
+	for _, p := range snap.Projects {
+		switch p.Attention {
+		case proto.AttWaiting:
+			c.Waiting++
+		case proto.AttDead:
+			c.Dead++
+		case proto.AttWorking:
+			c.Working++
+		}
+		if p.PRFail > 0 || len(p.FailingChecks) > 0 || p.CIConclusion == "failure" {
+			c.CIFailing++
+		}
+	}
+	sig := fmt.Sprintf("%d/%d/%d/%d/%t", c.Waiting, c.Dead, c.Working, c.CIFailing, c.Anchored)
+	if r.stateApplied && sig == r.lastStateSig {
+		return
+	}
+	if err := r.eng.apply(ctx, layout.PlanStateOptions(c, true)); err != nil {
+		slog.Warn("topology: tmux state options apply failed", "err", err)
+		return
+	}
+	r.lastStateSig, r.stateApplied = sig, true
+}
+
 // topoDwellSlack pads the armed deadline so the timer fires strictly AFTER the
 // dwell has elapsed rather than on the same second, where integer-second
 // truncation could leave the wait one tick short of eligible and schedule a
@@ -174,6 +208,9 @@ const topoDwellSlack = 250 * time.Millisecond
 // earning set, so the timer's wake-up moves the signature exactly like a fleet
 // change would, and no separate "came from a timer" path is needed.
 func (r *topoReconciler) consider(ctx context.Context, snap *proto.Snapshot) {
+	if !r.cfg.Enabled {
+		return
+	}
 	nowUnix := r.now().Unix()
 	agents := snapshotAgents(snap)
 	anchored := snapshotAnchored(snap)

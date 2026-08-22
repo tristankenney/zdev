@@ -295,6 +295,23 @@ func TestPlanRemainOnExitOnlyArmsRecognizedLivePanes(t *testing.T) {
 	}
 }
 
+func TestPlanStateOptions(t *testing.T) {
+	c := StateCounts{Waiting: 2, Dead: 1, Working: 3, CIFailing: 4, Anchored: true}
+	want := []Command{
+		cmd("set-option", "-g", "@zdev_waiting_count", "2"),
+		cmd("set-option", "-g", "@zdev_dead_count", "1"),
+		cmd("set-option", "-g", "@zdev_working_count", "3"),
+		cmd("set-option", "-g", "@zdev_ci_fail_count", "4"),
+		cmd("set-option", "-g", "@zdev_anchored", "1"),
+	}
+	if got := PlanStateOptions(c, true); !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan = %v, want %v", got, want)
+	}
+	if got := PlanStateOptions(c, false); got != nil {
+		t.Fatalf("disabled = %v", got)
+	}
+}
+
 // The planner must never emit a command that can destroy a window: no -k on
 // unlink-window, and no kill-window at all in phase 1. Asserted over every
 // case above rather than trusted to review.

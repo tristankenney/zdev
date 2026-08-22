@@ -341,6 +341,12 @@ is the pin: `zdev ack` or fresh alive evidence clears it, after which the link
 is retired non-destructively while the original retained pane remains
 available for inspection or `respawn-pane`.
 
+For status-line interoperability, `ZDEV_TMUX_STATE=1` publishes global tmux
+user options: `@zdev_waiting_count`, `@zdev_dead_count`,
+`@zdev_working_count`, `@zdev_ci_fail_count`, and `@zdev_anchored`. The
+reconciler writes only when the aggregate signature changes; stable snapshots
+cost no tmux subprocesses.
+
 **Global kill criterion.** If the operator starts arranging panes by hand *around*
 zdev — closing what it opens, reopening what it evicts — the budget model is
 wrong and panes revert to on-demand only (a key that opens the logs pane, and

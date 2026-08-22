@@ -53,6 +53,9 @@ func TopoConfigFromEnv(lookup func(string) (string, bool)) TopoConfig {
 	if v, ok := lookup("ZDEV_TOPOLOGY"); ok && v == "1" {
 		cfg.Enabled = true
 	}
+	if v, ok := lookup("ZDEV_TMUX_STATE"); ok && v == "1" {
+		cfg.PublishState = true
+	}
 	cfg.LinkIndex = envInt(lookup, "ZDEV_TOPOLOGY_INDEX", DefaultLinkIndex, 1)
 	cfg.DwellSeconds = envInt(lookup, "ZDEV_TOPOLOGY_DWELL", DefaultTopoDwellSeconds, 0)
 	return cfg

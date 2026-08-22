@@ -211,6 +211,22 @@ func TestReconcilerDefaults(t *testing.T) {
 	}
 }
 
+func TestStateOptionConfigIsDefaultOff(t *testing.T) {
+	cfg := layout.TopoConfigFromEnv(func(key string) (string, bool) { return "", false })
+	if cfg.PublishState {
+		t.Fatal("tmux state publishing must default off")
+	}
+	cfg = layout.TopoConfigFromEnv(func(key string) (string, bool) {
+		if key == "ZDEV_TMUX_STATE" {
+			return "1", true
+		}
+		return "", false
+	})
+	if !cfg.PublishState {
+		t.Fatal("ZDEV_TMUX_STATE=1 did not enable publishing")
+	}
+}
+
 // The reconciler holds no timer when nothing is pending, and arms exactly one
 // for the soonest dwell crossing otherwise. This is what keeps the daemon
 // within its idle budget without a banned heartbeat.

@@ -168,6 +168,17 @@ func TestTopologyAgainstRealTmux(t *testing.T) {
 	if got := topoTmux(t, "list-windows", "-t", "agent-a", "-F", "#{window_id}"); got != agentWin {
 		t.Fatalf("refused unlink still damaged the window: want %s, got %q", agentWin, got)
 	}
+
+	statePlan := layout.PlanStateOptions(layout.StateCounts{Waiting: 2, Dead: 1, Working: 3, CIFailing: 4, Anchored: true}, true)
+	if err := eng.apply(context.Background(), statePlan); err != nil {
+		t.Fatalf("state options: %v", err)
+	}
+	if got := topoTmux(t, "show-options", "-gv", "@zdev_waiting_count"); got != "2" {
+		t.Fatalf("@zdev_waiting_count = %q", got)
+	}
+	if got := topoTmux(t, "show-options", "-gv", "@zdev_anchored"); got != "1" {
+		t.Fatalf("@zdev_anchored = %q", got)
+	}
 }
 
 // The reconciler half: prove that consider() gates on the snapshot signature

@@ -85,6 +85,32 @@ type TopoConfig struct {
 	// DwellSeconds is how long a wait must have stood before it earns a
 	// window.
 	DwellSeconds int
+
+	// PublishState exports aggregate daemon state into global tmux user
+	// options for status-line consumers (ZDEV_TMUX_STATE=1).
+	PublishState bool
+}
+
+type StateCounts struct {
+	Waiting, Dead, Working, CIFailing int
+	Anchored                          bool
+}
+
+func PlanStateOptions(s StateCounts, enabled bool) []Command {
+	if !enabled {
+		return nil
+	}
+	anchor := "0"
+	if s.Anchored {
+		anchor = "1"
+	}
+	return []Command{
+		cmd("set-option", "-g", "@zdev_waiting_count", itoa(s.Waiting)),
+		cmd("set-option", "-g", "@zdev_dead_count", itoa(s.Dead)),
+		cmd("set-option", "-g", "@zdev_working_count", itoa(s.Working)),
+		cmd("set-option", "-g", "@zdev_ci_fail_count", itoa(s.CIFailing)),
+		cmd("set-option", "-g", "@zdev_anchored", anchor),
+	}
 }
 
 // DefaultTopoConfig returns the disabled-by-default configuration.
