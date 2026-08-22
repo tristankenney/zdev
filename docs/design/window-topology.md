@@ -1,8 +1,8 @@
 # Window topology — what opens, what closes, and who pays for it
 
-**Status:** phases 1–4 built (2026-08-22): waiting windows, geometry guards,
-requested viewports, runner logs, CI panes, and priority row eviction. Dead
-agent pinning / `remain-on-exit` (phase 5) remains design.
+**Status:** phases 1–5 built (2026-08-22): waiting/dead-agent windows,
+geometry guards, requested viewports, runner logs, CI panes, priority row
+eviction, and readable retained agent corpses.
 **Started:** 2026-08-21 (operator signal: *"if zdev-core serves as the brain, it
 should then be open and closing windows in tmux based on what's happening"*).
 **Siblings:** `command-centre.md` owns the airlock this must obey;
@@ -311,7 +311,7 @@ coverage all hold.
 | 2b ✅ | **agent-requested panes** — `panereq`, `PlanPanes`, `pane_open`/`pane_close` | agent panes appear when unwanted, or the operator vetoes twice in a week |
 | 3 ✅ | **logs pane** on runner up/down, with suppression | operator closes it twice in a week → the condition wasn't worth a pane |
 | 4 ✅ | row budget + eviction, **CI pane** | any eviction the operator did not predict |
-| 5 | dead-agent **window** pinning + `remain-on-exit` | corpses accumulate unacked → reap like sessions |
+| 5 ✅ | dead-agent **window** pinning + `remain-on-exit` | corpses accumulate unacked → reap like sessions |
 
 Phase 2 before phase 3 is deliberate: the guards are a prerequisite for touching
 geometry at all, and they pay for themselves immediately by fixing a live bug in
@@ -333,6 +333,13 @@ evicted under pressure, followed by `@zdev-logs`; a requested viewport has the
 highest row priority. The planner makes at most one geometry change per
 snapshot so every subsequent floor calculation uses tmux's real post-change
 layout rather than predicted arithmetic.
+
+Phase 5 arms `remain-on-exit` only on panes positively classified as agents,
+and only while `ZDEV_TOPOLOGY=1`. A dead agent earns a linked window
+immediately, without the permission dwell. The existing `AttDead` lifecycle
+is the pin: `zdev ack` or fresh alive evidence clears it, after which the link
+is retired non-destructively while the original retained pane remains
+available for inspection or `respawn-pane`.
 
 **Global kill criterion.** If the operator starts arranging panes by hand *around*
 zdev — closing what it opens, reopening what it evicts — the budget model is

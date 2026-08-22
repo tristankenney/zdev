@@ -200,13 +200,20 @@ func (r *topoReconciler) considerPanes(ctx context.Context, snap *proto.Snapshot
 // logged and swallowed: a wedged or restarting tmux must never take the daemon
 // down, and the next tick retries.
 func (r *topoReconciler) reconcile(ctx context.Context, agents []layout.TopoAgent, anchored bool, nowUnix int64) {
+	windows, agentPanes := r.eng.agentInventory(ctx)
+	if remainPlan := layout.PlanRemainOnExit(agentPanes, r.cfg); len(remainPlan) > 0 {
+		if err := r.eng.apply(ctx, remainPlan); err != nil {
+			slog.Warn("topology: remain-on-exit apply failed", "err", err)
+		} else {
+			slog.Info("topology: armed agent corpse retention", "panes", len(remainPlan))
+		}
+	}
 	client := r.eng.clientSession(ctx)
 	if client == "" {
 		return
 	}
 
 	links := r.eng.clientLinks(ctx, client)
-	windows := r.eng.agentWindows(ctx)
 	resolved := make([]layout.TopoAgent, len(agents))
 	for i, a := range agents {
 		a.WindowID = windows[a.Session]
@@ -240,11 +247,12 @@ func snapshotAgents(snap *proto.Snapshot) []layout.TopoAgent {
 	out := make([]layout.TopoAgent, 0, len(snap.Projects))
 	for _, p := range snap.Projects {
 		out = append(out, layout.TopoAgent{
-			Session:       p.Name,
+			Session:       proto.SessionKey(p.Name),
 			Waiting:       p.Attention == proto.AttWaiting,
 			Permission:    p.WaitKind == proto.WaitKindPermission,
 			Acked:         p.WaitAcknowledged,
 			WaitStartedTS: p.WaitStartedTS,
+			Dead:          p.Attention == proto.AttDead,
 		})
 	}
 	return out

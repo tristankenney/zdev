@@ -259,6 +259,27 @@ func TestTopoReconcilerDrivesRealTmux(t *testing.T) {
 		t.Fatalf("agent window did not survive: want %s, got %q", agentWin, got)
 	}
 
+	// Phase 5: the first fleet observation armed corpse retention before the
+	// agent died. Killing its process leaves a readable dead pane/window, and
+	// AttDead pins that window until acknowledgement clears the condition.
+	if got := topoTmux(t, "show-options", "-pv", "-t", "agent-a:claude", "remain-on-exit"); got != "on" {
+		t.Fatalf("remain-on-exit = %q, want on", got)
+	}
+	topoTmux(t, "send-keys", "-t", "agent-a:claude", "C-c")
+	time.Sleep(300 * time.Millisecond)
+	if got := topoTmux(t, "display-message", "-p", "-t", "agent-a:claude", "#{pane_dead}"); got != "1" {
+		t.Fatalf("agent pane did not remain as a corpse: pane_dead=%q", got)
+	}
+	dead := &proto.Snapshot{Projects: []proto.Project{{Name: "agent-a", Attention: proto.AttDead}}}
+	r.consider(context.Background(), dead)
+	if !linked() {
+		t.Fatal("dead agent window was not pinned")
+	}
+	r.consider(context.Background(), idle) // acknowledgement/alive clears AttDead
+	if linked() {
+		t.Fatal("acknowledged dead-agent link was not retired")
+	}
+
 	// The signature is unchanged now, so a repeat pass must not touch tmux at
 	// all. Prove it by making tmux unreachable: a gated pass never calls it,
 	// so a broken binary path cannot fail the test.

@@ -182,46 +182,52 @@ func (e *layoutEngine) topoAgents(ctx context.Context, snap *proto.Snapshot) []l
 	if snap == nil {
 		return nil
 	}
-	windows := e.agentWindows(ctx)
+	windows, _ := e.agentInventory(ctx)
 	out := make([]layout.TopoAgent, 0, len(snap.Projects))
 	for _, p := range snap.Projects {
 		out = append(out, layout.TopoAgent{
-			Session:       p.Name,
-			WindowID:      windows[p.Name],
+			Session:       proto.SessionKey(p.Name),
+			WindowID:      windows[proto.SessionKey(p.Name)],
 			Waiting:       p.Attention == proto.AttWaiting,
 			Permission:    p.WaitKind == proto.WaitKindPermission,
 			Acked:         p.WaitAcknowledged,
 			WaitStartedTS: p.WaitStartedTS,
+			Dead:          p.Attention == proto.AttDead,
 		})
 	}
 	return out
 }
 
-// agentWindows maps session name → the window id holding its agent pane.
-func (e *layoutEngine) agentWindows(ctx context.Context) map[string]string {
+// agentInventory maps session name → agent window and returns the positively
+// classified agent panes whose corpse-retention option can be armed safely.
+func (e *layoutEngine) agentInventory(ctx context.Context) (map[string]string, []layout.AgentPaneRef) {
 	out, err := e.run(ctx, "list-panes", "-a", "-F",
 		strings.Join([]string{
 			"#{session_name}",
 			"#{window_id}",
 			"#{window_active}",
+			"#{pane_id}",
+			"#{remain-on-exit}",
 			"#{pane_title}",
 		}, topoFieldSep))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	reg := agents.NewRegistry(agents.Builtin())
 	byAgent := make(map[string]string)
 	byActive := make(map[string]string)
+	var agentPanes []layout.AgentPaneRef
 	for _, line := range strings.Split(out, "\n") {
-		f := strings.SplitN(strings.TrimSpace(line), topoFieldSep, 4)
-		if len(f) < 4 || f[0] == "" || f[1] == "" {
+		f := strings.SplitN(strings.TrimSpace(line), topoFieldSep, 6)
+		if len(f) < 6 || f[0] == "" || f[1] == "" {
 			continue
 		}
-		session, window, active, title := f[0], f[1], f[2] == "1", f[3]
+		session, window, active, paneID, remain, title := f[0], f[1], f[2] == "1", f[3], f[4] == "on", f[5]
 		if title == layout.SidebarTitle {
 			continue
 		}
 		if name, _ := reg.Classify(title); name != "" {
+			agentPanes = append(agentPanes, layout.AgentPaneRef{ID: paneID, RemainOnExit: remain})
 			if _, seen := byAgent[session]; !seen {
 				byAgent[session] = window
 			}
@@ -237,7 +243,7 @@ func (e *layoutEngine) agentWindows(ctx context.Context) map[string]string {
 			byAgent[session] = w
 		}
 	}
-	return byAgent
+	return byAgent, agentPanes
 }
 
 // snapshot fetches one snapshot over the daemon socket and closes the

@@ -42,6 +42,11 @@ func TestPlanTopology(t *testing.T) {
 		want []Command
 	}{
 		{
+			name: "dead agent is pinned immediately without a wait dwell",
+			v:    TopoView{ClientSession: "operator", Links: []TopoLink{ownWindow}, Agents: []TopoAgent{{Session: "agent-a", WindowID: "@1", Dead: true}}},
+			cfg:  topoCfg(), want: linkCmds("operator", "@1", "agent-a", "90"),
+		},
+		{
 			name: "disabled plans nothing even with a live prompt",
 			v: TopoView{
 				ClientSession: "operator",
@@ -276,6 +281,17 @@ func TestPlanTopology(t *testing.T) {
 				t.Errorf("PlanTopology mismatch\n got: %v\nwant: %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPlanRemainOnExitOnlyArmsRecognizedLivePanes(t *testing.T) {
+	panes := []AgentPaneRef{{ID: "%1"}, {ID: "%2", RemainOnExit: true}, {}}
+	want := []Command{cmd("set-option", "-p", "-t", "%1", "remain-on-exit", "on")}
+	if got := PlanRemainOnExit(panes, topoCfg()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan = %v, want %v", got, want)
+	}
+	if got := PlanRemainOnExit(panes, DefaultTopoConfig()); got != nil {
+		t.Fatalf("disabled plan = %v", got)
 	}
 }
 

@@ -122,6 +122,7 @@ type TopoAgent struct {
 
 	// WaitStartedTS is the unix second the wait began; 0 = not waiting.
 	WaitStartedTS int64
+	Dead          bool
 }
 
 // eligible reports the SNAPSHOT-ONLY half of the decision: everything
@@ -137,6 +138,8 @@ func (a TopoAgent) eligible(cfg TopoConfig, nowUnix int64) bool {
 	// The watcher is the daemon's control-mode anchor, never a workspace.
 	case a.Session == WatcherSession:
 		return false
+	case a.Dead:
+		return true
 	case !a.Waiting || !a.Permission || a.Acked:
 		return false
 	case a.WaitStartedTS <= 0:
@@ -321,19 +324,44 @@ func PlanTopology(v TopoView, cfg TopoConfig, nowUnix int64) []Command {
 // no-op. That is the correct bias: the signature is a change detector, never
 // the decision.
 func TopoSignature(agents []TopoAgent, anchored bool, cfg TopoConfig, nowUnix int64) string {
-	if anchored {
-		// While anchored the plan is always empty, so collapse every fleet
-		// shape to one signature: no churn until the anchor clears.
-		return "anchored"
+	if !cfg.Enabled {
+		return "disabled"
 	}
+	var fleet []string
 	var earned []string
 	for _, a := range agents {
+		if a.Session != "" && a.Session != WatcherSession {
+			fleet = append(fleet, a.Session)
+		}
 		if a.eligible(cfg, nowUnix) {
 			earned = append(earned, a.Session)
 		}
 	}
+	sort.Strings(fleet)
 	sort.Strings(earned)
-	return strings.Join(earned, "\x00")
+	prefix := "open"
+	if anchored {
+		prefix = "anchored"
+	}
+	return prefix + "\x00" + strings.Join(fleet, "\x00") + "\x01" + strings.Join(earned, "\x00")
+}
+
+type AgentPaneRef struct {
+	ID           string
+	RemainOnExit bool
+}
+
+func PlanRemainOnExit(panes []AgentPaneRef, cfg TopoConfig) []Command {
+	if !cfg.Enabled {
+		return nil
+	}
+	var out []Command
+	for _, p := range panes {
+		if p.ID != "" && !p.RemainOnExit {
+			out = append(out, cmd("set-option", "-p", "-t", p.ID, "remain-on-exit", "on"))
+		}
+	}
+	return out
 }
 
 // TopoNextDeadline returns the earliest unix second at which the plan could
@@ -346,6 +374,9 @@ func TopoSignature(agents []TopoAgent, anchored bool, cfg TopoConfig, nowUnix in
 // it arms ONE timer for exactly this instant, and arms nothing at all when the
 // answer is 0.
 func TopoNextDeadline(agents []TopoAgent, cfg TopoConfig, nowUnix int64) int64 {
+	if !cfg.Enabled {
+		return 0
+	}
 	var soonest int64
 	for _, a := range agents {
 		// Eligible-but-for-the-dwell is precisely the pending set.

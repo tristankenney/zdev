@@ -303,6 +303,7 @@ build_layout() {
         launch="${SHELL:-/bin/sh} -lic $(printf '%q' "$inner")"
         agent_pane=$(tmux split-window -h -t "$shell_pane" -c "$dir" -P -F '#{pane_id}' "$launch")
         tmux select-pane -t "$agent_pane" -T "agent"
+        [[ "${ZDEV_TOPOLOGY:-0}" == "1" ]] && tmux set-option -p -t "$agent_pane" remain-on-exit on 2>/dev/null || true
         # No select-layout here: the -h split already halves the shell
         # pane, which is even whether or not the (async, hook-driven)
         # sidebar has landed yet. even-horizontal would equalize the
@@ -1754,6 +1755,7 @@ CLAUDEEOF
         # Tag the window as a zdev-run loop (greppable; the fleet view, reap,
         # and later federation/migration key off this), recording the prompt.
         tmux set-option -w -t "$run_win" @zdev-run "$run_prompt" 2>/dev/null || true
+        [[ "${ZDEV_TOPOLOGY:-0}" == "1" ]] && tmux set-option -p -t "$run_win" remain-on-exit on 2>/dev/null || true
         [[ -n "$run_until" ]] && tmux set-option -w -t "$run_win" @zdev-loop-check "$run_until" 2>/dev/null || true
         echo "zdev run: spawned ${run_session}:${run_name} (${run_win})"
         if (( run_switch )) && [[ -n "${TMUX:-}" ]]; then

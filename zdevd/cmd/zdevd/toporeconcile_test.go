@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -159,25 +160,26 @@ func TestTopoSignatureGating(t *testing.T) {
 	if sig(recSnap(permWait("b", 60), permWait("a", 60))) != two {
 		t.Error("signature must not depend on project order")
 	}
-	// A fleet with nothing earning is the empty signature, distinct from both.
-	if idle := sig(recSnap(proto.Project{Name: "a", Attention: proto.AttWorking})); idle != "" {
-		t.Errorf("idle fleet signature = %q, want empty", idle)
+	// Idle membership remains in the signature so a newly created agent pane
+	// gets remain-on-exit armed even before it earns a link.
+	idle := sig(recSnap(proto.Project{Name: "a", Attention: proto.AttWorking}))
+	if idle == "" {
+		t.Error("idle fleet membership must participate")
 	}
-	// Under the dwell nothing has earned anything yet.
-	if fresh := sig(recSnap(permWait("a", 0))); fresh != "" {
-		t.Errorf("under-dwell signature = %q, want empty", fresh)
+	if fresh := sig(recSnap(permWait("a", 0))); fresh != idle {
+		t.Errorf("under-dwell wait should have idle membership signature: %q vs %q", fresh, idle)
 	}
 
 	anchored := recSnap(permWait("a", 60))
 	anchored.Anchor = &proto.Anchor{Title: "IMP-97"}
-	if got := sig(anchored); got != "anchored" {
-		t.Errorf("anchored fleet must collapse to one signature, got %q", got)
+	if got := sig(anchored); !strings.HasPrefix(got, "anchored\x00") {
+		t.Errorf("anchored fleet signature = %q", got)
 	}
-	// Anchored collapses every fleet shape together: no churn while in focus.
+	// Membership still changes while anchored so corpse retention can arm.
 	anchored2 := recSnap(permWait("a", 60), permWait("b", 1))
 	anchored2.Anchor = &proto.Anchor{Title: "IMP-97"}
-	if sig(anchored) != sig(anchored2) {
-		t.Error("anchored signature must not vary with the fleet")
+	if sig(anchored) == sig(anchored2) {
+		t.Error("anchored signature must vary with fleet membership")
 	}
 }
 
