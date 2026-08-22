@@ -202,6 +202,25 @@ func Plan(w Window, cfg Config) []Command {
 		}
 	}
 
+	// GHOST WINDOW: nothing left but zdev's own panes.
+	//
+	// tmux closes a window when its last pane exits, and a session when its
+	// last window closes. A sidebar pane defeats both: when the operator's
+	// shell and agent exit, the renderer keeps the window — and therefore the
+	// session — alive, and that empty session then rows itself in the sidebar
+	// as a project nobody can account for. Found 2026-08-22 as a `zdev` row
+	// surviving the checkout rename by two days, its only pane a renderer.
+	// This is the same failure PlanTeamReap already names for member windows
+	// ("the surviving sidebar pane kept dead member windows alive past their
+	// team"), one level up.
+	//
+	// Reaping our own panes just lets tmux do what it would have done
+	// unaided. Only zdev-owned panes are ever killed, so a window with any
+	// real pane left is untouched.
+	if !w.hasWorkPane() {
+		return ghostPlan(w)
+	}
+
 	switch {
 	case w.EffectiveWidth >= cfg.Threshold:
 		switch {
@@ -275,6 +294,32 @@ func killPlan(w Window, sidebars []Pane) []Command {
 		cmds = append(cmds, cmd("kill-pane", "-t", p.ID))
 	}
 	cmds = append(cmds, cmd("select-layout", "-t", w.ID, "even-horizontal"))
+	return cmds
+}
+
+// hasWorkPane reports whether any pane in the window is NOT zdev's own — a
+// shell, an editor, an agent, anything the operator would lose.
+func (w Window) hasWorkPane() bool {
+	for _, p := range w.Panes {
+		if p.isSidebar() || p.PaneOpt != "" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// ghostPlan kills every zdev-owned pane in a window that has nothing else
+// left, so tmux can close the window (and, if it was the last one, the
+// session). Emits nothing when there is nothing of ours to reap — a genuinely
+// empty inventory is a gather failure, not a licence to kill.
+func ghostPlan(w Window) []Command {
+	var cmds []Command
+	for _, p := range w.Panes {
+		if p.isSidebar() || p.PaneOpt != "" {
+			cmds = append(cmds, cmd("kill-pane", "-t", p.ID))
+		}
+	}
 	return cmds
 }
 

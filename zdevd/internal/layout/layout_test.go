@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -350,5 +351,82 @@ func TestPlanRefusesOperatorOwnedWindows(t *testing.T) {
 		Pane{ID: "%0", Width: 50, Height: 40, SidebarOpt: true})
 	if got := Plan(narrowZoom, cfg); got != nil {
 		t.Errorf("zoomed narrow window must not be reaped, got %v", got)
+	}
+}
+
+// A window whose only panes are zdev's own is a ghost: the renderer is holding
+// open a window — and therefore a session — that tmux would otherwise have
+// closed, and the empty session then rows itself as a project nobody can
+// account for. Reaping our own panes lets tmux finish the job.
+func TestPlanReapsGhostWindows(t *testing.T) {
+	cfg := DefaultConfig()
+	sidebar := Pane{ID: "%0", Width: 50, Height: 40, SidebarOpt: true, Title: SidebarTitle}
+	sidebar2 := Pane{ID: "%3", Width: 50, Height: 40, SidebarOpt: true, Title: SidebarTitle}
+	viewport := Pane{ID: "%9", Width: 100, Height: 8, PaneOpt: "api"}
+	shell := Pane{ID: "%1", Width: 150, Height: 40}
+
+	win := func(panes ...Pane) Window {
+		return Window{ID: "@1", Session: "api", EffectiveWidth: 300,
+			Panes: panes, SidebarCommand: "exec render"}
+	}
+
+	cases := []struct {
+		name string
+		w    Window
+		want []Command
+	}{
+		{
+			name: "sidebar alone is reaped",
+			w:    win(sidebar),
+			want: []Command{cmd("kill-pane", "-t", "%0")},
+		},
+		{
+			name: "duplicate sidebars alone are all reaped",
+			w:    win(sidebar, sidebar2),
+			want: []Command{cmd("kill-pane", "-t", "%0"), cmd("kill-pane", "-t", "%3")},
+		},
+		{
+			name: "sidebar plus an agent viewport, no work: both reaped",
+			w:    win(sidebar, viewport),
+			want: []Command{cmd("kill-pane", "-t", "%0"), cmd("kill-pane", "-t", "%9")},
+		},
+		{
+			name: "an agent viewport alone is reaped",
+			w:    win(viewport),
+			want: []Command{cmd("kill-pane", "-t", "%9")},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Plan(tc.w, cfg); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Plan mismatch\n got: %v\nwant: %v", got, tc.want)
+			}
+		})
+	}
+
+	// A real pane present → never a ghost, and the normal plan resumes.
+	for _, w := range []Window{win(shell), win(sidebar, shell), win(sidebar, viewport, shell)} {
+		for _, c := range Plan(w, cfg) {
+			if c.Args[0] == "kill-pane" && c.Args[2] == "%1" {
+				t.Fatalf("reaped the operator's shell: %v", c.Args)
+			}
+		}
+	}
+	// An empty inventory is a gather failure, not a licence to kill.
+	if got := Plan(win(), cfg); got != nil {
+		t.Errorf("empty inventory should plan nothing, got %v", got)
+	}
+
+	// The guards still win: a ghost the operator has zoomed or is reading is
+	// left alone until they are out of it.
+	zoomed := win(sidebar)
+	zoomed.Zoomed = true
+	if got := Plan(zoomed, cfg); got != nil {
+		t.Errorf("zoomed ghost must be left alone, got %v", got)
+	}
+	inMode := win(sidebar)
+	inMode.Panes[0].InMode = true
+	if got := Plan(inMode, cfg); got != nil {
+		t.Errorf("ghost in copy-mode must be left alone, got %v", got)
 	}
 }
