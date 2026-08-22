@@ -54,6 +54,7 @@
 #        "hooks": [{"type": "command", "command": "zdev-notify claude needs-permission --json"}]},
 #       {"hooks": [{"type": "command", "command": "zdev-notify claude waiting --json"}]} ] }
 set -eu
+umask 077
 
 TOOL="${1:-cli}"
 STATE="${2:-waiting}"
@@ -357,6 +358,11 @@ case "$STATE" in
         fi
         ;;
 esac
+
+# Existing files keep their old mode when `>` truncates them, so the umask
+# protects new tokens and this explicit tightening repairs legacy 0644 files
+# on their next hook event.
+[ ! -f "$TS_FILE" ] || chmod 600 "$TS_FILE" 2>/dev/null || true
 
 tmux select-pane -t "$TMUX_PANE" -T "$TITLE" 2>/dev/null || true
 

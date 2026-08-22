@@ -664,6 +664,7 @@ cmd_ack() {
         #    clears the demand, not the future.
         printf '%s\nack\n' "$(date +%s)" \
             > "${notif_dir}/zdev-notif-${s}.ts" 2>/dev/null || true
+        chmod 600 "${notif_dir}/zdev-notif-${s}.ts" 2>/dev/null || true
         acked=$((acked + 1))
     done
 
