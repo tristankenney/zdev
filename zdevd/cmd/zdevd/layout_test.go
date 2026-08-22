@@ -57,11 +57,12 @@ func TestParseInventory(t *testing.T) {
 	// contains the '|' delimiter to exercise the bounded split (title is
 	// the final field and must survive intact). Window-level width/session
 	// repeat per row and are taken from the first.
-	// 10th field is @zdev-team (empty here — not a teammate window).
+	// Fields 10-13 are @zdev-team, window_zoomed_flag, pane_in_mode and
+	// @zdev-pane (all empty/0 here — an ordinary, operator-untouched window).
 	out := strings.Join([]string{
-		"%9|0|0|50|50|0|1|240|work||zdev-sidebar",
-		"%0|51|0|94|50|1|0|240|work||nvim | src/main.go",
-		"%1|146|0|94|50|0|0|240|work||bash",
+		"%9|0|0|50|50|0|1|240|work||0|0||zdev-sidebar",
+		"%0|51|0|94|50|1|0|240|work||0|0||nvim | src/main.go",
+		"%1|146|0|94|50|0|0|240|work||0|0||bash",
 	}, "\n")
 
 	win, ok := parseInventory("@3", out)
@@ -81,6 +82,37 @@ func TestParseInventory(t *testing.T) {
 	mid := win.Panes[1]
 	if mid.ID != "%0" || !mid.Active || mid.Title != "nvim | src/main.go" {
 		t.Errorf("middle pane parsed wrong: %+v", mid)
+	}
+}
+
+// The guard fields must survive the round trip — they are what stops the
+// planners mutating a window the operator has taken over.
+func TestParseInventoryGuardFields(t *testing.T) {
+	out := strings.Join([]string{
+		"%0|0|0|100|50|1|0|240|work||1|0||● claude",
+		"%1|101|0|100|50|0|0|240|work||1|1|work|api · tests",
+	}, "\n")
+	win, ok := parseInventory("@3", out)
+	if !ok {
+		t.Fatal("parseInventory returned ok=false")
+	}
+	if !win.Zoomed {
+		t.Error("window_zoomed_flag=1 did not set Zoomed")
+	}
+	if win.Panes[0].InMode {
+		t.Error("pane 0 is not in a mode")
+	}
+	if !win.Panes[1].InMode {
+		t.Error("pane_in_mode=1 did not set InMode")
+	}
+	if win.Panes[0].PaneOpt != "" {
+		t.Errorf("pane 0 should carry no @zdev-pane, got %q", win.Panes[0].PaneOpt)
+	}
+	if win.Panes[1].PaneOpt != "work" {
+		t.Errorf("@zdev-pane = %q, want %q", win.Panes[1].PaneOpt, "work")
+	}
+	if win.Panes[1].Title != "api · tests" {
+		t.Errorf("title = %q", win.Panes[1].Title)
 	}
 }
 

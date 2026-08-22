@@ -71,9 +71,33 @@ type Pane struct {
 	Title      string
 	Active     bool
 	SidebarOpt bool
+
+	// InMode is #{pane_in_mode}: the pane is in copy-mode (or any other
+	// tmux mode). Resizing it discards the scroll position the operator was
+	// reading, so a window containing one is left entirely alone.
+	InMode bool
+
+	// Agent is true when the pane title classifies as an agent (resolved by
+	// the cmd layer against internal/agents — internal/layout stays
+	// dependency-free). The pane planner never takes rows from an agent.
+	Agent bool
+
+	// PaneOpt is the @zdev-pane option: non-empty means this pane IS a zdev
+	// agent viewport, and the value names the session it was opened for.
+	PaneOpt string
 }
 
 func (p Pane) isSidebar() bool { return p.SidebarOpt || p.Title == SidebarTitle }
+
+// anyPaneInMode reports whether any pane in the window is in copy-mode.
+func (w Window) anyPaneInMode() bool {
+	for _, p := range w.Panes {
+		if p.InMode {
+			return true
+		}
+	}
+	return false
+}
 
 // Window is the full input to Plan: the target window, the session that owns
 // it (for the zdevd-watcher exclusion), the effective width to threshold
@@ -83,6 +107,12 @@ func (p Pane) isSidebar() bool { return p.SidebarOpt || p.Title == SidebarTitle 
 type Window struct {
 	ID      string
 	Session string
+
+	// Zoomed is #{window_zoomed_flag}. A zoomed window is the operator
+	// deliberately filling the screen with one pane; splitting, killing or
+	// rebalancing under that fights them and silently discards the zoom.
+	// Plan refuses to touch such a window at all.
+	Zoomed bool
 
 	// EffectiveWidth is the width Plan thresholds against — the window's
 	// own width (so a hook firing from a clientless session still sizes by
@@ -150,6 +180,18 @@ func Plan(w Window, cfg Config) []Command {
 	}
 	// NEVER decorate a teammate's window (see Window.TeamWindow).
 	if w.TeamWindow {
+		return nil
+	}
+	// NEVER mutate a window the operator has taken over.
+	//
+	// Both of these were unguarded until 2026-08-22, which meant an ordinary
+	// resize hook could reflow a zoomed window (discarding the zoom) or
+	// resize a pane in copy-mode (discarding the operator's scroll position).
+	// Found while designing the pane planner — geometry changes are far more
+	// destructive than the sidebar's original show/hide made them look.
+	// Deferring is always safe: the next hook fire reconciles once the
+	// operator is out.
+	if w.Zoomed || w.anyPaneInMode() {
 		return nil
 	}
 

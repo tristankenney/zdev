@@ -310,3 +310,45 @@ func TestPlan_TeamWindowNeverDecorated(t *testing.T) {
 		t.Fatalf("Plan decorated a teammate window: %v", got)
 	}
 }
+
+// A window the operator has taken over is never mutated. Both guards were
+// missing until 2026-08-22 — an ordinary resize hook could discard a zoom or a
+// copy-mode scroll position.
+func TestPlanRefusesOperatorOwnedWindows(t *testing.T) {
+	cfg := DefaultConfig()
+	shell := Pane{ID: "%1", Width: 150, Height: 40}
+	agent := Pane{ID: "%2", Width: 150, Height: 40, Title: "● claude"}
+
+	base := func() Window {
+		return Window{ID: "@1", Session: "api", EffectiveWidth: 300,
+			Panes: []Pane{shell, agent}, SidebarCommand: "exec render"}
+	}
+
+	// Control: without a guard tripped, this window WOULD get a sidebar.
+	if got := Plan(base(), cfg); len(got) == 0 {
+		t.Fatal("control: expected a create plan for a wide sidebar-less window")
+	}
+
+	zoomed := base()
+	zoomed.Zoomed = true
+	if got := Plan(zoomed, cfg); got != nil {
+		t.Errorf("zoomed window must be left alone, got %v", got)
+	}
+
+	inMode := base()
+	inMode.Panes[1].InMode = true
+	if got := Plan(inMode, cfg); got != nil {
+		t.Errorf("window with a pane in copy-mode must be left alone, got %v", got)
+	}
+
+	// The guard must also suppress the KILL path — a narrow zoomed window
+	// must not have its sidebar torn out from under the operator.
+	narrowZoom := base()
+	narrowZoom.EffectiveWidth = 80
+	narrowZoom.Zoomed = true
+	narrowZoom.Panes = append(narrowZoom.Panes,
+		Pane{ID: "%0", Width: 50, Height: 40, SidebarOpt: true})
+	if got := Plan(narrowZoom, cfg); got != nil {
+		t.Errorf("zoomed narrow window must not be reaped, got %v", got)
+	}
+}

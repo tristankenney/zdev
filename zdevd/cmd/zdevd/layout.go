@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/tristankenney/zdev/zdevd/internal/layout"
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/teams"
 )
 
@@ -69,8 +70,9 @@ func layoutSubcmd(args []string) int {
 	}
 	sweep := verb == "team-sweep"
 	reap := verb == "team-reap"
-	if !sweep && !reap && fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "usage: zdevd layout [window-id] | zdevd layout team-sweep [window-id] | zdevd layout team-reap [-dry-run]")
+	topo := verb == "topology"
+	if !sweep && !reap && !topo && fs.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, "usage: zdevd layout [window-id] | zdevd layout team-sweep [window-id] | zdevd layout team-reap [-dry-run] | zdevd layout topology [-dry-run]")
 		return 2
 	}
 
@@ -102,13 +104,8 @@ func layoutSubcmd(args []string) int {
 		// -dry-run may follow the verb (`team-reap -dry-run`); flag.Parse
 		// stops at the first non-flag, so the trailing token lands as a
 		// positional and we read it ourselves rather than via the flagset.
-		dryRun := false
-		for _, a := range fs.Args()[1:] {
-			if a == "-dry-run" || a == "--dry-run" {
-				dryRun = true
-				continue
-			}
-			fmt.Fprintln(os.Stderr, "usage: zdevd layout team-reap [-dry-run]")
+		dryRun, ok := parseDryRun(fs.Args()[1:], "zdevd layout team-reap")
+		if !ok {
 			return 2
 		}
 		dir := *teamsDir
@@ -116,6 +113,14 @@ func layoutSubcmd(args []string) int {
 			dir = teams.DefaultDir()
 		}
 		return eng.teamReap(dryRun, dir)
+	}
+
+	if topo {
+		dryRun, ok := parseDryRun(fs.Args()[1:], "zdevd layout topology")
+		if !ok {
+			return 2
+		}
+		return eng.topology(dryRun, layout.TopoConfigFromEnv(os.LookupEnv))
 	}
 
 	if fs.NArg() == 1 {
@@ -136,6 +141,21 @@ func layoutSubcmd(args []string) int {
 	return 0
 }
 
+// parseDryRun reads a verb's trailing tokens, which flag.Parse leaves as
+// positionals once it stops at the verb. Returns ok=false after printing usage
+// when anything other than -dry-run appears.
+func parseDryRun(args []string, usage string) (dryRun, ok bool) {
+	for _, a := range args {
+		if a == "-dry-run" || a == "--dry-run" {
+			dryRun = true
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "usage: %s [-dry-run]\n", usage)
+		return false, false
+	}
+	return dryRun, true
+}
+
 // layoutEngine carries the resolved tmux binary, the layout config, and the
 // sidebar command for one invocation, so per-window work stays argument-free.
 type layoutEngine struct {
@@ -143,6 +163,15 @@ type layoutEngine struct {
 	socketName string
 	cfg        layout.Config
 	sidebarCmd string
+
+	// execPath overrides the zdevd binary path baked into a pane's attach
+	// command. Empty means os.Executable(); set by tests, where the running
+	// binary is the test harness rather than zdevd.
+	execPath string
+
+	// snapFn overrides the daemon-snapshot fetch (topology verb only).
+	// Nil in production; set by the live test. See (*layoutEngine).snapshot.
+	snapFn func(context.Context) (*proto.Snapshot, error)
 }
 
 // tmuxArgs prefixes `-L <socket>` when socketName is set (tests only) so a
@@ -196,9 +225,9 @@ func (e *layoutEngine) allWindows(ctx context.Context) []string {
 // we read them off the first row.
 const inventoryFormat = "#{pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|" +
 	"#{pane_height}|#{pane_active}|#{@is-sidebar}|#{window_width}|#{session_name}|" +
-	"#{@zdev-team}|#{pane_title}"
+	"#{@zdev-team}|#{window_zoomed_flag}|#{pane_in_mode}|#{@zdev-pane}|#{pane_title}"
 
-const inventoryFields = 11
+const inventoryFields = 14
 
 // processWindow reconciles a single window: lock, gather inventory (one
 // list-panes), compute the batch, apply it (one tmux exec). All failures are
@@ -301,7 +330,9 @@ func parseInventory(windowID, out string) (layout.Window, bool) {
 			Height:     atoiOr(f[4], 0),
 			Active:     f[5] == "1",
 			SidebarOpt: f[6] == "1",
-			Title:      f[10],
+			InMode:     f[11] == "1",
+			PaneOpt:    f[12],
+			Title:      f[13],
 		}
 		win.Panes = append(win.Panes, p)
 		if !have {
@@ -314,6 +345,9 @@ func parseInventory(windowID, out string) (layout.Window, bool) {
 		// pane reporting a team marks the whole window as a teammate's.
 		if f[9] != "" {
 			win.TeamWindow = true
+		}
+		if f[10] == "1" {
+			win.Zoomed = true
 		}
 	}
 	return win, have
