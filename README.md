@@ -141,10 +141,11 @@ state. Examples (built-in detection):
 
 - `● claude` / `✳ Implementing X` — claude is waiting on user input
 - `⠐ Claude Code` — claude is working (any Braille spinner prefix)
+- `[ ! ] Action Required …` — Codex is waiting on user input
 - `● opencode tui` — opencode is waiting on user input
 - `◆ claude` / `◆ opencode` — agent finished a task
 
-To wire up a new agent: add an `[[agent]]` block to
+To add, override, or remove an agent, add an `[[agent]]` block to
 `~/.config/zdev/sidebar.toml` listing the marker prefixes the agent emits.
 See [`config/sidebar.toml.example`](config/sidebar.toml.example) for the
 full schema. Adding an entry automatically:
@@ -152,6 +153,10 @@ full schema. Adding an entry automatically:
 - Teaches the sidebar to attribute matching pane titles to that agent
 - Adds the agent to `bin/zdev`'s auto-launch rotation (if `launch` is set)
 - Makes `AgentStates[name]` available in the daemon's snapshot
+
+Entries overlay the built-ins, so adding one does not remove the others. Set
+`enabled = false` on a named entry to remove it. Complex launch commands can
+set `command` to the executable zdev should probe on `PATH`.
 
 Agents that can't set their own pane titles can be driven externally via
 `zdev-notify <name> waiting` from a hook.

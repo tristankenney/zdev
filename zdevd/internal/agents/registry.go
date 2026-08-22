@@ -32,6 +32,7 @@ type Spec struct {
 	WaitingMarkers  []string
 	FinishedMarkers []string
 	SpinnerMarkers  []string
+	Command         string
 	Launch          string
 }
 
@@ -48,6 +49,7 @@ func Builtin() []Spec {
 			WaitingMarkers:  []string{"● claude", "✳ "},
 			FinishedMarkers: []string{"◆ claude"},
 			SpinnerMarkers:  []string{"⠂ ", "⠐ ", "⠠ ", "⠈ ", "⠁ ", "⠉ ", "⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "},
+			Command:         "claude",
 			// --continue resumes the directory's last conversation, but it
 			// exits nonzero when there is nothing to resume — which is every
 			// FRESH project (a new initiative home was how this surfaced
@@ -58,10 +60,21 @@ func Builtin() []Spec {
 			Launch: "sh -c 'claude --dangerously-skip-permissions --continue || exec claude --dangerously-skip-permissions'",
 		},
 		{
+			Name:    "codex",
+			Glyph:   "✦",
+			Command: "codex",
+			// Codex's default terminal title puts this prefix first while
+			// blocked on an approval or question. It does not currently emit
+			// a stable finished marker, so completion remains session-derived.
+			WaitingMarkers: []string{"[ ! ] Action Required", "[ . ] Action Required"},
+			Launch:         "codex",
+		},
+		{
 			Name:            "opencode",
 			Glyph:           "○",
 			WaitingMarkers:  []string{"● opencode"},
 			FinishedMarkers: []string{"◆ opencode"},
+			Command:         "opencode",
 			Launch:          "opencode",
 		},
 	}

@@ -5,9 +5,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tristankenney/zdev/zdevd/internal/agents"
 	"github.com/tristankenney/zdev/zdevd/internal/proto"
 	"github.com/tristankenney/zdev/zdevd/internal/tmuxctl"
 )
+
+func TestRecomputeAgents_UsesConfiguredMarkerStatus(t *testing.T) {
+	s := buildTestState("custom-session", []string{"%1"}, []string{"WAIT custom"})
+	s.agents = agents.NewRegistry([]agents.Spec{{
+		Name:           "custom",
+		WaitingMarkers: []string{"WAIT custom"},
+	}})
+	recomputeAgents(s, "custom-session")
+	if got := s.projectData["custom-session"].AgentStates["custom"]; got != "waiting" {
+		t.Fatalf("custom AgentStates status = %q; want waiting", got)
+	}
+}
 
 // TestApplyPaneCwdChanged verifies that PaneCwdChanged records the cwd on the
 // pane struct — both when the pane was previously known (from

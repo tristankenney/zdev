@@ -76,11 +76,15 @@ func recomputeAgents(s *state, sessionName string) {
 			// 19 idle Claude sessions don't pulse on every daemon restart.
 			// Keep the two responsibilities separate; agents.Registry is for
 			// attribution, tmuxctl.ClassifyPaneTitle for status semantics.
-			name, _ := s.agents.Classify(p.Title)
+			name, status := s.agents.Classify(p.Title)
 			if name == "" {
 				continue
 			}
-			status := tmuxctl.ClassifyPaneTitle(p.Title)
+			// Claude Code uses this exact title for its idle prompt even
+			// though the broad "✳ " marker otherwise means waiting.
+			if name == "claude" && p.Title == "✳ Claude Code" {
+				continue
+			}
 			b := buckets[name]
 			if b == nil {
 				b = &agentBucket{}

@@ -458,8 +458,7 @@ func TestDefaultsValues(t *testing.T) {
 	}
 }
 
-// TestBuiltinAgents covers the default agent registry: at least claude
-// and opencode are present with non-empty glyphs and launch lines.
+// TestBuiltinAgents covers the default agent registry.
 func TestBuiltinAgents(t *testing.T) {
 	got := BuiltinAgents()
 	if len(got) < 2 {
@@ -469,7 +468,7 @@ func TestBuiltinAgents(t *testing.T) {
 	for _, a := range got {
 		byName[a.Name] = a
 	}
-	for _, name := range []string{"claude", "opencode"} {
+	for _, name := range []string{"claude", "codex", "opencode"} {
 		spec, ok := byName[name]
 		if !ok {
 			t.Errorf("BuiltinAgents missing %q: %+v", name, got)
@@ -495,18 +494,37 @@ func TestEffectiveAgents_FallbackToBuiltins(t *testing.T) {
 	}
 }
 
-// TestEffectiveAgents_UserAgentsReplace covers the "any [[agent]] in TOML
-// replaces the defaults" semantic. Writing one custom agent should NOT
-// inherit claude/opencode — the user opts into managing the full list.
-func TestEffectiveAgents_UserAgentsReplace(t *testing.T) {
+// TestEffectiveAgents_UserAgentsOverlay verifies custom agents append without
+// making the user duplicate every built-in entry.
+func TestEffectiveAgents_UserAgentsOverlay(t *testing.T) {
 	c := Defaults()
 	c.Agents = []AgentSpec{{Name: "custom-agent", Glyph: "★", Launch: "myagent"}}
 	got := c.EffectiveAgents()
-	if len(got) != 1 {
-		t.Fatalf("EffectiveAgents() with 1 user agent = %d entries; want 1 (replace semantic)", len(got))
+	if len(got) != len(BuiltinAgents())+1 {
+		t.Fatalf("EffectiveAgents() with 1 user agent = %d entries; want %d", len(got), len(BuiltinAgents())+1)
 	}
-	if got[0].Name != "custom-agent" {
-		t.Errorf("EffectiveAgents()[0].Name = %q; want %q", got[0].Name, "custom-agent")
+	if got[len(got)-1].Name != "custom-agent" {
+		t.Errorf("last EffectiveAgents entry = %q; want custom-agent", got[len(got)-1].Name)
+	}
+}
+
+func TestEffectiveAgents_DisableAndOverride(t *testing.T) {
+	disabled := false
+	c := Defaults()
+	c.Agents = []AgentSpec{
+		{Name: "codex", Enabled: &disabled},
+		{Name: "claude", Glyph: "C", Command: "claude", Launch: "claude --safe"},
+	}
+	got := c.EffectiveAgents()
+	byName := make(map[string]AgentSpec, len(got))
+	for _, spec := range got {
+		byName[spec.Name] = spec
+	}
+	if _, ok := byName["codex"]; ok {
+		t.Fatal("disabled codex remained in effective registry")
+	}
+	if byName["claude"].Launch != "claude --safe" {
+		t.Errorf("claude override not applied: %+v", byName["claude"])
 	}
 }
 
@@ -583,5 +601,82 @@ func TestCollapseConfig(t *testing.T) {
 	}
 	if len(c2.Collapse.Expand) != 1 || c2.Collapse.Expand[0] != "marketplace" {
 		t.Errorf("expand = %v", c2.Collapse.Expand)
+	}
+}
+
+// TestEffectiveAgents_PartialOverrideMerges pins the overlay contract the
+// docs promise: every field except name is optional, so a glyph-only
+// override of a built-in keeps its markers, command, and launch —
+// detection and auto-launch survive a cosmetic customization. An
+// explicitly empty list clears the built-in's (presence-aware via nil).
+func TestEffectiveAgents_PartialOverrideMerges(t *testing.T) {
+	var builtin AgentSpec
+	for _, b := range BuiltinAgents() {
+		if b.Name == "claude" {
+			builtin = b
+		}
+	}
+	if builtin.Name == "" || len(builtin.WaitingMarkers) == 0 || builtin.Launch == "" {
+		t.Fatalf("built-in claude spec not found or incomplete: %+v", builtin)
+	}
+
+	cfg := Config{Agents: []AgentSpec{{Name: "claude", Glyph: "☯"}}}
+	specs := cfg.EffectiveAgents()
+	var got AgentSpec
+	for _, s := range specs {
+		if s.Name == "claude" {
+			got = s
+		}
+	}
+	if got.Glyph != "☯" {
+		t.Errorf("Glyph = %q; want the override ☯", got.Glyph)
+	}
+	if len(got.WaitingMarkers) != len(builtin.WaitingMarkers) ||
+		got.Launch != builtin.Launch || got.Command != builtin.Command {
+		t.Errorf("glyph-only override erased built-in fields: %+v", got)
+	}
+
+	cfg = Config{Agents: []AgentSpec{{Name: "claude", WaitingMarkers: []string{}}}}
+	for _, s := range cfg.EffectiveAgents() {
+		if s.Name == "claude" && len(s.WaitingMarkers) != 0 {
+			t.Errorf("explicit empty list must clear the built-in's markers: %+v", s.WaitingMarkers)
+		}
+	}
+}
+
+// TestLoad_RejectsMalformedAgentCommand pins the line-protocol guard:
+// command must be one executable token — whitespace, shell metacharacters,
+// and option-like values fail loading with the agent named; launch must be
+// a single line so it cannot split the tab-separated record.
+func TestLoad_RejectsMalformedAgentCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"clean", "[[agent]]\nname = \"x\"\ncommand = \"my-agent\"\nlaunch = \"my-agent --go\"\n", true},
+		{"path", "[[agent]]\nname = \"x\"\ncommand = \"/opt/bin/agent\"\nlaunch = \"a\"\n", true},
+		{"space", "[[agent]]\nname = \"x\"\ncommand = \"rm -rf\"\nlaunch = \"a\"\n", false},
+		{"semicolon", "[[agent]]\nname = \"x\"\ncommand = \"a;b\"\nlaunch = \"a\"\n", false},
+		{"tab", "[[agent]]\nname = \"x\"\ncommand = \"a\\tb\"\nlaunch = \"a\"\n", false},
+		{"quote", "[[agent]]\nname = \"x\"\ncommand = \"a'b\"\nlaunch = \"a\"\n", false},
+		{"dash", "[[agent]]\nname = \"x\"\ncommand = \"-rf\"\nlaunch = \"a\"\n", false},
+		{"newline-launch", "[[agent]]\nname = \"x\"\ncommand = \"a\"\nlaunch = \"a\\nb\"\n", false},
+		{"wrapper-launch", "[[agent]]\nname = \"x\"\ncommand = \"agent\"\nlaunch = \"env FOO=1 sh -c 'agent --x'\"\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "sidebar.toml")
+			if err := os.WriteFile(p, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(p)
+			if tc.ok && err != nil {
+				t.Errorf("Load = %v; want ok", err)
+			}
+			if !tc.ok && err == nil {
+				t.Errorf("Load accepted a malformed agent spec")
+			}
+		})
 	}
 }

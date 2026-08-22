@@ -6,8 +6,8 @@
 //   - CONFIG-01: file-not-found is non-fatal — Defaults() with env overrides
 //     applied is returned silently.
 //   - CONFIG-02: 12 documented keys decode flat (no nested tables).
-//   - CONFIG-03: hybrid env/TOML for 4 user-facing keys (ZDEV_WORKSPACE,
-//     ZDEV_SIDEBAR_WIDTH, ZDEV_SIDEBAR_CLAUDE_GLYPH, ZDEV_SIDEBAR_PI_GLYPH);
+//   - CONFIG-03: hybrid env/TOML for user-facing keys (ZDEV_WORKSPACE,
+//     ZDEV_SIDEBAR_WIDTH, and legacy glyph overrides);
 //     env wins when set. The 8 cadence/threshold keys are TOML-only (D4-13).
 //   - CONFIG-04: unknown keys are logged at WARN via MetaData.Undecoded() and
 //     ignored — config still loads.
@@ -23,10 +23,13 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -74,10 +77,8 @@ type Config struct {
 	// at shell level, not via sidebar.toml restart).
 	ShowUnmanaged bool `toml:"-"`
 
-	// Agents is the multi-agent registry (CONFIG-06). When any [[agent]]
-	// entries appear in the user's TOML, the built-in defaults are
-	// REPLACED wholesale — opt-in management of the full list. Leaving
-	// the section absent uses the defaults from BuiltinAgents().
+	// Agents is the multi-agent registry (CONFIG-06). Entries overlay the
+	// built-ins by name; new names append and enabled=false removes.
 	Agents []AgentSpec `toml:"agent"`
 }
 
@@ -87,14 +88,16 @@ type Config struct {
 //   - the sidebar chip per attributed agent (glyph)
 //   - bin/zdev's default agent-launcher selection (launch line + PATH probe)
 //
-// All fields except Name are optional; an entry with only Name set is
-// treated as "this agent exists but emits no recognisable pane titles" —
-// useful for marking a shell-only client whose state is set via
-// zdev-notify alone.
+// All fields except Name are optional. A new entry with only Name exists for
+// hook-driven state; an entry matching a built-in replaces that entire spec.
 type AgentSpec struct {
 	// Name is the agent identifier used as the map key on the wire and
 	// passed to zdev-notify as its first arg. Lowercase, no spaces.
 	Name string `toml:"name"`
+
+	// Enabled removes a built-in agent when explicitly false. Nil and true
+	// both mean enabled. A disabled entry needs only name + enabled=false.
+	Enabled *bool `toml:"enabled"`
 
 	// Glyph is the single-character icon shown in the sidebar chip when
 	// the agent is attributed to a pane (e.g., "✻", "○", "π").
@@ -112,6 +115,11 @@ type AgentSpec struct {
 	// SpinnerMarkers lists pane-title prefixes meaning "this agent is
 	// actively working". Typically Braille U+2800–U+28FF prefixes.
 	SpinnerMarkers []string `toml:"spinner_markers"`
+
+	// Command is the executable used for PATH probing before Launch runs.
+	// Set it when Launch begins with a wrapper such as sh or env. When empty,
+	// the first word of Launch is used.
+	Command string `toml:"command"`
 
 	// Launch is the shell command that `bin/zdev` invokes to start the
 	// agent pane when this agent is the chosen default. Empty means
@@ -135,6 +143,7 @@ func BuiltinAgents() []AgentSpec {
 			WaitingMarkers:  s.WaitingMarkers,
 			FinishedMarkers: s.FinishedMarkers,
 			SpinnerMarkers:  s.SpinnerMarkers,
+			Command:         s.Command,
 			Launch:          s.Launch,
 		}
 	}
@@ -184,14 +193,66 @@ func Defaults() Config {
 	}
 }
 
-// EffectiveAgents returns the agent list to use at runtime — the user's
-// [[agent]] entries if any, else BuiltinAgents(). This is the single
-// source of truth callers should consume.
+// EffectiveAgents overlays user entries onto the built-ins. A new name is
+// appended, a matching name MERGES onto the built-in field by field —
+// every field except name is optional, so a glyph-only override keeps the
+// built-in's markers, command, and launch — and enabled=false removes it.
+// Presence-awareness: an omitted list (nil) keeps the built-in's; an
+// explicitly empty list (waiting_markers = []) clears it. This makes
+// adding one agent independent from the rest of the registry and gives
+// removal an explicit, reviewable form.
 func (c Config) EffectiveAgents() []AgentSpec {
-	if len(c.Agents) > 0 {
-		return c.Agents
+	out := BuiltinAgents()
+	index := make(map[string]int, len(out))
+	for i, spec := range out {
+		index[strings.ToLower(strings.TrimSpace(spec.Name))] = i
 	}
-	return BuiltinAgents()
+	removed := make(map[string]bool)
+	for _, spec := range c.Agents {
+		name := strings.ToLower(strings.TrimSpace(spec.Name))
+		if name == "" {
+			continue
+		}
+		spec.Name = name
+		if spec.Enabled != nil && !*spec.Enabled {
+			removed[name] = true
+			continue
+		}
+		delete(removed, name)
+		if i, ok := index[name]; ok {
+			merged := out[i]
+			if spec.Glyph != "" {
+				merged.Glyph = spec.Glyph
+			}
+			if spec.WaitingMarkers != nil {
+				merged.WaitingMarkers = spec.WaitingMarkers
+			}
+			if spec.FinishedMarkers != nil {
+				merged.FinishedMarkers = spec.FinishedMarkers
+			}
+			if spec.SpinnerMarkers != nil {
+				merged.SpinnerMarkers = spec.SpinnerMarkers
+			}
+			if spec.Command != "" {
+				merged.Command = spec.Command
+			}
+			if spec.Launch != "" {
+				merged.Launch = spec.Launch
+			}
+			merged.Enabled = spec.Enabled
+			out[i] = merged
+		} else {
+			index[name] = len(out)
+			out = append(out, spec)
+		}
+	}
+	filtered := out[:0]
+	for _, spec := range out {
+		if !removed[spec.Name] {
+			filtered = append(filtered, spec)
+		}
+	}
+	return filtered
 }
 
 // AgentRegistry returns the freshly-built agents.Registry that the rest
@@ -209,6 +270,7 @@ func (c Config) AgentRegistry() *agents.Registry {
 			WaitingMarkers:  s.WaitingMarkers,
 			FinishedMarkers: s.FinishedMarkers,
 			SpinnerMarkers:  s.SpinnerMarkers,
+			Command:         s.Command,
 			Launch:          s.Launch,
 		}
 	}
@@ -258,7 +320,41 @@ func Load(path string) (Config, error) {
 		slog.Warn("config: unknown key (ignored)", "path", path, "key", key.String())
 	}
 
+	if err := validateAgents(cfg.Agents); err != nil {
+		slog.Error("config: invalid [[agent]] entry", "path", path, "err", err)
+		return Config{}, err
+	}
+
 	return applyEnvOverrides(cfg), nil
+}
+
+// commandToken permits exactly one executable token for AgentSpec.Command:
+// a bare name or a path, no whitespace, no shell metacharacters, not
+// option-like. The value crosses zdev-show's tab-separated line protocol
+// into a generated `command -v <token>` shell fragment (bin/zdev), so
+// anything looser can change record boundaries or the generated program.
+var commandToken = regexp.MustCompile(`^[A-Za-z0-9._+/-]+$`)
+
+// validateAgents rejects agent specs whose fields would corrupt the
+// zdev-show agents line protocol or the shell chain built from it. Launch
+// stays deliberately free-form (it is the user's own launch command and is
+// exec'd, not quoted) except that it must be a single line — a newline
+// splits the tab-separated record; a tab inside Launch is harmless because
+// the consumer's read slurps the remainder of the line into that field.
+func validateAgents(specs []AgentSpec) error {
+	for _, spec := range specs {
+		name := strings.TrimSpace(spec.Name)
+		if spec.Command != "" && (!commandToken.MatchString(spec.Command) || strings.HasPrefix(spec.Command, "-")) {
+			return fmt.Errorf("agent %q: command %q must be a single executable name or path (no whitespace, shell metacharacters, or leading dash)", name, spec.Command)
+		}
+		if strings.ContainsAny(spec.Launch, "\n\r") {
+			return fmt.Errorf("agent %q: launch must be a single line", name)
+		}
+		if strings.ContainsAny(name, " \t\n\r") {
+			return fmt.Errorf("agent %q: name must not contain whitespace", name)
+		}
+	}
+	return nil
 }
 
 // applyEnvOverrides layers CONFIG-03's 4 hybrid env vars on top of cfg. Env

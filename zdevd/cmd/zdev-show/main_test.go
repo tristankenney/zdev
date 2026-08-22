@@ -266,6 +266,15 @@ func TestFormatAgentsFromRegistry_Empty(t *testing.T) {
 	}
 }
 
+func TestFormatAgentsFromRegistry_UsesExplicitProbeCommand(t *testing.T) {
+	r := agents.NewRegistry([]agents.Spec{{
+		Name: "wrapped", Command: "codex", Launch: "sh -c 'exec codex'",
+	}})
+	if got, want := formatAgentsFromRegistry(r), "codex\tsh -c 'exec codex'\n"; got != want {
+		t.Errorf("formatAgentsFromRegistry = %q; want %q", got, want)
+	}
+}
+
 // TestFormatLegend_AgentTeams verifies the legend documents the Agent Teams
 // vocabulary the sidebar actually renders (chipTeamBadge): the ⊛ lead-row
 // badge, the busy/idle/waiting bullet states, and the ZDEV_TEAM_WINDOWS knob

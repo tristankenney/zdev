@@ -40,9 +40,8 @@
 # [[agent]] blocks tell zdev which AI clients exist, how to detect their
 # state from a pane title, and how `zdev <project>` should auto-launch them.
 #
-# When the section is ABSENT, zdev uses the built-in defaults (claude +
-# opencode below). When PRESENT, your list REPLACES the defaults wholesale
-# — list every agent you want, including claude if you still use it.
+# Entries overlay the built-ins (claude, codex, and opencode): a new name adds
+# an agent, a matching name overrides it, and `enabled = false` removes it.
 #
 # bin/zdev iterates these in declaration order at session-start: the first
 # agent whose `launch` binary resolves on $PATH wins the auto-spawned pane.
@@ -58,6 +57,14 @@ finished_markers = ["◆ claude"]
 # have to enumerate every code point.
 spinner_markers  = ["⠂ ", "⠐ ", "⠠ ", "⠈ ", "⠁ ", "⠉ ", "⠋ ", "⠙ ", "⠹ ", "⠸ "]
 launch           = "claude --dangerously-skip-permissions --continue"
+
+[[agent]]
+name             = "codex"
+glyph            = "✦"
+# Codex emits these at the start of its default terminal title when blocked.
+waiting_markers  = ["[ ! ] Action Required", "[ . ] Action Required"]
+command          = "codex"
+launch           = "codex"
 
 [[agent]]
 name             = "opencode"
@@ -77,6 +84,11 @@ launch           = "opencode"
 # waiting_markers  = ["● aider"]
 # finished_markers = ["◆ aider"]
 # launch           = ""
+
+# Remove a built-in without restating the other defaults:
+# [[agent]]
+# name    = "opencode"
+# enabled = false
 
 # --- grouped sidebar collapse (ZDEV_SIDEBAR_GROUP=collapse) ---
 # The env knob is the master switch; this section tunes WHICH groups fold.
