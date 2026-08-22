@@ -1,0 +1,184 @@
+package main
+
+import (
+	"testing"
+	"time"
+
+	"github.com/tristankenney/zdev/zdevd/internal/layout"
+	"github.com/tristankenney/zdev/zdevd/internal/proto"
+)
+
+const recNow = int64(1_700_000_000)
+
+func recCfg() layout.TopoConfig {
+	c := layout.DefaultTopoConfig()
+	c.Enabled = true
+	return c
+}
+
+func recSnap(projects ...proto.Project) *proto.Snapshot {
+	return &proto.Snapshot{Projects: projects}
+}
+
+func permWait(name string, age int64) proto.Project {
+	return proto.Project{
+		Name:          name,
+		Attention:     proto.AttWaiting,
+		WaitKind:      proto.WaitKindPermission,
+		WaitStartedTS: recNow - age,
+	}
+}
+
+func TestSnapshotAgents(t *testing.T) {
+	agents := snapshotAgents(recSnap(
+		permWait("a", 60),
+		proto.Project{Name: "b", Attention: proto.AttWorking},
+		proto.Project{
+			Name: "c", Attention: proto.AttWaiting,
+			WaitKind: proto.WaitKindDecision, WaitStartedTS: recNow - 5,
+		},
+	))
+	if len(agents) != 3 {
+		t.Fatalf("want 3 agents, got %d", len(agents))
+	}
+	if !agents[0].Waiting || !agents[0].Permission {
+		t.Errorf("a should be a waiting permission prompt: %+v", agents[0])
+	}
+	if agents[1].Waiting {
+		t.Errorf("b is working, not waiting: %+v", agents[1])
+	}
+	if agents[2].Permission {
+		t.Errorf("c is a decision, not a permission prompt: %+v", agents[2])
+	}
+	// Window ids are deliberately unresolved here — that costs a tmux call.
+	for _, a := range agents {
+		if a.WindowID != "" {
+			t.Errorf("snapshotAgents must not resolve window ids: %+v", a)
+		}
+	}
+}
+
+func TestSnapshotAnchored(t *testing.T) {
+	if snapshotAnchored(nil) {
+		t.Error("nil snapshot is not anchored")
+	}
+	if snapshotAnchored(&proto.Snapshot{}) {
+		t.Error("no anchor block is not anchored")
+	}
+	if snapshotAnchored(&proto.Snapshot{Anchor: &proto.Anchor{}}) {
+		t.Error("an empty anchor title is not anchored")
+	}
+	if !snapshotAnchored(&proto.Snapshot{Anchor: &proto.Anchor{Title: "IMP-97"}}) {
+		t.Error("a titled anchor is anchored")
+	}
+}
+
+// The signature is what keeps an idle fleet from spending subprocesses: it
+// must be stable across snapshots that cannot change the plan, and must move
+// when the set of link-earning sessions does.
+func TestTopoSignatureGating(t *testing.T) {
+	cfg := recCfg()
+	sig := func(snap *proto.Snapshot) string {
+		return layout.TopoSignature(snapshotAgents(snap), snapshotAnchored(snap), cfg, recNow)
+	}
+
+	// The signature must move when the earning set does — this is the gate
+	// that decides whether a published snapshot is worth any tmux calls, and
+	// a constant signature would silently wedge it shut after the first
+	// reconcile.
+	one := sig(recSnap(permWait("a", 60)))
+	two := sig(recSnap(permWait("a", 60), permWait("b", 60)))
+	if one == two {
+		t.Errorf("signature must distinguish fleet shapes, both = %q", one)
+	}
+	if one == "" {
+		t.Error("an earning fleet must not produce the empty signature")
+	}
+	// Stable across re-derivation, and order-independent.
+	if sig(recSnap(permWait("b", 60), permWait("a", 60))) != two {
+		t.Error("signature must not depend on project order")
+	}
+	// A fleet with nothing earning is the empty signature, distinct from both.
+	if idle := sig(recSnap(proto.Project{Name: "a", Attention: proto.AttWorking})); idle != "" {
+		t.Errorf("idle fleet signature = %q, want empty", idle)
+	}
+	// Under the dwell nothing has earned anything yet.
+	if fresh := sig(recSnap(permWait("a", 0))); fresh != "" {
+		t.Errorf("under-dwell signature = %q, want empty", fresh)
+	}
+
+	anchored := recSnap(permWait("a", 60))
+	anchored.Anchor = &proto.Anchor{Title: "IMP-97"}
+	if got := sig(anchored); got != "anchored" {
+		t.Errorf("anchored fleet must collapse to one signature, got %q", got)
+	}
+	// Anchored collapses every fleet shape together: no churn while in focus.
+	anchored2 := recSnap(permWait("a", 60), permWait("b", 1))
+	anchored2.Anchor = &proto.Anchor{Title: "IMP-97"}
+	if sig(anchored) != sig(anchored2) {
+		t.Error("anchored signature must not vary with the fleet")
+	}
+}
+
+// A disabled reconciler must return immediately without registering — the
+// whole point of the knob is that the default daemon is untouched.
+func TestReconcilerDisabledReturnsImmediately(t *testing.T) {
+	r := newTopoReconciler(nil, nil, layout.DefaultTopoConfig(), layout.DefaultPaneConfig(), t.TempDir())
+	done := make(chan error, 1)
+	go func() { done <- r.Run(t.Context()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("disabled Run returned %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		// A nil hub would have panicked on Register, so a hang here means
+		// the disabled guard is missing.
+		t.Fatal("disabled Run did not return; it must not subscribe")
+	}
+}
+
+func TestReconcilerDefaults(t *testing.T) {
+	r := newTopoReconciler(nil, nil, recCfg(), layout.DefaultPaneConfig(), t.TempDir())
+	if r.now == nil {
+		t.Error("reconciler must thread a clock, not call time.Now inline")
+	}
+	if r.applied {
+		t.Error("a fresh reconciler has not applied anything yet")
+	}
+}
+
+// The reconciler holds no timer when nothing is pending, and arms exactly one
+// for the soonest dwell crossing otherwise. This is what keeps the daemon
+// within its idle budget without a banned heartbeat.
+func TestTopoNextDeadline(t *testing.T) {
+	cfg := recCfg() // dwell 4s
+	deadline := func(snap *proto.Snapshot) int64 {
+		return layout.TopoNextDeadline(snapshotAgents(snap), cfg, recNow)
+	}
+
+	if got := deadline(recSnap()); got != 0 {
+		t.Errorf("empty fleet must arm nothing, got %d", got)
+	}
+	if got := deadline(recSnap(proto.Project{Name: "a", Attention: proto.AttWorking})); got != 0 {
+		t.Errorf("a working fleet must arm nothing, got %d", got)
+	}
+	// Already past the dwell: this pass handles it, no future wake-up needed.
+	if got := deadline(recSnap(permWait("a", 600))); got != 0 {
+		t.Errorf("an aged wait needs no timer, got %d", got)
+	}
+	// Pending: arm for the moment it crosses.
+	if got, want := deadline(recSnap(permWait("a", 1))), recNow-1+4; got != want {
+		t.Errorf("deadline = %d, want %d", got, want)
+	}
+	// Two pending waits arm for the SOONEST.
+	if got, want := deadline(recSnap(permWait("a", 0), permWait("b", 3))), recNow-3+4; got != want {
+		t.Errorf("soonest deadline = %d, want %d", got, want)
+	}
+	// A pending wait that is disqualified for another reason arms nothing.
+	acked := permWait("a", 0)
+	acked.WaitAcknowledged = true
+	if got := deadline(recSnap(acked)); got != 0 {
+		t.Errorf("an acked wait needs no timer, got %d", got)
+	}
+}

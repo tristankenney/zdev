@@ -39,3 +39,35 @@ func envInt(lookup func(string) (string, bool), key string, def, min int) int {
 	}
 	return n
 }
+
+// TopoConfigFromEnv builds a TopoConfig from the ZDEV_TOPOLOGY* knobs. Same
+// injected-lookup discipline as ConfigFromEnv.
+//
+// ZDEV_TOPOLOGY gates the whole feature and defaults to OFF — current
+// behavior is the default, per the standing convention that every new
+// user-facing surface ships behind a knob. Only "1" enables it; anything else
+// (including "true") is treated as unset, so a typo cannot silently start
+// moving windows around.
+func TopoConfigFromEnv(lookup func(string) (string, bool)) TopoConfig {
+	cfg := DefaultTopoConfig()
+	if v, ok := lookup("ZDEV_TOPOLOGY"); ok && v == "1" {
+		cfg.Enabled = true
+	}
+	cfg.LinkIndex = envInt(lookup, "ZDEV_TOPOLOGY_INDEX", DefaultLinkIndex, 1)
+	cfg.DwellSeconds = envInt(lookup, "ZDEV_TOPOLOGY_DWELL", DefaultTopoDwellSeconds, 0)
+	return cfg
+}
+
+// PaneConfigFromEnv builds a PaneConfig from the ZDEV_PANES* knobs. Same
+// injected-lookup discipline as ConfigFromEnv; disabled unless ZDEV_PANES=1,
+// so an agent's request is inert on a default install.
+func PaneConfigFromEnv(lookup func(string) (string, bool)) PaneConfig {
+	cfg := DefaultPaneConfig()
+	if v, ok := lookup("ZDEV_PANES"); ok && v == "1" {
+		cfg.Enabled = true
+	}
+	cfg.Rows = envInt(lookup, "ZDEV_PANES_ROWS", DefaultPaneRows, 2)
+	cfg.DonorFloorRows = envInt(lookup, "ZDEV_PANES_DONOR_FLOOR", DefaultDonorFloorRows, 1)
+	cfg.MaxAgeSec = envInt(lookup, "ZDEV_PANES_MAX_AGE", DefaultPaneMaxAgeSec, 0)
+	return cfg
+}

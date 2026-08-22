@@ -39,7 +39,9 @@ import (
 	"github.com/tristankenney/zdev/zdevd/internal/config"
 	"github.com/tristankenney/zdev/zdevd/internal/eventlog"
 	"github.com/tristankenney/zdev/zdevd/internal/hub"
+	"github.com/tristankenney/zdev/zdevd/internal/layout"
 	"github.com/tristankenney/zdev/zdevd/internal/notif"
+	"github.com/tristankenney/zdev/zdevd/internal/panereq"
 	"github.com/tristankenney/zdev/zdevd/internal/platform"
 	"github.com/tristankenney/zdev/zdevd/internal/probes"
 	"github.com/tristankenney/zdev/zdevd/internal/projects"
@@ -135,6 +137,8 @@ func main() {
 			os.Exit(notifyMuteSubcmd(os.Args[2:]))
 		case "layout":
 			os.Exit(layoutSubcmd(os.Args[2:]))
+		case "pane":
+			os.Exit(paneSubcmd(os.Args[2:]))
 		case "mcp":
 			os.Exit(mcpSubcmd(os.Args[2:]))
 		case "-v", "--version", "version":
@@ -613,6 +617,21 @@ func run() error {
 		}
 		return nil
 	})
+
+	// Daemon-driven window topology. No-ops (and never subscribes) unless
+	// ZDEV_TOPOLOGY=1, so the default daemon is unchanged.
+	if tmuxBin, err := exec.LookPath("tmux"); err == nil {
+		topo := newTopoReconciler(h, &layoutEngine{
+			tmux: tmuxBin,
+			cfg:  layout.ConfigFromEnv(os.LookupEnv),
+		},
+			layout.TopoConfigFromEnv(os.LookupEnv),
+			layout.PaneConfigFromEnv(os.LookupEnv),
+			panereq.Dir(os.TempDir()))
+		g.Go(func() error { return topo.Run(gctx) })
+	} else {
+		slog.Debug("topology: tmux not on PATH, reconciler not started")
+	}
 
 	// Phase 3 watchers — fsnotify-based, ctx-cancellable.
 	g.Go(func() error { return notifW.Run(gctx) })
