@@ -458,6 +458,8 @@ func run() error {
 	}
 	notifDir := notif.WatchDir(tmpParent)
 	notifW := notif.NewWatcher(notifDir, submitEvent)
+	paneDir := panereq.Dir(tmpParent)
+	paneReqW := panereq.NewWatcher(paneDir, submitEvent)
 
 	// Agent Teams watcher (slice 3): the teams package is tmuxctl-free
 	// (import-cycle inversion documented in internal/teams/watcher.go),
@@ -627,7 +629,7 @@ func run() error {
 		},
 			layout.TopoConfigFromEnv(os.LookupEnv),
 			layout.PaneConfigFromEnv(os.LookupEnv),
-			panereq.Dir(os.TempDir()))
+			paneDir)
 		g.Go(func() error { return topo.Run(gctx) })
 	} else {
 		slog.Debug("topology: tmux not on PATH, reconciler not started")
@@ -635,6 +637,7 @@ func run() error {
 
 	// Phase 3 watchers — fsnotify-based, ctx-cancellable.
 	g.Go(func() error { return notifW.Run(gctx) })
+	g.Go(func() error { return paneReqW.Run(gctx) })
 	g.Go(func() error { return teamsW.Run(gctx) })
 	g.Go(func() error { return workspaceW.Run(gctx) })
 	g.Go(func() error { return projectsFileW.Run(gctx) })

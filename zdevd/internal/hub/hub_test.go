@@ -522,6 +522,12 @@ func TestHubSnapshotEqualsCoreIgnoresMeta(t *testing.T) {
 		t.Error("snapshots differing in DaemonErrors1h should be core-unequal")
 	}
 
+	paneDiff := *base
+	paneDiff.PaneRequests = []proto.PaneRequest{{Session: "a", Title: "tests", TS: 123}}
+	if snapshotEqualsCore(base, &paneDiff) {
+		t.Error("snapshots differing in PaneRequests should be core-unequal")
+	}
+
 	// DaemonLastEventTS is intentionally excluded from core equality — it
 	// advances on every tmux event and including it would force a publish on
 	// every event regardless of project-state change.

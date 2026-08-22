@@ -1183,11 +1183,11 @@ func TestRecomputeAgents_CapturesOnTransition(t *testing.T) {
 		}
 	})
 
-	// Test H: proto.SchemaVersion must be phase4-v25 (focus-loop wire
+	// Test H: proto.SchemaVersion must be phase4-v26 (focus-loop wire
 	// metadata — Project.Intent/BdReady, ZDEV_SIDEBAR_INITIATIVE).
-	t.Run("H_schema_version_is_phase4_v24", func(t *testing.T) {
-		if proto.SchemaVersion != "phase4-v25" {
-			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v25")
+	t.Run("H_schema_version_is_phase4_v26", func(t *testing.T) {
+		if proto.SchemaVersion != "phase4-v26" {
+			t.Errorf("SchemaVersion = %q; want %q", proto.SchemaVersion, "phase4-v26")
 		}
 	})
 }
@@ -1271,6 +1271,31 @@ func TestBuildSnapshot_PropagatesCI(t *testing.T) {
 	p := snap.Projects[0]
 	if p.CIStatus != "completed" || p.CIConclusion != "failure" {
 		t.Errorf("Project=%+v; want CIStatus=completed CIConclusion=failure", p)
+	}
+}
+
+func TestPaneRequestChangedProjectsThroughSnapshotAndClears(t *testing.T) {
+	s := newState()
+	s.projectListNames = []string{"example/backend"}
+	applyEvent(s, tmuxctl.PaneRequestChanged{Session: "example-backend", Requested: true, Title: "tests", Timestamp: 123}, nil)
+	snap := buildSnapshot(s, 1, time.Unix(200, 0), 200, 200000)
+	if len(snap.PaneRequests) != 1 || snap.PaneRequests[0] != (proto.PaneRequest{Session: "example-backend", Title: "tests", TS: 123}) {
+		t.Fatalf("pane request projection = %+v", snap.PaneRequests)
+	}
+	applyEvent(s, tmuxctl.PaneRequestChanged{Session: "example-backend"}, nil)
+	snap = buildSnapshot(s, 2, time.Unix(201, 0), 201, 201000)
+	if len(snap.PaneRequests) != 0 {
+		t.Fatalf("cleared pane request projection = %+v", snap.PaneRequests)
+	}
+}
+
+func TestPaneRequestChangedSkipsSyntheticSessions(t *testing.T) {
+	s := newState()
+	for _, session := range []string{"", "zdevd-watcher", "raw-events-1", "sub-test-1", "test-control-1", "$_unlinked-1"} {
+		applyEvent(s, tmuxctl.PaneRequestChanged{Session: session, Requested: true}, nil)
+	}
+	if len(s.projectData) != 0 {
+		t.Fatalf("synthetic requests entered state: %v", s.projectData)
 	}
 }
 

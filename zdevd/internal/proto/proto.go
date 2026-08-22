@@ -201,7 +201,9 @@ import (
 // hub's two internal reads were ported to AgentStates in the same change,
 // generalising them beyond claude/pi). No new fields. Restart all
 // zdev-sidebar-render instances after deploying the new zdevd binary.
-const SchemaVersion = "phase4-v25"
+// phase4-v26 (2026-08-22): adds the hub-owned pane-request projection used by
+// daemon topology. Both binaries must rebuild together.
+const SchemaVersion = "phase4-v26"
 
 // Wait cost-classes for Project.WaitKind. The distinction drives triage
 // ranking: clearing a permission prompt costs the user seconds and
@@ -245,14 +247,15 @@ type Hello struct {
 // emits one Snapshot per connection and never another (D-12, Pitfall 4 — no
 // hidden polling). Seq is monotonic per-daemon-process across all connections.
 type Snapshot struct {
-	V              int       `json:"v"`
-	Type           string    `json:"type"`
-	Schema         string    `json:"schema"`
-	Seq            int64     `json:"seq"`
-	SentAt         time.Time `json:"sent_at"`
-	Sessions       []string  `json:"sessions"`
-	Projects       []Project `json:"projects"`
-	CurrentSession string    `json:"current_session"`
+	V              int           `json:"v"`
+	Type           string        `json:"type"`
+	Schema         string        `json:"schema"`
+	Seq            int64         `json:"seq"`
+	SentAt         time.Time     `json:"sent_at"`
+	Sessions       []string      `json:"sessions"`
+	Projects       []Project     `json:"projects"`
+	PaneRequests   []PaneRequest `json:"pane_requests,omitempty"`
+	CurrentSession string        `json:"current_session"`
 	// PaneVisible is true when at least one tmux client is currently attached
 	// to the subscriber's session — i.e., the user can plausibly see this
 	// renderer's pane. Set per-connection in snapWithCurrentSession alongside
@@ -338,6 +341,14 @@ type Snapshot struct {
 	// on the wrong row — the exact drift class FlatRows exists to kill,
 	// reintroduced at the process boundary (invariants review, slice C).
 	TeamRows bool `json:"team_rows,omitempty"`
+}
+
+// PaneRequest is the hub-owned projection of an agent viewport request. It is
+// snapshot-level because a valid tmux session may be absent from Projects.
+type PaneRequest struct {
+	Session string `json:"session"`
+	Title   string `json:"title,omitempty"`
+	TS      int64  `json:"ts,omitempty"`
 }
 
 // TeamGroup (phase4-v16, Agent Teams MVP slice 3) is one Claude Code

@@ -289,14 +289,15 @@ func (r *topoReconciler) reconcilePanes(ctx context.Context, snap *proto.Snapsho
 	if r.panes == nil {
 		r.panes = map[string]*paneState{}
 	}
-	reqs, err := panereq.ReadAll(r.paneDir)
-	if err != nil {
-		slog.Warn("topology: pane requests unreadable", "err", err)
-		return
-	}
-	bySession := make(map[string]panereq.Request, len(reqs))
-	for _, q := range reqs {
-		bySession[q.Session] = q
+	bySession := make(map[string]panereq.Request)
+	if snap != nil {
+		for _, p := range snap.PaneRequests {
+			session := p.Session
+			bySession[session] = panereq.Request{
+				Session: session, Stream: panereq.StreamPath(r.paneDir, session),
+				Kind: panereq.KindStream, Title: p.Title, TS: p.TS,
+			}
+		}
 	}
 	turns := turnState(snap)
 	runners := runnerState(snap)

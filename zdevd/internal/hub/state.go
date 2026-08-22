@@ -443,6 +443,9 @@ type projectData struct {
 	ShellCmd       string
 	Ports          []int
 	LastActivityTS int64
+	PaneRequested  bool
+	PaneTitle      string
+	PaneRequestTS  int64
 	WaitStartedTS  int64
 	// Attention is the DISPLAYED UX state — the value placed on the wire and
 	// drawn by the renderer. It is the dwell-debounced projection of
@@ -1099,6 +1102,21 @@ func applyEvent(s *state, ev tmuxctl.Event, emit func(eventlog.Event)) {
 		pd := s.projectData[key]
 		pd.CIStatus = e.Status
 		pd.CIConclusion = e.Conclusion
+		s.projectData[key] = pd
+
+	case tmuxctl.PaneRequestChanged:
+		if e.Session == "" || strings.HasPrefix(e.Session, "$_unlinked") || shouldSkipSession(e.Session) {
+			break
+		}
+		key := proto.SessionKey(e.Session)
+		pd := s.projectData[key]
+		pd.PaneRequested = e.Requested
+		pd.PaneTitle = e.Title
+		pd.PaneRequestTS = e.Timestamp
+		if !e.Requested {
+			pd.PaneTitle = ""
+			pd.PaneRequestTS = 0
+		}
 		s.projectData[key] = pd
 
 	case tmuxctl.NotifSeen:

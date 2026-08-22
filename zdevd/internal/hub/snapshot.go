@@ -351,6 +351,13 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		a := *st.anchor
 		anchorCopy = &a
 	}
+	var paneRequests []proto.PaneRequest
+	for session, pd := range st.projectData {
+		if pd.PaneRequested {
+			paneRequests = append(paneRequests, proto.PaneRequest{Session: session, Title: pd.PaneTitle, TS: pd.PaneRequestTS})
+		}
+	}
+	sort.Slice(paneRequests, func(i, j int) bool { return paneRequests[i].Session < paneRequests[j].Session })
 
 	return &proto.Snapshot{
 		V:              proto.CurrentProtocolVersion,
@@ -360,6 +367,7 @@ func buildSnapshot(st *state, seq int64, sentAt time.Time, now, nowMS int64) *pr
 		SentAt:         sentAt,
 		Sessions:       allNames,
 		Projects:       projects,
+		PaneRequests:   paneRequests,
 		CurrentSession: "", // resolved per-connection in Plan 02-04 from hello.TmuxPane
 		Commitments:    commitmentsToday,
 		InFocus:        deriveInFocus(commitmentsToday, st.anchor != nil, now),

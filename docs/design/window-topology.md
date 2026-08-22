@@ -292,9 +292,15 @@ persistence discipline) are in play for a feature still deciding what it is.
    pulls this inside. The first debugging session that needs the history is
    the trigger.
 
-Until one fires, the outside-the-hub shape is a feature rather than debt. When
-one does, the move is reviewed against
-`.claude/agents/hub-invariants-reviewer.md` like any other hub change.
+The first trigger fired when phase 4 needed to budget requested, logs and CI
+rows from one observation. On 2026-08-22 pane requests moved into hub-owned
+runtime state through an fsnotify `PaneRequestChanged` event. The file remains
+the agent-facing transport, but the reconciler now reads
+`Snapshot.PaneRequests` alongside runner, CI and anchor state rather than
+rereading the directory. The change was checked against
+`.claude/agents/hub-invariants-reviewer.md`: single-writer ownership, pure
+`applyEvent`, filtering, snapshot equality, runtime-only persistence, and race
+coverage all hold.
 
 ## Phasing
 

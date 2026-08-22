@@ -227,12 +227,24 @@ type ProjectListChanged struct {
 	Repos map[string]string
 }
 
+// PaneRequestChanged is the fsnotify projection of one agent viewport request.
+// The watcher performs all file I/O and validation; applyEvent only stores the
+// supplied values so pane requests are observed transactionally with the hub
+// state that budgets them.
+type PaneRequestChanged struct {
+	Session   string
+	Requested bool
+	Title     string
+	Timestamp int64
+}
+
 func (DataRefresh) isEvent()        {}
 func (IntentRefresh) isEvent()      {}
 func (PRRefresh) isEvent()          {}
 func (PortsRefresh) isEvent()       {}
 func (NotifSeen) isEvent()          {}
 func (ProjectListChanged) isEvent() {}
+func (PaneRequestChanged) isEvent() {}
 
 // --- Phase 3 per-session command + activity subscription events ---
 

@@ -1540,6 +1540,14 @@ func snapshotEqualsCore(a, b *proto.Snapshot) bool {
 			return false
 		}
 	}
+	if len(a.PaneRequests) != len(b.PaneRequests) {
+		return false
+	}
+	for i := range a.PaneRequests {
+		if a.PaneRequests[i] != b.PaneRequests[i] {
+			return false
+		}
+	}
 	if len(a.Triage) != len(b.Triage) {
 		return false
 	}

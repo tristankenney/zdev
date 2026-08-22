@@ -96,8 +96,8 @@ func TestSnapshotCompactNoIndent(t *testing.T) {
 // --- Phase 3 tests ---
 
 func TestSchemaVersion_IsPhase4(t *testing.T) {
-	if SchemaVersion != "phase4-v25" {
-		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v25")
+	if SchemaVersion != "phase4-v26" {
+		t.Errorf("SchemaVersion = %q; want %q", SchemaVersion, "phase4-v26")
 	}
 }
 
@@ -203,6 +203,7 @@ func TestSchemaGolden(t *testing.T) {
 			CelebrateUntil: 1714838500,
 			AgentStates:    map[string]Attention{"claude": "waiting"},
 		}},
+		PaneRequests:   []PaneRequest{{Session: "alpha", Title: "tests", TS: 1714838450}},
 		CurrentSession: "alpha",
 	}
 	got, err := MarshalCompact(&fixture)
