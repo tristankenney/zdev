@@ -79,6 +79,21 @@ done
 # above must not suppress "binaries present" when they all are.
 [[ $FAILS -eq $bin_fails ]] && ok "zdevd, zdev-show, zdev-sidebar-render, zdev-notify, zdev present"
 
+# zdevd_pids — pids of the SUPERVISOR daemon only.
+#
+# `pgrep -x zdevd` matches on process name, so it also returns every
+# `zdevd mcp` child (one per Claude session, often a dozen). Those are
+# started whenever a session opens, so the oldest match is routinely
+# older than a freshly installed binary — enough on its own to make the
+# stale-binary check below cry wolf, and to report "running" when the
+# real daemon is dead. The supervisor is the one invoked with no
+# subcommand, so match argv, not the name.
+zdevd_pids() {
+  ps -axo pid=,args= 2>/dev/null | sed -n \
+    -e 's|^ *\([0-9][0-9]*\)  *.*/zdevd$|\1|p' \
+    -e 's|^ *\([0-9][0-9]*\)  *zdevd$|\1|p'
+}
+
 # ---------- 2. daemon ----------
 sect "Daemon"
 if [[ "$OS" == "Linux" ]]; then
@@ -86,7 +101,7 @@ if [[ "$OS" == "Linux" ]]; then
     ok "systemd unit zdevd.service active"
   else
     state=$(systemctl --user is-active zdevd.service 2>/dev/null || echo "no user bus")
-    if pgrep -x zdevd >/dev/null 2>&1; then
+    if [[ -n "$(zdevd_pids)" ]]; then
       warn "zdevd running but NOT via systemd (unit: $state) — won't survive logout/reboot"
       fix "systemctl --user enable --now zdevd.service   (and: loginctl enable-linger \$USER)"
     else
@@ -95,7 +110,7 @@ if [[ "$OS" == "Linux" ]]; then
     fi
   fi
 else
-  if pgrep -x zdevd >/dev/null 2>&1; then
+  if [[ -n "$(zdevd_pids)" ]]; then
     ok "zdevd process running"
   else
     bad "zdevd not running"
@@ -105,7 +120,7 @@ fi
 # Stale-binary check: a rebuilt zdevd does nothing until the RUNNING
 # process is restarted (this exact gap shipped a fixed binary to disk
 # while the buggy daemon kept running through several install cycles).
-zpid=$(pgrep -x zdevd 2>/dev/null | head -1)
+zpid=$(zdevd_pids | head -1)
 if [[ -n "$zpid" ]]; then
   zbin=$(readlink -f "$HOME/.local/bin/zdevd" 2>/dev/null || readlink "$HOME/.local/bin/zdevd" 2>/dev/null || echo "$HOME/.local/bin/zdevd")
   if [[ -f "$zbin" ]]; then
@@ -149,13 +164,33 @@ sect "tmux"
 # conf alone) — the fix is editing the path by hand.
 tc="$HOME/.tmux.conf"
 if grep -q "zdev.tmux.conf" "$tc" 2>/dev/null; then
-  tc_src=$(awk '$1 ~ /^source(-file)?$/ && /zdev\.tmux\.conf/ {print $NF; exit}' "$tc")
-  tc_src="${tc_src/#\~/$HOME}"
-  if [[ -n "$tc_src" && ! -f "$tc_src" ]]; then
-    bad "~/.tmux.conf sources $tc_src — file does NOT exist (moved the checkout?)"
-    fix "edit ~/.tmux.conf: point the source-file line at <zdev-repo>/config/zdev.tmux.conf"
+  # Pull EVERY path that mentions the conf, not just lines whose first word is
+  # source-file. The common form wraps it — `if-shell '[ -f X ]' 'source-file
+  # X'` — and an awk anchored on $1 found nothing there, left the path empty,
+  # and skipped straight to "ok". That is precisely how a dangling guard
+  # pointing at a renamed checkout passed this check for a day (2026-08-22)
+  # while a `prefix-r` reload would have unhooked zdev entirely.
+  tc_paths=$(grep -o '[^ '"'"'"]*zdev\.tmux\.conf' "$tc" 2>/dev/null | sort -u)
+  tc_missing=""
+  tc_found=""
+  while IFS= read -r tc_src; do
+    [[ -z "$tc_src" ]] && continue
+    tc_src="${tc_src/#\~/$HOME}"
+    if [[ -f "$tc_src" ]]; then
+      tc_found="$tc_src"
+    else
+      tc_missing="$tc_src"
+    fi
+  done <<< "$tc_paths"
+  if [[ -z "$tc_found" && -n "$tc_missing" ]]; then
+    bad "~/.tmux.conf sources $tc_missing — file does NOT exist (moved the checkout?)"
+    fix "make -C <zdev-repo>/zdevd install, then point the source-file line at ~/.config/zdev/zdev.tmux.conf"
+  elif [[ -z "$tc_found" ]]; then
+    warn "~/.tmux.conf mentions zdev.tmux.conf but no readable path could be extracted — verify by hand"
+  elif [[ -n "$tc_missing" ]]; then
+    warn "~/.tmux.conf also references $tc_missing, which does not exist (stale line?)"
   else
-    ok "~/.tmux.conf sources zdev.tmux.conf"
+    ok "~/.tmux.conf sources zdev.tmux.conf ($tc_found)"
   fi
 elif grep -q "zdev-sidebar-toggle" "$tc" 2>/dev/null; then
   ok "~/.tmux.conf wires zdev manually — assuming you own that integration"

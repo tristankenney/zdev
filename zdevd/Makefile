@@ -28,6 +28,36 @@ GO_ROUND      := $(BIN_DIR)/zdev-round
 GO_PARK       := $(BIN_DIR)/zdev-park
 GO_BOUNDARY   := $(BIN_DIR)/zdev-boundary
 
+# SUBST_STAMP — the substitution VALUES as a dependency.
+#
+# The generated service files bake @REPO_ROOT@/@HOME@ in at generation
+# time, so moving or renaming the checkout invalidates every one of them
+# without touching a template or this Makefile. make then sees its output
+# as up to date and keeps the stale file; `make install` re-links it, and
+# launchd exec's a path that no longer exists — exit 78 EX_CONFIG, into
+# the penalty box, no daemon, no socket, and nothing in the build output
+# says so. Depending on this stamp makes the values themselves trigger a
+# regeneration. FORCE reruns the recipe every time, but the stamp's mtime
+# only moves when its contents differ, so dependents rebuild on change.
+# TMUX_CONF_LINK is a STABLE path for the bundled tmux conf. ~/.tmux.conf
+# sources this rather than a path inside the checkout: renaming or moving the
+# repo silently unhooked the whole integration once already (2026-08-22 — the
+# guard still pointed at ~/workspace/zdev, so `prefix-r` would have cleared
+# every zdev hook and re-sourced nothing). install re-points the link; the
+# dotfiles never need to know where the checkout lives.
+TMUX_CONF_SRC  := $(REPO_ROOT)/config/zdev.tmux.conf
+TMUX_CONF_LINK := $(HOME)/.config/zdev/zdev.tmux.conf
+
+SUBST_STAMP := $(BIN_DIR)/.subst-values
+
+.PHONY: FORCE
+FORCE:
+
+$(SUBST_STAMP): FORCE
+	@mkdir -p "$(BIN_DIR)"
+	@printf 'REPO_ROOT=%s\nHOME=%s\n' '$(REPO_ROOT)' '$(HOME)' > "$@.tmp"
+	@if cmp -s "$@.tmp" "$@"; then rm -f "$@.tmp"; else mv "$@.tmp" "$@"; fi
+
 # OS detection — controls which service manager (launchd / systemd) the
 # install/start/stop/restart/status/logs targets dispatch to. Path layout
 # for logs and the socket follow internal/platform's per-OS conventions.
@@ -250,13 +280,13 @@ ifeq ($(UNAME_S),Darwin)
 # not the unsubstituted template. The first sed expression strips the
 # template-warning comment block (lines from a bare `<!--` to a bare `-->`)
 # so the substituted output is byte-clean for downstream tooling.
-$(PLIST_BUILT): $(PLIST_SRC) Makefile
+$(PLIST_BUILT): $(PLIST_SRC) Makefile $(SUBST_STAMP)
 	@mkdir -p "$(BIN_DIR)"
 	sed -e '/^<!--$$/,/^-->$$/d' -e 's|@REPO_ROOT@|$(REPO_ROOT)|g' -e 's|@HOME@|$(HOME)|g' "$(PLIST_SRC)" > "$(PLIST_BUILT)"
 	plutil -lint "$(PLIST_BUILT)"
 
 # REAPER_PLIST_BUILT — substituted reaper plist. Same pattern as PLIST_BUILT.
-$(REAPER_PLIST_BUILT): $(REAPER_PLIST_SRC) Makefile
+$(REAPER_PLIST_BUILT): $(REAPER_PLIST_SRC) Makefile $(SUBST_STAMP)
 	@mkdir -p "$(BIN_DIR)"
 	sed -e '/^<!--$$/,/^-->$$/d' -e 's|@HOME@|$(HOME)|g' "$(REAPER_PLIST_SRC)" > "$(REAPER_PLIST_BUILT)"
 	plutil -lint "$(REAPER_PLIST_BUILT)"
@@ -265,17 +295,17 @@ else
 # `systemd-analyze verify` lints the substituted output when systemd is
 # available; otherwise we ship the raw substituted file (`make test` on
 # CI runners without an active user bus would otherwise fail).
-$(ZDEVD_UNIT_BUILT): $(ZDEVD_UNIT_SRC) Makefile
+$(ZDEVD_UNIT_BUILT): $(ZDEVD_UNIT_SRC) Makefile $(SUBST_STAMP)
 	@mkdir -p "$(BIN_DIR)"
 	sed -e 's|@REPO_ROOT@|$(REPO_ROOT)|g' -e 's|@HOME@|$(HOME)|g' "$(ZDEVD_UNIT_SRC)" > "$(ZDEVD_UNIT_BUILT)"
 	@command -v systemd-analyze >/dev/null && systemd-analyze --user verify "$(ZDEVD_UNIT_BUILT)" || true
 
-$(REAPER_UNIT_BUILT): $(REAPER_UNIT_SRC) Makefile
+$(REAPER_UNIT_BUILT): $(REAPER_UNIT_SRC) Makefile $(SUBST_STAMP)
 	@mkdir -p "$(BIN_DIR)"
 	sed -e 's|@HOME@|$(HOME)|g' "$(REAPER_UNIT_SRC)" > "$(REAPER_UNIT_BUILT)"
 	@command -v systemd-analyze >/dev/null && systemd-analyze --user verify "$(REAPER_UNIT_BUILT)" || true
 
-$(REAPER_TIMER_BUILT): $(REAPER_TIMER_SRC) Makefile
+$(REAPER_TIMER_BUILT): $(REAPER_TIMER_SRC) Makefile $(SUBST_STAMP)
 	@mkdir -p "$(BIN_DIR)"
 	cp "$(REAPER_TIMER_SRC)" "$(REAPER_TIMER_BUILT)"
 endif
@@ -408,6 +438,9 @@ install: build $(PLIST_BUILT) $(REAPER_PLIST_BUILT)
 	ln -sf "$(GO_ROUND)" "$(LOCAL_BIN)/zdev-round"
 	ln -sf "$(GO_PARK)" "$(LOCAL_BIN)/zdev-park"
 	ln -sf "$(GO_BOUNDARY)" "$(LOCAL_BIN)/zdev-boundary"
+	@# Stable tmux-conf path (see TMUX_CONF_LINK).
+	@mkdir -p "$(dir $(TMUX_CONF_LINK))"
+	ln -sfn "$(TMUX_CONF_SRC)" "$(TMUX_CONF_LINK)"
 	@# Symlink substituted plists into LaunchAgents.
 	ln -sf "$(PLIST_BUILT)" "$(PLIST_DST)"
 	ln -sf "$(REAPER_PLIST_BUILT)" "$(REAPER_PLIST_DST)"
