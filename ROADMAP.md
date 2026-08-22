@@ -560,6 +560,18 @@ introduces. The code-fix blockers landed as four file-disjoint worktrees:
   first positional, so they were silently swallowed into a usage error
   inside a pane nobody was looking at.
 
+  **Ghost sessions (2026-08-22).** A `zdev` row survived the checkout
+  rename by two days with nobody able to account for it. Cause: tmux
+  closes a window when its last pane exits and a session when its last
+  window closes, but a sidebar pane defeats both — when the operator's
+  shell and agent exited, the renderer kept the window and therefore the
+  session alive, and the empty session then rowed itself as a project.
+  The same failure `PlanTeamReap` already names for member windows, one
+  level up. `Plan` now reaps a window whose only remaining panes are
+  zdev's own, which just lets tmux finish what it would have done
+  unaided; the live ghost was killed by the planner itself rather than by
+  hand.
+
   Remaining: one dogfood week with `ZDEV_TOPOLOGY=1`, and
   a test for the timer-arming in `Run` (the deadline math is covered;
   the ~15-line arming path in the loop is not). Effort: days for phase 1. Depends: nothing unshipped;

@@ -262,6 +262,39 @@ The demote row is the one that decides whether this feels good. Killing a pane
 somebody is mid-read is the same failure as destroying their scrollback, and
 `#{pane_active}` makes it a one-format check.
 
+## Decisions
+
+### 2026-08-22 — topology stays OUTSIDE the hub, and the trigger to move it in
+
+Everything built so far sits outside `internal/hub`: the reconciler registers
+as an ordinary `hub.Subscriber`, and the agent request channel is a file
+channel modelled on `internal/notif`. That was deliberate, and it holds for
+now — it means none of this can break the state machine, and none of the hub
+invariants (single-writer goroutine, pure `applyEvent`, threaded time,
+persistence discipline) are in play for a feature still deciding what it is.
+
+**It moves into zdev-core when either of these becomes true, not on taste:**
+
+1. **A topology decision has to be consistent with hub state at one instant.**
+   A file channel cannot be read transactionally with the state that gates it,
+   and it cannot say *why* a request disappeared. Today the only gate is "did
+   the Stop hook fire", so the looseness costs nothing. The row budget and
+   eviction order (phases 3–4) change that: deciding which of three surfaces
+   to evict while reading anchor/held state makes the file channel a race.
+   Then the request belongs in the hub as a proper request channel beside
+   `parkRequests` / `anchorRequests`.
+
+2. **A surface appears and we cannot reconstruct why.** Topology currently
+   leaves only `slog` lines. The eventlog writer is owned by the daemon
+   process (single-writer, `internal/eventlog`), so putting link/unlink and
+   pane open/close into `events.ndjson` beside everything else necessarily
+   pulls this inside. The first debugging session that needs the history is
+   the trigger.
+
+Until one fires, the outside-the-hub shape is a feature rather than debt. When
+one does, the move is reviewed against
+`.claude/agents/hub-invariants-reviewer.md` like any other hub change.
+
 ## Phasing
 
 | phase | scope | kill criterion |
