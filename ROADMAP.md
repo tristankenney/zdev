@@ -424,6 +424,152 @@ introduces. The code-fix blockers landed as four file-disjoint worktrees:
 
 ## NEXT (~6 weeks)
 
+- **Daemon-driven window topology — zdevd opens and closes windows**
+  *(operator signal, 2026-08-21: "if zdev-core serves as the brain, it
+  should then be open and closing windows in tmux based on what's
+  happening / my agent")* — today the daemon reconciles PANES inside one
+  window (`layout.Plan`) and kills orphaned team windows
+  (`PlanTeamReap`); it never decides which windows should EXIST. The gap
+  is one pure sibling at fleet scope: `PlanTopology(fleet, cfg, now) →
+  []Command`, same purity contract, same table-driven rows, same
+  executor.
+
+  **Design note:** `docs/design/window-topology.md` — the pane half
+  (what opens beside your work, the shell-as-donor rule, the row budget
+  and eviction order, and the two latent zoom/copy-mode bugs it surfaced
+  in `layout.Plan`).
+
+  **Ownership doctrine** (generalized verbatim from `teamreap.go:18` —
+  "the tag is the whole safety story"): zdev may only open, close, or
+  move windows carrying `@zdev-owned`. Untagged windows are invisible to
+  the planner and can never be touched.
+
+  **`link-window`/`unlink-window`, not new/kill.** A window belongs to
+  many sessions at once, so the brain never creates the agent's window —
+  it links the existing one into wherever the operator is looking and
+  unlinks when the condition clears. Unlink cannot destroy anything (the
+  window survives in its owning session by construction); destructive
+  `kill-window` stays reserved for windows zdev itself spawned.
+
+  **Triggers** (every signal already exists in the hub): ⚡ permission
+  prompt → link that agent's window into the current session, answer
+  without switching, unlink on answer; finished+pushed → review window
+  carrying the S3 gauge, closes on ack; dead → pin the corpse (readable
+  under `remain-on-exit`) until acked, then reap; runner up/down → logs
+  window follows the compose lifecycle; `stream add`/`rm` → the stream's
+  windows appear and reap as a group.
+
+  **Four hazards, three already solved in-tree.** (1) Never move focus:
+  link with `-d`, never `select-window` — the operator's cursor is the
+  one thing automation may not touch. (2) Index churn: **the
+  reserved-band mitigation is falsified** — probed on tmux 3.7b
+  2026-08-22, with `renumber-windows on` (the operator's setting) closing
+  ANY window compacts the whole index space, and a link placed at `:90`
+  became `:2`. Reservation is impossible under that config, so LinkIndex
+  is a REQUEST and everything downstream keys off `window_id`, stable for
+  the window's life. Consumers must never navigate to a link by index.
+  (3) Flapping: a window appearing is far louder than a sidebar pane
+  appearing, so reuse `Plan`'s hysteresis dead band and the hub's dwell
+  debounce, with a wider band. (4) **The airlock has to win** — the only
+  unsolved one: a window materializing IS an interruption, and the
+  command-centre contract is that nothing deferred may interrupt while
+  anchored. `PlanTopology` must read anchor/held state and hold topology
+  changes in the airlock like any other arrival, with the boundary
+  review linking the held set in one batch. A design input, not a
+  follow-up.
+
+  **Ordering-principle amendment.** This is provisioning, which the
+  principle (line 16) defers. But its stated REASON — first-party
+  tooling has structural velocity, three third-party tools already patch
+  the pain — was about worktrees and session creation. None of it
+  applies to window topology: it is reversible, unowned by anyone else,
+  and squarely the durable differentiator DIRECTION is chasing. Recorded
+  as an explicit amendment rather than a quiet step over it.
+
+  **Phase 1 = the permission-prompt trigger alone**, behind
+  `ZDEV_TOPOLOGY=1` with current behavior as the default (per the
+  standing config-knob convention), linking at `:90+` with `-d` and
+  unlinking on answer. If it feels good, every further trigger is one
+  more table row.
+
+  **Built 2026-08-22 (planner + verb; the hub is not yet driving it).**
+  `layout.PlanTopology` (pure — 20 table rows, plus a never-destroys
+  property test and a convergence test), `TopoConfigFromEnv`
+  (`ZDEV_TOPOLOGY` / `_INDEX` / `_DWELL`), and `zdevd layout topology
+  [-dry-run]` as the I/O shell. Five tmux primitives were probed live on
+  3.7b BEFORE any code was written: `link-window -d` does not move the
+  active window; a window user-option is visible from every session the
+  window is linked into (so one `list-windows -F` is sufficient
+  discovery); `unlink-window -t <session>:<idx>` removes only that link;
+  `unlink-window` REFUSES to orphan a window ("window only linked to one
+  session", exit 1) — the whole safety net, since the planner never emits
+  `-k`; and killing an agent session while its window is linked leaves
+  the link as the window's last home, so orphaned links are left for the
+  dead-agent trigger instead of being force-unlinked. A `//go:build live`
+  test executes the emitted plan against a real tmux server and asserts
+  link → converge → retire with the agent's window surviving.
+
+  **Hub-driven 2026-08-22.** `topoReconciler` (cmd/zdevd) registers as an
+  ordinary in-process `hub.Subscriber` — internal/hub is untouched, so
+  none of its invariants are in play. Two design corrections earned
+  during the build, both by a gate or a test rather than by review:
+
+  - The first cut used a 2s re-evaluation ticker.
+    `scripts/check-no-daemon-fork.sh` rejected it, correctly: a periodic
+    wake-up is exactly the hidden-ticker pattern that burns the budget
+    `make bench-idle` defends. Replaced with ONE one-shot
+    `time.NewTimer` (the same pattern the hub's own dwell uses) armed for
+    the instant `layout.TopoNextDeadline` names, and not armed at all
+    when nothing is pending — so an idle fleet holds no timer and blocks
+    on a channel receive. The other thing a snapshot cannot express, the
+    operator switching client sessions, turned out to need nothing: the
+    hub already forces a publish on it (`lastClientSessionsSeq`).
+  - `TopoSignature` and the (since-deleted) `TopoPending` both called
+    `wantsLink`, which requires a resolved `WindowID` — but the
+    snapshot-only gates run BEFORE any tmux call, so both were
+    permanently false and would have silently wedged the reconcile path
+    shut after its first pass. Caught by a table row, not by reading.
+    Fixed by splitting the snapshot-only predicate (`eligible`) out of
+    the tmux-resolved one (`wantsLink`).
+
+  Cost at idle is one string comparison per published snapshot and zero
+  subprocesses.
+
+  **Panes built 2026-08-22 — phase 2 + agent-requested viewports.**
+  `layout.Plan` gained the zoom / copy-mode guards it never had (a resize
+  hook could discard a zoom or a copy-mode scroll position; found while
+  designing the pane half, fixed before anything else touched geometry).
+  On top: `internal/panereq` (the agent → daemon request channel, same
+  file-channel shape and hostile-input posture as `internal/notif`),
+  `layout.PlanPanes` (pure, 20 table rows plus an only-kills-its-own
+  property test and a convergence test), `zdevd pane
+  {open,close,attach,reconcile}`, and `pane_open`/`pane_close` in
+  `mcpActuatorTools` — the gated tier, since changing what is on the
+  operator's screen belongs there. The agent gets an output CHANNEL, not
+  a shell: it receives a derived file path, appends to it, and the daemon
+  tails it, so no new execution surface exists and `/etc/shadow` can
+  never be the target. Caps are structural rather than counted: one
+  request file per session IS the one-pane cap, and the session comes
+  from the filename so an agent cannot reach another project's window.
+  Turn-scoped via the existing Working/Done hooks, with the request
+  withdrawn at turn end so the agent must ask again. A `//go:build live`
+  test drives the whole lifecycle against real tmux — self-tag via
+  `$TMUX_PANE`, live tailing, idempotent re-reconcile, retirement leaving
+  both operator panes intact. One real bug caught by it: the attach
+  command emitted flags AFTER the verb, and `flag.Parse` stops at the
+  first positional, so they were silently swallowed into a usage error
+  inside a pane nobody was looking at.
+
+  Remaining: one dogfood week with `ZDEV_TOPOLOGY=1`, and
+  a test for the timer-arming in `Run` (the deadline math is covered;
+  the ~15-line arming path in the loop is not). Effort: days for phase 1. Depends: nothing unshipped;
+  the airlock rule needs the command-centre state the parked item
+  already shipped (phases 1–3E). Kill: if the operator ever loses a
+  window, loses focus mid-keystroke, or starts pre-emptively closing
+  zdev's windows before they clear themselves, the automation is louder
+  than the problem — revert to link-on-demand (`M-w` to pull the
+  current triage lead in) and keep nothing automatic.
+
 - **S2 — cadence-capped fleet nudge** *(S4 Round split out — shipped, see
   SHIPPED)* — one nudge per cadence window (count + ETA + "M-a to start a
   round"; 15m STUCK still pierces). Effort: week. Depends: S1, S3 (both

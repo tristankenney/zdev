@@ -2,6 +2,15 @@
 
 # zdevd build output
 zdevd/bin/
+# A bare `go build` in zdevd/ drops binaries in the package root rather than
+# bin/ — four accumulated there unnoticed over four days. Ignore them by name
+# so a stray build never shows up as untracked source.
+zdevd/zdevd
+zdevd/zdev-sidebar
+zdevd/zdev-show
+zdevd/zdev-round
+zdevd/zdev-park
+zdevd/zdev-boundary
 zdevd/zdevd
 
 # Gas Town (added by gt)
